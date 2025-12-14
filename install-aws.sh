@@ -283,10 +283,6 @@ launch_instance() {
 
   log_msg "INFO" "Instance is running"
 
-  # Brief wait for instance initialization (AL2023 boots quickly)
-  log_msg "INFO" "Waiting for instance initialization (20 seconds)..."
-  sleep 20
-
   echo "${instance_id}"
 }
 
@@ -326,27 +322,28 @@ get_instance_ip() {
 wait_for_ssh() {
   local host="$1"
   local key_file="$2"
-  local max_attempts=24
+  local max_attempts=40
   local attempt=0
 
-  log_msg "INFO" "Waiting for SSH to be accessible..."
+  log_msg "INFO" "Checking SSH accessibility..."
 
   while [[ ${attempt} -lt ${max_attempts} ]]; do
     if ssh -i "${key_file}" \
            -o StrictHostKeyChecking=no \
            -o UserKnownHostsFile=/dev/null \
            -o LogLevel=ERROR \
-           -o ConnectTimeout=5 \
+           -o ConnectTimeout=3 \
            -o BatchMode=yes \
            "${SSH_USER}@${host}" \
            "echo 'SSH ready'" >/dev/null 2>&1; then
-      log_msg "INFO" "SSH is ready"
+      log_msg "INFO" "SSH is ready (attempt ${attempt}/${max_attempts})"
       return 0
     fi
 
     attempt=$((attempt + 1))
-    log_msg "INFO" "Attempt ${attempt}/${max_attempts}..."
-    sleep 5
+    if [[ ${attempt} -lt ${max_attempts} ]]; then
+      sleep 3
+    fi
   done
 
   die "SSH did not become accessible after ${max_attempts} attempts (2 minutes)"
