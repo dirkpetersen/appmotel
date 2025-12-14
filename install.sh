@@ -74,25 +74,38 @@ die() {
 # -----------------------------------------------------------------------------
 # Function: load_env
 # Description: Loads configuration from .env file
+# Location: Uses fixed path /home/appmotel/.config/appmotel/.env
+#           This allows both root and user installations to access the same config
 # -----------------------------------------------------------------------------
 load_env() {
-  local env_file="${SCRIPT_DIR}/.env"
-  local env_default="${SCRIPT_DIR}/.env.default"
+  local config_dir="${APPMOTEL_HOME}/.config/appmotel"
+  local env_file="${config_dir}/.env"
+  local env_default_local="${SCRIPT_DIR}/.env.default"
   local github_env_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/.env.default"
+
+  # Create config directory if it doesn't exist
+  mkdir -p "${config_dir}"
 
   # Load .env file if it exists
   if [[ -f "${env_file}" ]]; then
     set -o allexport
     source "${env_file}"
     set +o allexport
-    log_msg "INFO" "Loaded configuration from .env"
+    log_msg "INFO" "Loaded configuration from ${env_file}"
     return
   fi
 
-  # If .env.default doesn't exist, download it from GitHub
-  if [[ ! -f "${env_default}" ]]; then
+  # Try to use local .env.default first (from repo)
+  local env_default_source=""
+  if [[ -f "${env_default_local}" ]]; then
+    env_default_source="${env_default_local}"
+    log_msg "INFO" "Using local .env.default from repository"
+  else
+    # Download .env.default from GitHub
     log_msg "INFO" "Downloading .env.default from GitHub"
-    if curl -fsSL "${github_env_url}" -o "${env_default}"; then
+    local temp_env_default="/tmp/.env.default.$$"
+    if curl -fsSL "${github_env_url}" -o "${temp_env_default}"; then
+      env_default_source="${temp_env_default}"
       log_msg "INFO" "Downloaded .env.default successfully"
     else
       die "Failed to download .env.default from GitHub"
@@ -100,8 +113,14 @@ load_env() {
   fi
 
   # Copy .env.default to .env
-  log_msg "WARN" "No .env file found, copying from .env.default"
-  cp "${env_default}" "${env_file}"
+  log_msg "WARN" "No .env file found at ${env_file}"
+  log_msg "INFO" "Creating .env from .env.default"
+  cp "${env_default_source}" "${env_file}"
+
+  # Clean up temp file if we downloaded it
+  if [[ "${env_default_source}" == /tmp/* ]]; then
+    rm -f "${env_default_source}"
+  fi
 
   # Source the .env file
   set -o allexport
@@ -109,7 +128,7 @@ load_env() {
   set +o allexport
 
   log_msg "WARN" "Please edit ${env_file} with your settings"
-  log_msg "INFO" "Loaded configuration from .env"
+  log_msg "INFO" "Configuration file created at ${env_file}"
 }
 
 # =============================================================================

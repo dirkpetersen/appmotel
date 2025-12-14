@@ -248,12 +248,20 @@ Add YAML files to `~/.config/traefik/dynamic/` for application routing. Traefik 
 
 ## Environment Configuration
 
-Configuration is managed via `.env` file (see `.env.default` for template):
+Configuration is managed via `.env` file located at `/home/appmotel/.config/appmotel/.env`:
+
+**Location:** `/home/appmotel/.config/appmotel/.env`
+
+This fixed location allows both root and user installations to access the same configuration. The file is created automatically from `.env.default` (downloaded from GitHub if needed) during the first installation.
+
+**Configuration Variables:**
 - `USE_LETSENCRYPT`: "yes" or "no"
 - `LETSENCRYPT_EMAIL`: Email for Let's Encrypt notifications
 - `LETSENCRYPT_MODE`: "http" (HTTP-01 challenge) or "dns" (DNS-01 via Route53)
 - `BASE_DOMAIN`: Base domain for applications
 - AWS credentials (only for DNS-01 challenge mode)
+
+**Note:** The `.env` file is shared between system-level (root) and user-level (appmotel) installations.
 
 ## Systemd Architecture
 
