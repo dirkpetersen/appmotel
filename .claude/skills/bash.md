@@ -1,3 +1,8 @@
+---
+name: bash
+description: Bash 4.4.20 coding standards with strict mode, modern features, and best practices
+---
+
 # Bash Coding Guidelines (Bash 4.4.20)
 
 **Target Version:** Bash 4.4.20

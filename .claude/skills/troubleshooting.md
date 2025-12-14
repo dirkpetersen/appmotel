@@ -1,3 +1,8 @@
+---
+name: troubleshooting
+description: Common Appmotel issues including Traefik 404 errors, certificate permissions, and debugging procedures
+---
+
 # Appmotel Troubleshooting Guide
 
 ## Traefik Issues

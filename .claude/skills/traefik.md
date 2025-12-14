@@ -1,3 +1,8 @@
+---
+name: traefik
+description: Traefik reverse proxy setup, TLS configuration, and systemd service management for Appmotel
+---
+
 # Traefik Configuration for Appmotel
 
 This skill covers Traefik setup and configuration for the Appmotel PaaS system.
