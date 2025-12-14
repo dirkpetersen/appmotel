@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+# -----------------------------------------------------------------------------
+# Script Name: appmo-admin
+# Description: Wrapper script for apps user to run appmo as appmotel user
+# Usage: appmo-admin <command> [arguments]
+# -----------------------------------------------------------------------------
+
+set -o errexit
+set -o nounset
+set -o pipefail
+IFS=$'\n\t'
+
+# Constants
+readonly APPMOTEL_USER="appmotel"
+readonly APPMOTEL_UID=4904
+readonly APPMO_BIN="/home/appmotel/.local/bin/appmo"
+
+# Set environment variables for systemd user session
+export XDG_RUNTIME_DIR="/run/user/${APPMOTEL_UID}"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${APPMOTEL_UID}/bus"
+
+# Execute appmo as appmotel user with all arguments
+# Note: appmo binary check happens as appmotel user, not apps user
+exec sudo -u "${APPMOTEL_USER}" \
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+    DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS}" \
+    "${APPMO_BIN}" "$@"

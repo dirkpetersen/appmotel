@@ -1,0 +1,17 @@
+[Unit]
+Description=Appmotel Auto-Pull Timer
+Documentation=https://github.com/dirkpetersen/appmotel
+Requires=appmotel-autopull.service
+
+[Timer]
+# Run every 2 minutes
+OnCalendar=*:0/2
+# Run on boot after 1 minute
+OnBootSec=1min
+# Ensure timer doesn't drift
+AccuracySec=10s
+# Run missed timers on startup
+Persistent=true
+
+[Install]
+WantedBy=timers.target

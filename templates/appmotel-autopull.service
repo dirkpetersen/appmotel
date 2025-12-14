@@ -1,0 +1,14 @@
+[Unit]
+Description=Appmotel Auto-Pull Service
+Documentation=https://github.com/dirkpetersen/appmotel
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/appmo-autopull
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=appmotel-autopull
+
+[Install]
+WantedBy=default.target

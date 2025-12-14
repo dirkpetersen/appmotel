@@ -1,0 +1,53 @@
+# GitHub Actions Workflow for Appmotel Auto-Deploy
+# This file should be placed in .github/workflows/deploy.yml in your app repository
+#
+# Required repository secrets:
+#   APPMOTEL_HOST: SSH hostname of Appmotel server
+#   APPMOTEL_USER: SSH username (usually 'apps' or 'appmotel')
+#   APPMOTEL_SSH_KEY: Private SSH key for authentication
+#   APP_NAME: Name of the app in Appmotel
+
+name: Deploy to Appmotel
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to Appmotel
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.APPMOTEL_HOST }}
+          username: ${{ secrets.APPMOTEL_USER }}
+          key: ${{ secrets.APPMOTEL_SSH_KEY }}
+          script: |
+            # Set up environment for systemd user services
+            export XDG_RUNTIME_DIR=/run/user/$(id -u appmotel)
+            export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u appmotel)/bus
+
+            # Run appmo update as appmotel user
+            sudo -u appmotel \
+              XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+              DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS}" \
+              /home/appmotel/.local/bin/appmo update ${{ secrets.APP_NAME }}
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.APPMOTEL_HOST }}
+          username: ${{ secrets.APPMOTEL_USER }}
+          key: ${{ secrets.APPMOTEL_SSH_KEY }}
+          script: |
+            export XDG_RUNTIME_DIR=/run/user/$(id -u appmotel)
+            export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u appmotel)/bus
+
+            sudo -u appmotel \
+              XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+              DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS}" \
+              /home/appmotel/.local/bin/appmo status ${{ secrets.APP_NAME }}

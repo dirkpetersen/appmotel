@@ -1,2 +1,484 @@
-# appmotel
-A no-frills PaaS system using systemd, Traefik and github runners 
+# Appmotel
+
+> A no-frills PaaS (Platform as a Service) system using ubiquitous components like systemd, GitHub, and Traefik.
+
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Bash](https://img.shields.io/badge/bash-4.4%2B-green.svg)](https://www.gnu.org/software/bash/)
+[![Traefik](https://img.shields.io/badge/traefik-3.0%2B-blue.svg)](https://traefik.io/)
+
+## Overview
+
+Appmotel is a minimalist PaaS that makes deploying and managing web applications as simple as a single command. Deploy Python and Node.js applications with automatic HTTPS, health checks, rate limiting, and seamless updates—all managed through systemd user services and Traefik reverse proxy.
+
+**Key Philosophy:**
+- Use battle-tested, ubiquitous tools (systemd, Traefik, GitHub)
+- No complex orchestration or containers required
+- Simple, transparent operation
+- Easily auditable Bash scripts
+
+## Features
+
+### 🚀 Core Features
+- **One-Command Deploy**: `appmo add myapp https://github.com/user/repo main`
+- **Automatic HTTPS**: Let's Encrypt integration via Traefik with wildcard certificate support
+- **Zero-Downtime Updates**: Automatic backup and rollback on failure
+- **Multi-Process Apps**: Procfile support for apps requiring multiple processes
+- **Auto-Deploy**: Automatic git polling and deployment every 2 minutes
+
+### 🛡️ Security & Reliability
+- **Rate Limiting**: Configurable request rate limiting per app (default: 100 req/sec)
+- **Health Checks**: Automatic health monitoring with 30-second intervals
+- **Resource Limits**: CPU and memory limits per app (default: 512M memory, 100% CPU)
+- **Automatic Backups**: Every update creates a timestamped backup
+- **SSL/TLS**: Automatic HTTPS with Let's Encrypt or existing wildcard certificates
+
+### 🎯 Developer Experience
+- **Simple CLI**: Intuitive `appmo` command with shell completion
+- **Environment Variables**: `.env` file support with proper quote handling
+- **Real-Time Logs**: `appmo logs <app>` shows live application logs
+- **Exec Commands**: Run commands in app environment with `appmo exec`
+- **Backup/Restore**: One-command backup and restore functionality
+
+### 🔧 Supported Platforms
+- **Python**: Automatic virtual environment setup with `requirements.txt`
+- **Node.js**: Automatic dependency installation with `package.json`
+- **Multi-Process**: Procfile support (web, worker, etc.)
+
+## Quick Start
+
+### Prerequisites
+- Ubuntu 24.04 LTS (or similar Linux distribution)
+- Root access for initial setup
+- Domain name with DNS configured
+
+### Installation
+
+**1. System-level setup (as root):**
+```bash
+sudo bash install.sh
+```
+
+This creates the `appmotel` user, configures systemd services, and sets up permissions.
+
+**2. User-level setup (as regular user):**
+```bash
+bash install.sh
+```
+
+This downloads Traefik, installs the CLI tool, and configures everything under `/home/appmotel`.
+
+### Deploy Your First App
+
+```bash
+# Add and deploy an app
+appmo-admin add myapp https://github.com/username/myrepo main
+
+# Check status
+appmo-admin status myapp
+
+# View logs
+appmo-admin logs myapp
+
+# Your app is now live at: https://myapp.apps.yourdomain.edu
+```
+
+## Usage
+
+### CLI Commands
+
+```bash
+# Application Management
+appmo add <app-name> <github-url> <branch>   # Deploy a new app
+appmo remove <app-name>                       # Remove an app
+appmo list                                    # List all apps
+appmo status [app-name]                       # Show app status
+
+# App Control
+appmo start <app-name>                        # Start an app
+appmo stop <app-name>                         # Stop an app
+appmo restart <app-name>                      # Restart an app
+appmo update <app-name>                       # Update app (auto-backup & rollback)
+
+# Monitoring & Debugging
+appmo logs <app-name> [lines]                 # View application logs
+appmo exec <app-name> <command>               # Run command in app environment
+
+# Backup & Restore
+appmo backup <app-name>                       # Create backup
+appmo restore <app-name> [backup-id]          # Restore from backup
+appmo backups <app-name>                      # List available backups
+```
+
+### Application Requirements
+
+Each app repository must contain:
+
+**1. `.env` file** - Environment variables and configuration
+```bash
+PORT=8000
+APP_NAME="My Application"
+
+# Optional: Resource limits
+MEMORY_LIMIT=512M
+CPU_QUOTA=100%
+
+# Optional: Rate limiting
+RATE_LIMIT_AVG=100
+RATE_LIMIT_BURST=50
+# DISABLE_RATE_LIMIT=true
+
+# Optional: Health checks
+HEALTH_CHECK_PATH=/health
+```
+
+**2. `install.sh`** - Installation/setup script (run on deploy and update)
+```bash
+#!/usr/bin/env bash
+echo "Installing dependencies..."
+# Your installation commands here
+```
+
+**3. Application entry point** - One of:
+- Python: `app.py` or `requirements.txt`
+- Node.js: `package.json` with `start` script
+- Procfile: For multi-process apps
+
+### Procfile Support
+
+For applications requiring multiple processes:
+
+**Procfile:**
+```
+web: python app.py
+worker: celery -A tasks worker
+scheduler: python scheduler.py
+```
+
+Each process gets its own systemd service:
+- `appmotel-myapp-web`
+- `appmotel-myapp-worker`
+- `appmotel-myapp-scheduler`
+
+The `web` process receives the main port and is accessible via HTTPS.
+
+## Configuration
+
+### System Configuration
+
+Configure Appmotel via `.env` file in the project root:
+
+```bash
+# Base domain for applications
+BASE_DOMAIN="apps.yourdomain.edu"
+
+# Let's Encrypt settings
+USE_LETSENCRYPT="yes"
+LETSENCRYPT_EMAIL="admin@yourdomain.edu"
+LETSENCRYPT_MODE="http"  # or "dns" for DNS-01 challenge
+
+# AWS credentials (only for DNS-01 mode with Route53)
+AWS_ACCESS_KEY_ID="your-key"
+AWS_SECRET_ACCESS_KEY="your-secret"
+AWS_REGION="us-west-2"
+```
+
+### Per-App Configuration
+
+Apps can override defaults in their `.env` file:
+
+```bash
+# Resource Limits
+MEMORY_LIMIT=1G          # Max memory (default: 512M)
+CPU_QUOTA=200%           # CPU quota (default: 100%)
+
+# Rate Limiting
+RATE_LIMIT_AVG=200       # Requests/sec average (default: 100)
+RATE_LIMIT_BURST=100     # Burst requests (default: 50)
+DISABLE_RATE_LIMIT=true  # Disable rate limiting
+
+# Health Checks
+HEALTH_CHECK_PATH=/api/health  # Health endpoint (default: /health)
+```
+
+## Architecture
+
+### Directory Structure
+
+```
+/home/appmotel/
+├── .config/
+│   ├── appmotel/apps/          # App metadata
+│   │   └── <app-name>/
+│   │       └── metadata.env
+│   ├── traefik/
+│   │   ├── traefik.yaml        # Static configuration
+│   │   └── dynamic/            # Per-app routing configs
+│   │       └── <app-name>.yaml
+│   └── systemd/user/           # App services
+│       └── appmotel-<app-name>.service
+├── .local/
+│   ├── bin/
+│   │   ├── appmo               # CLI tool
+│   │   └── traefik             # Traefik binary
+│   └── share/
+│       ├── appmotel/           # App repositories
+│       │   └── <app-name>/repo/
+│       └── appmotel-backups/   # Backups
+│           └── <app-name>/
+└── .bashrc
+```
+
+### System Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│              Internet (Port 80/443)         │
+└─────────────────────┬───────────────────────┘
+                      │
+                      ▼
+         ┌────────────────────────┐
+         │   Traefik Proxy        │
+         │   (System Service)     │
+         │   - HTTPS/SSL          │
+         │   - Rate Limiting      │
+         │   - Health Checks      │
+         └────────┬───────────────┘
+                  │
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐
+│  App 1   │ │  App 2   │ │  App 3   │
+│ (User    │ │ (User    │ │ (User    │
+│ Service) │ │ Service) │ │ Service) │
+│ :8000    │ │ :8001    │ │ :8002    │
+└──────────┘ └──────────┘ └──────────┘
+```
+
+### Systemd Services
+
+**System-level** (managed by system admin):
+- `traefik-appmotel.service` - Runs as `appmotel` user with `CAP_NET_BIND_SERVICE`
+
+**User-level** (managed by `appmotel` user):
+- `appmotel-<app-name>.service` - Individual app services
+- `appmotel-<app-name>-<process>.service` - Multi-process app services
+
+## Automatic Deployment (Autopull)
+
+Appmotel automatically checks all deployed apps for updates every 2 minutes using a systemd timer. When updates are detected, apps are automatically redeployed.
+
+### How It Works
+
+1. **Systemd Timer**: `appmotel-autopull.timer` runs every 2 minutes
+2. **Git Polling**: The `appmo-autopull` script checks each app for updates
+3. **Automatic Deploy**: When changes are found, `appmo update <app>` runs automatically
+4. **Rollback on Failure**: If deployment fails, the previous version is automatically restored
+
+### Monitoring Autopull
+
+```bash
+# Check timer status
+systemctl --user status appmotel-autopull.timer
+
+# View autopull logs
+journalctl --user -u appmotel-autopull -f
+
+# Manually trigger a check
+systemctl --user start appmotel-autopull.service
+```
+
+### Advantages
+
+- **Works on private networks** - Only needs outbound git access
+- **No webhooks required** - No public endpoints or firewall rules needed
+- **Simple and reliable** - Pure bash with systemd
+- **Easy to debug** - Standard systemd logging
+
+### Optional: GitHub Actions (Advanced)
+
+For more complex workflows (build steps, tests, multi-environment), you can use the GitHub Actions template in `templates/github-workflow.yml`. This requires SSH access to your server.
+
+## Development
+
+### Running Locally
+
+Switch to the `appmotel` user for testing:
+```bash
+sudo su - appmotel
+```
+
+Clean home directory for fresh install testing:
+```bash
+# Reset appmotel home directory (executes as appmotel user)
+sudo -u appmotel bash reset-home.sh --force
+
+# Run fresh installation
+bash install.sh
+```
+
+### Bash Coding Standards
+
+This project follows strict Bash 4.4+ standards:
+- Strict mode: `set -o errexit -o nounset -o pipefail`
+- Modern features: associative arrays, namerefs, parameter transformation
+- Idempotent scripts: safe to run multiple times
+- See `reqs/howto-bash.md` for complete guidelines
+
+## Troubleshooting
+
+### Check App Status
+```bash
+appmo-admin status myapp
+```
+
+### View Logs
+```bash
+appmo-admin logs myapp 100
+```
+
+### Manual Service Control
+```bash
+# As appmotel user
+sudo su - appmotel
+systemctl --user status appmotel-myapp
+systemctl --user restart appmotel-myapp
+journalctl --user -u appmotel-myapp -f
+```
+
+### Restore from Backup
+```bash
+# List backups
+appmo-admin backups myapp
+
+# Restore specific backup
+appmo-admin restore myapp 2025-12-03-120000
+```
+
+### Check Traefik
+```bash
+sudo systemctl status traefik-appmotel
+sudo journalctl -u traefik-appmotel -f
+```
+
+## Examples
+
+### Python Flask App
+
+**requirements.txt:**
+```
+flask==3.0.0
+```
+
+**app.py:**
+```python
+from flask import Flask
+import os
+
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return f'Hello from {os.environ.get("APP_NAME", "Flask")}!'
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+```
+
+**.env:**
+```bash
+PORT=8000
+APP_NAME="My Flask App"
+```
+
+**install.sh:**
+```bash
+#!/usr/bin/env bash
+echo "Installing Flask application..."
+echo "Installation completed successfully"
+```
+
+### Node.js Express App
+
+**package.json:**
+```json
+{
+  "name": "express-hello",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0"
+  }
+}
+```
+
+**server.js:**
+```javascript
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send(`Hello from ${process.env.APP_NAME || 'Express'}!`);
+});
+
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
+```
+
+**.env:**
+```bash
+PORT=8001
+APP_NAME="My Express App"
+```
+
+**install.sh:**
+```bash
+#!/usr/bin/env bash
+echo "Installing Express application..."
+node --version
+npm --version
+echo "Installation completed successfully"
+```
+
+## Security Considerations
+
+- All apps run as the `appmotel` user (no per-app isolation)
+- Traefik runs with minimal privileges using `CAP_NET_BIND_SERVICE`
+- Apps are isolated by systemd resource limits
+- HTTPS enforced via automatic redirect
+- Rate limiting prevents abuse
+- Regular backups enable quick recovery
+
+## Performance
+
+- **Port Range**: 10001-59999 automatically assigned
+- **Default Limits**: 512M memory, 100% CPU per app
+- **Rate Limiting**: 100 req/sec average, 50 burst
+- **Health Checks**: 30s interval, 5s timeout
+
+## Contributing
+
+We welcome contributions! Please ensure:
+- Follow Bash 4.4+ coding standards (see `reqs/howto-bash.md`)
+- All scripts are idempotent
+- Test with `bash -n script.sh` before committing
+- Update documentation for new features
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Credits
+
+Built with:
+- [Traefik](https://traefik.io/) - Modern reverse proxy
+- [systemd](https://systemd.io/) - System and service manager
+- [Let's Encrypt](https://letsencrypt.org/) - Free SSL/TLS certificates
+
+---
+
+**Made with ❤️ for simple, transparent deployments**

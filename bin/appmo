@@ -1,0 +1,1246 @@
+#!/usr/bin/env bash
+
+# -----------------------------------------------------------------------------
+# Script Name: appmo
+# Description: CLI tool for managing Appmotel applications
+# -----------------------------------------------------------------------------
+
+set -o errexit
+set -o nounset
+set -o pipefail
+IFS=$'\n\t'
+
+# Constants
+readonly APPMOTEL_HOME="/home/appmotel"
+readonly APPS_CONFIG_DIR="${APPMOTEL_HOME}/.config/appmotel/apps"
+readonly APPS_DATA_DIR="${APPMOTEL_HOME}/.local/share/appmotel"
+readonly TRAEFIK_DYNAMIC_DIR="${APPMOTEL_HOME}/.config/traefik/dynamic"
+readonly SYSTEMD_USER_DIR="${APPMOTEL_HOME}/.config/systemd/user"
+readonly BACKUPS_DIR="${APPMOTEL_HOME}/.local/share/appmotel-backups"
+readonly MIN_PORT=10001
+readonly MAX_PORT=59999
+
+# Default resource limits (can be overridden in .env)
+readonly DEFAULT_MEMORY_LIMIT="512M"
+readonly DEFAULT_CPU_QUOTA="100%"
+
+# Rate limiting defaults
+readonly DEFAULT_RATE_LIMIT_AVG=100
+readonly DEFAULT_RATE_LIMIT_BURST=50
+
+# Ensure XDG_RUNTIME_DIR is set for systemd --user commands
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+# -----------------------------------------------------------------------------
+# Function: log_msg
+# Description: Prints messages with timestamp
+# -----------------------------------------------------------------------------
+log_msg() {
+  local level="$1"
+  local msg="$2"
+  printf "[%(%Y-%m-%d %H:%M:%S)T] [%s] %s\n" -1 "${level}" "${msg}" >&2
+}
+
+# -----------------------------------------------------------------------------
+# Function: die
+# Description: Prints error message and exits
+# -----------------------------------------------------------------------------
+die() {
+  log_msg "ERROR" "$1"
+  exit 1
+}
+
+# -----------------------------------------------------------------------------
+# Function: usage
+# Description: Prints usage information
+# -----------------------------------------------------------------------------
+usage() {
+  cat <<EOF
+Usage: appmo <command> [arguments]
+
+Commands:
+  add <app-name> <github-url> <branch>  Add and deploy a new app
+  remove <app-name>                      Remove an app
+  list                                   List all configured apps
+  status [app-name]                      Show app status
+  start <app-name>                       Start an app
+  stop <app-name>                        Stop an app
+  restart <app-name>                     Restart an app
+  update <app-name>                      Manually update an app
+  logs <app-name> [lines]                View app logs
+  exec <app-name> <command>              Run command in app's environment
+  backup <app-name>                      Create a backup of an app
+  restore <app-name> [backup-id]         Restore an app from backup
+  backups <app-name>                     List available backups for an app
+
+Examples:
+  appmo add myapp https://github.com/user/repo main
+  appmo status myapp
+  appmo logs myapp 50
+  appmo backup myapp
+  appmo restore myapp 2024-01-15-120000
+EOF
+  exit 0
+}
+
+# -----------------------------------------------------------------------------
+# Function: validate_app_name
+# Description: Validates app name format
+# -----------------------------------------------------------------------------
+validate_app_name() {
+  local app_name="$1"
+
+  if [[ -z "${app_name}" ]]; then
+    die "App name cannot be empty"
+  fi
+
+  if [[ "${app_name}" =~ [[:space:]] ]]; then
+    die "App name cannot contain spaces"
+  fi
+
+  if [[ ! "${app_name}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+    die "App name must be a valid DNS subdomain label (lowercase alphanumeric and hyphens only)"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: app_exists
+# Description: Checks if an app exists
+# -----------------------------------------------------------------------------
+app_exists() {
+  local app_name="$1"
+  [[ -d "${APPS_CONFIG_DIR}/${app_name}" ]]
+}
+
+# -----------------------------------------------------------------------------
+# Function: require_app_exists
+# Description: Ensures app exists or exits
+# -----------------------------------------------------------------------------
+require_app_exists() {
+  local app_name="$1"
+  if ! app_exists "${app_name}"; then
+    die "App '${app_name}' does not exist"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: create_backup
+# Description: Creates a backup of an app's data and config
+# -----------------------------------------------------------------------------
+create_backup() {
+  local app_name="$1"
+  local backup_id
+  backup_id=$(date +%Y-%m-%d-%H%M%S)
+  local backup_dir="${BACKUPS_DIR}/${app_name}/${backup_id}"
+
+  mkdir -p "${backup_dir}"
+
+  # Backup config
+  if [[ -d "${APPS_CONFIG_DIR}/${app_name}" ]]; then
+    cp -r "${APPS_CONFIG_DIR}/${app_name}" "${backup_dir}/config"
+  fi
+
+  # Backup repo (excluding .venv and node_modules to save space)
+  if [[ -d "${APPS_DATA_DIR}/${app_name}/repo" ]]; then
+    tar --exclude='.venv' --exclude='node_modules' --exclude='.git' \
+      -czf "${backup_dir}/repo.tar.gz" \
+      -C "${APPS_DATA_DIR}/${app_name}" repo 2>/dev/null || true
+  fi
+
+  # Backup systemd service file
+  if [[ -f "${SYSTEMD_USER_DIR}/appmotel-${app_name}.service" ]]; then
+    cp "${SYSTEMD_USER_DIR}/appmotel-${app_name}.service" "${backup_dir}/"
+  fi
+
+  # Backup Traefik config
+  if [[ -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml" ]]; then
+    cp "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml" "${backup_dir}/"
+  fi
+
+  echo "${backup_id}"
+  log_msg "INFO" "Backup created: ${backup_id}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: restore_backup
+# Description: Restores an app from a backup
+# -----------------------------------------------------------------------------
+restore_backup() {
+  local app_name="$1"
+  local backup_id="$2"
+  local backup_dir="${BACKUPS_DIR}/${app_name}/${backup_id}"
+
+  if [[ ! -d "${backup_dir}" ]]; then
+    die "Backup '${backup_id}' not found for app '${app_name}'"
+  fi
+
+  log_msg "INFO" "Restoring from backup: ${backup_id}"
+
+  # Stop service if running
+  systemctl --user stop "appmotel-${app_name}" 2>/dev/null || true
+
+  # Restore config
+  if [[ -d "${backup_dir}/config" ]]; then
+    rm -rf "${APPS_CONFIG_DIR}/${app_name}"
+    cp -r "${backup_dir}/config" "${APPS_CONFIG_DIR}/${app_name}"
+  fi
+
+  # Restore repo
+  if [[ -f "${backup_dir}/repo.tar.gz" ]]; then
+    rm -rf "${APPS_DATA_DIR}/${app_name}/repo"
+    mkdir -p "${APPS_DATA_DIR}/${app_name}"
+    tar -xzf "${backup_dir}/repo.tar.gz" -C "${APPS_DATA_DIR}/${app_name}"
+  fi
+
+  # Restore systemd service
+  if [[ -f "${backup_dir}/appmotel-${app_name}.service" ]]; then
+    cp "${backup_dir}/appmotel-${app_name}.service" "${SYSTEMD_USER_DIR}/"
+    systemctl --user daemon-reload
+  fi
+
+  # Restore Traefik config
+  if [[ -f "${backup_dir}/${app_name}.yaml" ]]; then
+    cp "${backup_dir}/${app_name}.yaml" "${TRAEFIK_DYNAMIC_DIR}/"
+  fi
+
+  # Reinstall dependencies
+  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+  setup_python_env "${repo_dir}"
+  setup_nodejs_env "${repo_dir}"
+
+  # Start service
+  systemctl --user start "appmotel-${app_name}"
+
+  log_msg "INFO" "Restore completed successfully"
+}
+
+# -----------------------------------------------------------------------------
+# Function: list_backups
+# Description: Lists available backups for an app
+# -----------------------------------------------------------------------------
+list_backups() {
+  local app_name="$1"
+  local backup_base="${BACKUPS_DIR}/${app_name}"
+
+  if [[ ! -d "${backup_base}" ]]; then
+    log_msg "INFO" "No backups found for app '${app_name}'"
+    return
+  fi
+
+  printf "%-25s %s\n" "BACKUP ID" "SIZE"
+  printf "%-25s %s\n" "---------" "----"
+
+  for backup_dir in "${backup_base}"/*; do
+    if [[ -d "${backup_dir}" ]]; then
+      local backup_id
+      backup_id=$(basename "${backup_dir}")
+      local size
+      size=$(du -sh "${backup_dir}" 2>/dev/null | cut -f1)
+      printf "%-25s %s\n" "${backup_id}" "${size}"
+    fi
+  done
+}
+
+# -----------------------------------------------------------------------------
+# Function: parse_env_file
+# Description: Parses .env file handling quotes and special characters
+# Returns: Variable assignments that can be evaluated
+# -----------------------------------------------------------------------------
+parse_env_file() {
+  local env_file="$1"
+
+  if [[ ! -f "${env_file}" ]]; then
+    return
+  fi
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    # Skip empty lines and comments
+    [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+
+    # Extract key and value
+    if [[ "${line}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local value="${BASH_REMATCH[2]}"
+
+      # Remove surrounding quotes if present
+      if [[ "${value}" =~ ^\"(.*)\"$ ]] || [[ "${value}" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      fi
+
+      # Output properly quoted assignment
+      printf '%s=%q\n' "${key}" "${value}"
+    fi
+  done < "${env_file}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: parse_procfile
+# Description: Parses Procfile and returns process definitions
+# Returns: Lines in format "process_name:command"
+# -----------------------------------------------------------------------------
+parse_procfile() {
+  local procfile="$1"
+
+  if [[ ! -f "${procfile}" ]]; then
+    return 1
+  fi
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    # Skip empty lines and comments
+    [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+
+    # Parse "process_name: command"
+    if [[ "${line}" =~ ^([a-zA-Z][a-zA-Z0-9_-]*)[[:space:]]*:[[:space:]]*(.+)$ ]]; then
+      local proc_name="${BASH_REMATCH[1]}"
+      local proc_cmd="${BASH_REMATCH[2]}"
+      echo "${proc_name}:${proc_cmd}"
+    fi
+  done < "${procfile}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: find_free_port
+# Description: Finds a random free port
+# -----------------------------------------------------------------------------
+find_free_port() {
+  local port
+  local max_attempts=100
+  local attempt=0
+
+  while [[ ${attempt} -lt ${max_attempts} ]]; do
+    port=$((MIN_PORT + RANDOM % (MAX_PORT - MIN_PORT)))
+
+    if ! ss -tuln | grep -q ":${port} "; then
+      echo "${port}"
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  die "Could not find free port after ${max_attempts} attempts"
+}
+
+# -----------------------------------------------------------------------------
+# Function: get_port_from_env
+# Description: Extracts port from app's .env file
+# -----------------------------------------------------------------------------
+get_port_from_env() {
+  local app_name="$1"
+  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+  local env_file="${repo_dir}/.env"
+
+  if [[ ! -f "${env_file}" ]]; then
+    return 1
+  fi
+
+  # Look for PORT variable
+  local port
+  port=$(grep -E '^PORT=' "${env_file}" | head -1 | cut -d'=' -f2 | tr -d ' "'"'" || true)
+
+  if [[ -n "${port}" ]]; then
+    echo "${port}"
+    return 0
+  fi
+
+  # Look for other variables containing PORT
+  port=$(grep -iE '^[A-Z_]*PORT[A-Z_]*=' "${env_file}" | head -1 | cut -d'=' -f2 | tr -d ' "'"'" || true)
+
+  if [[ -n "${port}" ]]; then
+    echo "${port}"
+    return 0
+  fi
+
+  return 1
+}
+
+# -----------------------------------------------------------------------------
+# Function: save_app_metadata
+# Description: Saves app metadata to config directory
+# -----------------------------------------------------------------------------
+save_app_metadata() {
+  local app_name="$1"
+  local github_url="$2"
+  local branch="$3"
+  local port="$4"
+
+  local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+  mkdir -p "${config_dir}"
+
+  local metadata_file="${config_dir}/metadata.conf"
+
+  cat > "${metadata_file}" <<EOF
+APP_NAME="${app_name}"
+GITHUB_URL="${github_url}"
+BRANCH="${branch}"
+PORT="${port}"
+LAST_DEPLOYMENT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+EOF
+
+  log_msg "INFO" "App metadata saved"
+}
+
+# -----------------------------------------------------------------------------
+# Function: load_app_metadata
+# Description: Loads app metadata from config directory
+# -----------------------------------------------------------------------------
+load_app_metadata() {
+  local app_name="$1"
+  local metadata_file="${APPS_CONFIG_DIR}/${app_name}/metadata.conf"
+
+  if [[ ! -f "${metadata_file}" ]]; then
+    die "App metadata not found"
+  fi
+
+  source "${metadata_file}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: detect_app_type
+# Description: Detects application type and returns start command
+# -----------------------------------------------------------------------------
+detect_app_type() {
+  local repo_dir="$1"
+  local -n cmd_ref=$2
+
+  if [[ -f "${repo_dir}/requirements.txt" ]]; then
+    # Python app
+    if [[ -f "${repo_dir}/app.py" ]]; then
+      cmd_ref="python3 app.py"
+    elif [[ $(find "${repo_dir}" -maxdepth 1 -name "*.py" -type f | wc -l) -eq 1 ]]; then
+      local py_file
+      py_file=$(find "${repo_dir}" -maxdepth 1 -name "*.py" -type f | head -1)
+      cmd_ref="python3 $(basename "${py_file}")"
+    elif [[ -d "${repo_dir}/bin" ]] && [[ $(find "${repo_dir}/bin" -type f -executable | wc -l) -eq 1 ]]; then
+      local bin_file
+      bin_file=$(find "${repo_dir}/bin" -type f -executable | head -1)
+      cmd_ref="$(basename "${bin_file}")"
+    else
+      return 1
+    fi
+    return 0
+  elif [[ -f "${repo_dir}/package.json" ]]; then
+    # Node.js app
+    cmd_ref="npm start"
+    return 0
+  elif [[ -d "${repo_dir}/bin" ]] && [[ $(find "${repo_dir}/bin" -type f -executable | wc -l) -eq 1 ]]; then
+    # Single executable in bin
+    local bin_file
+    bin_file=$(find "${repo_dir}/bin" -type f -executable | head -1)
+    cmd_ref="bin/$(basename "${bin_file}")"
+    return 0
+  fi
+
+  return 1
+}
+
+# -----------------------------------------------------------------------------
+# Function: create_systemd_service
+# Description: Creates systemd service for app
+# -----------------------------------------------------------------------------
+create_systemd_service() {
+  local app_name="$1"
+  local repo_dir="$2"
+  local port="$3"
+
+  local service_file="${SYSTEMD_USER_DIR}/appmotel-${app_name}.service"
+  local env_file="${repo_dir}/.env"
+
+  # Detect app type and get start command
+  local start_cmd=""
+  if ! detect_app_type "${repo_dir}" start_cmd; then
+    die "Could not determine how to run the app. Please check app structure."
+  fi
+
+  log_msg "INFO" "Detected start command: ${start_cmd}"
+
+  # For Python apps, use the venv python directly
+  if [[ -f "${repo_dir}/requirements.txt" ]] && [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
+    # Replace python3 with full path to venv python
+    start_cmd="${start_cmd/python3/${repo_dir}\/.venv\/bin\/python3}"
+    log_msg "INFO" "Using virtual environment Python: ${start_cmd}"
+  fi
+
+  # Build environment file directive
+  local env_directive=""
+  if [[ -f "${env_file}" ]]; then
+    env_directive="EnvironmentFile=${env_file}"
+  fi
+
+  # Get resource limits from .env or use defaults
+  local memory_limit="${DEFAULT_MEMORY_LIMIT}"
+  local cpu_quota="${DEFAULT_CPU_QUOTA}"
+
+  if [[ -f "${env_file}" ]]; then
+    # Parse env file for resource overrides
+    local parsed_env
+    parsed_env=$(parse_env_file "${env_file}")
+    if echo "${parsed_env}" | grep -q "^MEMORY_LIMIT="; then
+      memory_limit=$(echo "${parsed_env}" | grep "^MEMORY_LIMIT=" | cut -d= -f2-)
+    fi
+    if echo "${parsed_env}" | grep -q "^CPU_QUOTA="; then
+      cpu_quota=$(echo "${parsed_env}" | grep "^CPU_QUOTA=" | cut -d= -f2-)
+    fi
+  fi
+
+  cat > "${service_file}" <<EOF
+[Unit]
+Description=Appmotel Application: ${app_name}
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${repo_dir}
+${env_directive}
+Environment="PORT=${port}"
+Environment="HOME=${APPMOTEL_HOME}"
+Environment="USER=appmotel"
+ExecStart=/bin/bash -c '${start_cmd}'
+Restart=always
+RestartSec=10
+
+# Resource limits
+MemoryMax=${memory_limit}
+CPUQuota=${cpu_quota}
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+
+  # Ensure XDG_RUNTIME_DIR is set
+  export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+  systemctl --user daemon-reload
+  log_msg "INFO" "Systemd user service created: appmotel-${app_name}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: create_systemd_service_procfile
+# Description: Creates systemd service for a Procfile process
+# -----------------------------------------------------------------------------
+create_systemd_service_procfile() {
+  local app_name="$1"
+  local proc_name="$2"
+  local repo_dir="$3"
+  local port="$4"
+  local start_cmd="$5"
+
+  local service_file="${SYSTEMD_USER_DIR}/appmotel-${app_name}-${proc_name}.service"
+  local env_file="${repo_dir}/.env"
+
+  # For Python apps, use the venv python directly
+  if [[ -f "${repo_dir}/requirements.txt" ]] && [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
+    start_cmd="${start_cmd/python3/${repo_dir}\/.venv\/bin\/python3}"
+    start_cmd="${start_cmd/python /${repo_dir}\/.venv\/bin\/python3 }"
+  fi
+
+  # Build environment file directive
+  local env_directive=""
+  if [[ -f "${env_file}" ]]; then
+    env_directive="EnvironmentFile=${env_file}"
+  fi
+
+  # Get resource limits
+  local memory_limit="${DEFAULT_MEMORY_LIMIT}"
+  local cpu_quota="${DEFAULT_CPU_QUOTA}"
+
+  if [[ -f "${env_file}" ]]; then
+    local parsed_env
+    parsed_env=$(parse_env_file "${env_file}")
+    if echo "${parsed_env}" | grep -q "^MEMORY_LIMIT="; then
+      memory_limit=$(echo "${parsed_env}" | grep "^MEMORY_LIMIT=" | cut -d= -f2-)
+    fi
+    if echo "${parsed_env}" | grep -q "^CPU_QUOTA="; then
+      cpu_quota=$(echo "${parsed_env}" | grep "^CPU_QUOTA=" | cut -d= -f2-)
+    fi
+  fi
+
+  cat > "${service_file}" <<EOF
+[Unit]
+Description=Appmotel Application: ${app_name} (${proc_name})
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${repo_dir}
+${env_directive}
+Environment="PORT=${port}"
+Environment="HOME=${APPMOTEL_HOME}"
+Environment="USER=appmotel"
+ExecStart=/bin/bash -c '${start_cmd}'
+Restart=always
+RestartSec=10
+
+# Resource limits
+MemoryMax=${memory_limit}
+CPUQuota=${cpu_quota}
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+
+  systemctl --user daemon-reload
+  log_msg "INFO" "Systemd service created: appmotel-${app_name}-${proc_name}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: create_traefik_config
+# Description: Creates Traefik dynamic configuration for app
+# -----------------------------------------------------------------------------
+create_traefik_config() {
+  local app_name="$1"
+  local port="$2"
+  local base_domain="${3:-apps.example.edu}"
+  local repo_dir="${4:-}"
+
+  local config_file="${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
+  local app_url="${app_name}.${base_domain}"
+
+  # Get rate limit settings from .env or use defaults
+  local rate_limit_avg="${DEFAULT_RATE_LIMIT_AVG}"
+  local rate_limit_burst="${DEFAULT_RATE_LIMIT_BURST}"
+  local health_check_path="/health"
+  local enable_rate_limit="true"
+
+  if [[ -n "${repo_dir}" ]] && [[ -f "${repo_dir}/.env" ]]; then
+    local parsed_env
+    parsed_env=$(parse_env_file "${repo_dir}/.env")
+    if echo "${parsed_env}" | grep -q "^RATE_LIMIT_AVG="; then
+      rate_limit_avg=$(echo "${parsed_env}" | grep "^RATE_LIMIT_AVG=" | cut -d= -f2-)
+    fi
+    if echo "${parsed_env}" | grep -q "^RATE_LIMIT_BURST="; then
+      rate_limit_burst=$(echo "${parsed_env}" | grep "^RATE_LIMIT_BURST=" | cut -d= -f2-)
+    fi
+    if echo "${parsed_env}" | grep -q "^HEALTH_CHECK_PATH="; then
+      health_check_path=$(echo "${parsed_env}" | grep "^HEALTH_CHECK_PATH=" | cut -d= -f2-)
+    fi
+    if echo "${parsed_env}" | grep -q "^DISABLE_RATE_LIMIT="; then
+      enable_rate_limit="false"
+    fi
+  fi
+
+  # Build middleware list
+  local middlewares_line=""
+  if [[ "${enable_rate_limit}" == "true" ]]; then
+    middlewares_line="middlewares:
+        - ${app_name}-ratelimit"
+  fi
+
+  cat > "${config_file}" <<EOF
+http:
+  routers:
+    ${app_name}:
+      rule: "Host(\`${app_url}\`)"
+      entryPoints:
+        - websecure
+      service: ${app_name}
+      ${middlewares_line}
+      tls: {}
+
+  services:
+    ${app_name}:
+      loadBalancer:
+        servers:
+          - url: "http://localhost:${port}"
+        healthCheck:
+          path: ${health_check_path}
+          interval: 30s
+          timeout: 5s
+
+  middlewares:
+    ${app_name}-ratelimit:
+      rateLimit:
+        average: ${rate_limit_avg}
+        burst: ${rate_limit_burst}
+EOF
+
+  log_msg "INFO" "Traefik config created: ${app_url} -> localhost:${port}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: run_install_script
+# Description: Runs app's install.sh script
+# -----------------------------------------------------------------------------
+run_install_script() {
+  local repo_dir="$1"
+  local install_script="${repo_dir}/install.sh"
+
+  if [[ ! -f "${install_script}" ]]; then
+    log_msg "WARN" "No install.sh found in repository, skipping installation steps"
+    return 0
+  fi
+
+  if [[ ! -x "${install_script}" ]]; then
+    chmod +x "${install_script}"
+  fi
+
+  log_msg "INFO" "Running install.sh"
+
+  cd "${repo_dir}"
+
+  if bash "${install_script}"; then
+    log_msg "INFO" "Installation completed successfully"
+    return 0
+  else
+    log_msg "ERROR" "Installation script failed"
+    return 1
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: setup_python_env
+# Description: Sets up Python virtual environment
+# -----------------------------------------------------------------------------
+setup_python_env() {
+  local repo_dir="$1"
+
+  if [[ ! -f "${repo_dir}/requirements.txt" ]]; then
+    return 0
+  fi
+
+  log_msg "INFO" "Setting up Python virtual environment"
+
+  cd "${repo_dir}"
+
+  if [[ ! -d ".venv" ]]; then
+    python3 -m venv .venv
+  fi
+
+  source .venv/bin/activate
+  pip install --upgrade pip
+  pip install -r requirements.txt
+
+  log_msg "INFO" "Python dependencies installed"
+}
+
+# -----------------------------------------------------------------------------
+# Function: setup_nodejs_env
+# Description: Sets up Node.js environment
+# -----------------------------------------------------------------------------
+setup_nodejs_env() {
+  local repo_dir="$1"
+
+  if [[ ! -f "${repo_dir}/package.json" ]]; then
+    return 0
+  fi
+
+  log_msg "INFO" "Installing Node.js dependencies"
+
+  cd "${repo_dir}"
+  npm install
+
+  log_msg "INFO" "Node.js dependencies installed"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_add
+# Description: Adds a new app
+# -----------------------------------------------------------------------------
+cmd_add() {
+  if [[ $# -lt 3 ]]; then
+    die "Usage: appmo add <app-name> <github-url> <branch>"
+  fi
+
+  local app_name="$1"
+  local github_url="$2"
+  local branch="$3"
+
+  validate_app_name "${app_name}"
+
+  if app_exists "${app_name}"; then
+    die "App '${app_name}' already exists"
+  fi
+
+  log_msg "INFO" "Adding app: ${app_name}"
+
+  # Create directories
+  local app_data_dir="${APPS_DATA_DIR}/${app_name}"
+  local repo_dir="${app_data_dir}/repo"
+
+  mkdir -p "${app_data_dir}"
+
+  # Clone repository
+  log_msg "INFO" "Cloning repository: ${github_url}"
+  if ! git clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
+    rm -rf "${app_data_dir}"
+    die "Failed to clone repository"
+  fi
+
+  # Determine port
+  local port
+  if port=$(get_port_from_env "${app_name}"); then
+    log_msg "INFO" "Using port from .env: ${port}"
+  else
+    port=$(find_free_port)
+    log_msg "INFO" "Assigned port: ${port}"
+
+    # Add PORT to .env if it exists
+    if [[ -f "${repo_dir}/.env" ]]; then
+      if ! grep -q "^PORT=" "${repo_dir}/.env"; then
+        echo "PORT=${port}" >> "${repo_dir}/.env"
+      fi
+    else
+      echo "PORT=${port}" > "${repo_dir}/.env"
+    fi
+  fi
+
+  # Check if port is in use
+  if ss -tuln | grep -q ":${port} "; then
+    rm -rf "${app_data_dir}"
+    die "Port ${port} is already in use"
+  fi
+
+  # Setup environments
+  setup_python_env "${repo_dir}" || {
+    rm -rf "${app_data_dir}"
+    die "Failed to setup Python environment"
+  }
+
+  setup_nodejs_env "${repo_dir}" || {
+    rm -rf "${app_data_dir}"
+    die "Failed to setup Node.js environment"
+  }
+
+  # Run install script
+  if ! run_install_script "${repo_dir}"; then
+    rm -rf "${app_data_dir}"
+    die "Installation failed, rolling back"
+  fi
+
+  # Load BASE_DOMAIN from .env if available
+  local base_domain="${BASE_DOMAIN:-apps.example.edu}"
+
+  # Check for Procfile (multi-process app)
+  local procfile="${repo_dir}/Procfile"
+  if [[ -f "${procfile}" ]]; then
+    log_msg "INFO" "Procfile detected, setting up multi-process app"
+
+    local proc_count=0
+    local web_port="${port}"
+
+    while IFS= read -r proc_line; do
+      if [[ "${proc_line}" =~ ^([a-zA-Z][a-zA-Z0-9_-]*):(.+)$ ]]; then
+        local proc_name="${BASH_REMATCH[1]}"
+        local proc_cmd="${BASH_REMATCH[2]}"
+        local proc_port="${port}"
+
+        # Web process gets the main port, others get incremented ports
+        if [[ "${proc_name}" != "web" ]]; then
+          ((proc_count++))
+          proc_port=$((port + proc_count))
+        fi
+
+        log_msg "INFO" "Creating service for process: ${proc_name} (port ${proc_port})"
+        create_systemd_service_procfile "${app_name}" "${proc_name}" "${repo_dir}" "${proc_port}" "${proc_cmd}"
+
+        # Enable and start service
+        systemctl --user enable "appmotel-${app_name}-${proc_name}"
+        systemctl --user start "appmotel-${app_name}-${proc_name}"
+      fi
+    done < <(parse_procfile "${procfile}")
+
+    # Create Traefik config (only routes to web process on main port)
+    create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+  else
+    # Single process app
+    create_systemd_service "${app_name}" "${repo_dir}" "${port}"
+
+    # Create Traefik config with repo_dir for settings
+    create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+
+    # Start service
+    systemctl --user enable "appmotel-${app_name}"
+    systemctl --user start "appmotel-${app_name}"
+  fi
+
+  # Save metadata
+  save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}"
+
+  log_msg "INFO" "App '${app_name}' added successfully"
+  log_msg "INFO" "URL: https://${app_name}.${base_domain}"
+  log_msg "INFO" "Status: appmo status ${app_name}"
+  log_msg "INFO" "Logs: appmo logs ${app_name}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_remove
+# Description: Removes an app
+# -----------------------------------------------------------------------------
+cmd_remove() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo remove <app-name>"
+  fi
+
+  local app_name="$1"
+
+  require_app_exists "${app_name}"
+
+  log_msg "INFO" "Removing app: ${app_name}"
+
+  # Stop and disable service
+  if systemctl --user is-active --quiet "appmotel-${app_name}"; then
+    systemctl --user stop "appmotel-${app_name}"
+  fi
+
+  systemctl --user disable "appmotel-${app_name}" 2>/dev/null || true
+
+  # Remove systemd service
+  rm -f "${SYSTEMD_USER_DIR}/appmotel-${app_name}.service"
+  systemctl --user daemon-reload
+
+  # Remove Traefik config
+  rm -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
+
+  # Remove app data
+  rm -rf "${APPS_DATA_DIR}/${app_name}"
+
+  # Remove app config
+  rm -rf "${APPS_CONFIG_DIR}/${app_name}"
+
+  log_msg "INFO" "App '${app_name}' removed successfully"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_list
+# Description: Lists all apps
+# -----------------------------------------------------------------------------
+cmd_list() {
+  if [[ ! -d "${APPS_CONFIG_DIR}" ]]; then
+    echo "No apps configured"
+    return
+  fi
+
+  local -a apps
+  mapfile -t apps < <(find "${APPS_CONFIG_DIR}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+
+  if [[ ${#apps[@]} -eq 0 ]]; then
+    echo "No apps configured"
+    return
+  fi
+
+  printf "%-20s %-10s %-40s\n" "APP NAME" "STATUS" "URL"
+  printf "%-20s %-10s %-40s\n" "--------" "------" "---"
+
+  local base_domain="${BASE_DOMAIN:-apps.example.edu}"
+
+  for app in "${apps[@]}"; do
+    local status="stopped"
+    if systemctl --user is-active --quiet "appmotel-${app}"; then
+      status="running"
+    fi
+
+    local url="https://${app}.${base_domain}"
+
+    printf "%-20s %-10s %-40s\n" "${app}" "${status}" "${url}"
+  done
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_status
+# Description: Shows app status
+# -----------------------------------------------------------------------------
+cmd_status() {
+  local base_domain="${BASE_DOMAIN:-apps.example.edu}"
+
+  if [[ $# -eq 0 ]]; then
+    # Show status for all apps
+    cmd_list
+    return
+  fi
+
+  local app_name="$1"
+
+  require_app_exists "${app_name}"
+
+  load_app_metadata "${app_name}"
+
+  echo "App: ${app_name}"
+  echo "URL: https://${app_name}.${base_domain}"
+  echo "GitHub: ${GITHUB_URL} (${BRANCH})"
+  echo "Port: ${PORT}"
+  echo "Last Deployment: ${LAST_DEPLOYMENT}"
+  echo ""
+
+  # Check systemd status
+  echo "Service Status:"
+  if systemctl --user is-active --quiet "appmotel-${app_name}"; then
+    echo "  Systemd: running"
+  else
+    echo "  Systemd: stopped"
+  fi
+
+  # Check port response
+  if timeout 2 bash -c "cat < /dev/null > /dev/tcp/localhost/${PORT}" 2>/dev/null; then
+    echo "  Port ${PORT}: responding"
+  else
+    echo "  Port ${PORT}: not responding"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_start
+# Description: Starts an app
+# -----------------------------------------------------------------------------
+cmd_start() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo start <app-name>"
+  fi
+
+  local app_name="$1"
+
+  require_app_exists "${app_name}"
+
+  log_msg "INFO" "Starting app: ${app_name}"
+  systemctl --user start "appmotel-${app_name}"
+  log_msg "INFO" "App started"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_stop
+# Description: Stops an app
+# -----------------------------------------------------------------------------
+cmd_stop() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo stop <app-name>"
+  fi
+
+  local app_name="$1"
+
+  require_app_exists "${app_name}"
+
+  log_msg "INFO" "Stopping app: ${app_name}"
+  systemctl --user stop "appmotel-${app_name}"
+  log_msg "INFO" "App stopped"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_restart
+# Description: Restarts an app
+# -----------------------------------------------------------------------------
+cmd_restart() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo restart <app-name>"
+  fi
+
+  local app_name="$1"
+
+  require_app_exists "${app_name}"
+
+  log_msg "INFO" "Restarting app: ${app_name}"
+  systemctl --user restart "appmotel-${app_name}"
+  log_msg "INFO" "App restarted"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_update
+# Description: Updates an app with automatic backup and rollback on failure
+# -----------------------------------------------------------------------------
+cmd_update() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo update <app-name>"
+  fi
+
+  local app_name="$1"
+
+  require_app_exists "${app_name}"
+
+  load_app_metadata "${app_name}"
+
+  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+
+  log_msg "INFO" "Updating app: ${app_name}"
+
+  # Create backup before update
+  log_msg "INFO" "Creating backup before update..."
+  local backup_id
+  backup_id=$(create_backup "${app_name}")
+
+  # Track if we need to rollback
+  local update_failed=false
+
+  # Pull latest changes
+  cd "${repo_dir}"
+  if ! git pull origin "${BRANCH}"; then
+    log_msg "ERROR" "Failed to pull latest changes"
+    update_failed=true
+  fi
+
+  if [[ "${update_failed}" == "false" ]]; then
+    # Setup environments
+    setup_python_env "${repo_dir}"
+    setup_nodejs_env "${repo_dir}"
+
+    # Run install script
+    if ! run_install_script "${repo_dir}"; then
+      log_msg "ERROR" "Install script failed"
+      update_failed=true
+    fi
+  fi
+
+  if [[ "${update_failed}" == "true" ]]; then
+    log_msg "WARN" "Update failed, rolling back to backup ${backup_id}..."
+    restore_backup "${app_name}" "${backup_id}"
+    log_msg "INFO" "Rollback completed. App restored to previous version."
+    return 1
+  fi
+
+  # Update metadata timestamp
+  save_app_metadata "${app_name}" "${GITHUB_URL}" "${BRANCH}" "${PORT}"
+
+  # Restart service
+  systemctl --user restart "appmotel-${app_name}"
+
+  log_msg "INFO" "App updated successfully (backup: ${backup_id})"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_logs
+# Description: Shows app logs
+# -----------------------------------------------------------------------------
+cmd_logs() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo logs <app-name> [lines]"
+  fi
+
+  local app_name="$1"
+  local lines="${2:-50}"
+
+  require_app_exists "${app_name}"
+
+  journalctl --user -u "appmotel-${app_name}" -n "${lines}" --no-pager
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_exec
+# Description: Executes command in app environment
+# -----------------------------------------------------------------------------
+cmd_exec() {
+  if [[ $# -lt 2 ]]; then
+    die "Usage: appmo exec <app-name> <command>"
+  fi
+
+  local app_name="$1"
+  shift
+
+  require_app_exists "${app_name}"
+
+  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+  local env_file="${repo_dir}/.env"
+
+  cd "${repo_dir}"
+
+  if [[ -f "${env_file}" ]]; then
+    set -o allexport
+    source "${env_file}"
+    set +o allexport
+  fi
+
+  # Activate Python venv if it exists
+  if [[ -d "${repo_dir}/.venv" ]]; then
+    source "${repo_dir}/.venv/bin/activate"
+  fi
+
+  "$@"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_backup
+# Description: Creates a backup of an app
+# -----------------------------------------------------------------------------
+cmd_backup() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo backup <app-name>"
+  fi
+
+  local app_name="$1"
+  require_app_exists "${app_name}"
+
+  log_msg "INFO" "Creating backup for app: ${app_name}"
+  local backup_id
+  backup_id=$(create_backup "${app_name}")
+  log_msg "INFO" "Backup created successfully: ${backup_id}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_restore
+# Description: Restores an app from a backup
+# -----------------------------------------------------------------------------
+cmd_restore() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo restore <app-name> [backup-id]"
+  fi
+
+  local app_name="$1"
+  local backup_id="${2:-}"
+
+  require_app_exists "${app_name}"
+
+  # If no backup-id provided, use the most recent
+  if [[ -z "${backup_id}" ]]; then
+    local backup_base="${BACKUPS_DIR}/${app_name}"
+    if [[ ! -d "${backup_base}" ]]; then
+      die "No backups found for app '${app_name}'"
+    fi
+    backup_id=$(ls -t "${backup_base}" | head -1)
+    if [[ -z "${backup_id}" ]]; then
+      die "No backups found for app '${app_name}'"
+    fi
+    log_msg "INFO" "Using most recent backup: ${backup_id}"
+  fi
+
+  restore_backup "${app_name}" "${backup_id}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_backups
+# Description: Lists available backups for an app
+# -----------------------------------------------------------------------------
+cmd_backups() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo backups <app-name>"
+  fi
+
+  local app_name="$1"
+  require_app_exists "${app_name}"
+
+  list_backups "${app_name}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: main
+# Description: Main CLI dispatcher
+# -----------------------------------------------------------------------------
+main() {
+  if [[ $# -eq 0 ]]; then
+    usage
+  fi
+
+  local command="$1"
+  shift
+
+  case "${command}" in
+    add) cmd_add "$@" ;;
+    remove) cmd_remove "$@" ;;
+    list) cmd_list "$@" ;;
+    status) cmd_status "$@" ;;
+    start) cmd_start "$@" ;;
+    stop) cmd_stop "$@" ;;
+    restart) cmd_restart "$@" ;;
+    update) cmd_update "$@" ;;
+    logs) cmd_logs "$@" ;;
+    exec) cmd_exec "$@" ;;
+    backup) cmd_backup "$@" ;;
+    restore) cmd_restore "$@" ;;
+    backups) cmd_backups "$@" ;;
+    -h|--help|help) usage ;;
+    *) die "Unknown command: ${command}. Use 'appmo --help' for usage." ;;
+  esac
+}
+
+main "$@"

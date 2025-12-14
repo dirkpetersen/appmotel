@@ -1,0 +1,12 @@
+{
+  "name": "express-hello",
+  "version": "1.0.0",
+  "description": "Sample Express.js application for Appmotel",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
