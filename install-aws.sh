@@ -350,6 +350,125 @@ wait_for_ssh() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: get_route53_hosted_zone
+# Description: Gets the first hosted zone from Route53
+# Arguments:
+#   $1 - Region
+# Returns: Hosted zone ID and domain name (format: "ID DOMAIN")
+# -----------------------------------------------------------------------------
+get_route53_hosted_zone() {
+  local region="$1"
+
+  log_msg "INFO" "Looking for Route53 hosted zones..."
+
+  local zone_info
+  zone_info=$(aws route53 list-hosted-zones \
+    --query 'HostedZones[0].[Id,Name]' \
+    --output text 2>/dev/null)
+
+  if [[ -z "${zone_info}" ]] || [[ "${zone_info}" == "None" ]]; then
+    log_msg "WARN" "No Route53 hosted zones found"
+    return 1
+  fi
+
+  local zone_id zone_name
+  zone_id=$(echo "${zone_info}" | awk '{print $1}' | sed 's|/hostedzone/||')
+  zone_name=$(echo "${zone_info}" | awk '{print $2}' | sed 's/\.$//')  # Remove trailing dot
+
+  log_msg "INFO" "Found hosted zone: ${zone_name} (${zone_id})"
+  echo "${zone_id} ${zone_name}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: configure_route53_dns
+# Description: Configures DNS records in Route53 for appmotel
+# Arguments:
+#   $1 - Hosted zone ID
+#   $2 - Domain name
+#   $3 - Server IP address
+# -----------------------------------------------------------------------------
+configure_route53_dns() {
+  local zone_id="$1"
+  local domain="$2"
+  local server_ip="$3"
+
+  log_msg "INFO" "Configuring Route53 DNS records..."
+
+  # Create change batch JSON for both records
+  local change_batch
+  change_batch=$(cat <<EOF
+{
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "appmotel.${domain}",
+        "Type": "A",
+        "TTL": 300,
+        "ResourceRecords": [{"Value": "${server_ip}"}]
+      }
+    },
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "*.${domain}",
+        "Type": "A",
+        "TTL": 300,
+        "ResourceRecords": [{"Value": "${server_ip}"}]
+      }
+    }
+  ]
+}
+EOF
+)
+
+  # Apply changes
+  local change_id
+  change_id=$(aws route53 change-resource-record-sets \
+    --hosted-zone-id "${zone_id}" \
+    --change-batch "${change_batch}" \
+    --query 'ChangeInfo.Id' \
+    --output text 2>/dev/null)
+
+  if [[ -z "${change_id}" ]] || [[ "${change_id}" == "None" ]]; then
+    log_msg "ERROR" "Failed to create DNS records"
+    return 1
+  fi
+
+  log_msg "INFO" "DNS records created:"
+  log_msg "INFO" "  A record: appmotel.${domain} → ${server_ip}"
+  log_msg "INFO" "  Wildcard: *.${domain} → ${server_ip}"
+  log_msg "INFO" "Change ID: ${change_id}"
+
+  return 0
+}
+
+# -----------------------------------------------------------------------------
+# Function: configure_base_domain
+# Description: Updates BASE_DOMAIN in remote .env file
+# Arguments:
+#   $1 - Host IP
+#   $2 - Key file path
+#   $3 - Domain name
+# -----------------------------------------------------------------------------
+configure_base_domain() {
+  local host="$1"
+  local key_file="$2"
+  local domain="$3"
+
+  log_msg "INFO" "Configuring BASE_DOMAIN=${domain} on remote server..."
+
+  ssh -i "${key_file}" \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR \
+      "${SSH_USER}@${host}" \
+      "sudo sed -i 's|^BASE_DOMAIN=.*|BASE_DOMAIN=\"${domain}\"|' /home/appmotel/.config/appmotel/.env"
+
+  log_msg "INFO" "BASE_DOMAIN configured successfully"
+}
+
+# -----------------------------------------------------------------------------
 # Function: install_appmotel
 # Description: Uploads and runs install.sh on remote instance
 # Arguments:
@@ -406,12 +525,14 @@ install_appmotel() {
 #   $2 - Key file path
 #   $3 - Instance ID
 #   $4 - Region
+#   $5 - Domain name (optional)
 # -----------------------------------------------------------------------------
 display_summary() {
   local host="$1"
   local key_file="$2"
   local instance_id="$3"
   local region="$4"
+  local domain="${5:-}"
 
   log_msg "INFO" "======================================"
   log_msg "INFO" "Appmotel EC2 Installation Complete!"
@@ -422,6 +543,17 @@ display_summary() {
   log_msg "INFO" "  Region: ${region}"
   log_msg "INFO" "  Public IP: ${host}"
   log_msg "INFO" "  OS: Amazon Linux 2023"
+
+  if [[ -n "${domain}" ]]; then
+    log_msg "INFO" "  Base Domain: ${domain}"
+    log_msg "INFO" ""
+    log_msg "INFO" "DNS Configuration:"
+    log_msg "INFO" "  ✓ Route53 records configured automatically"
+    log_msg "INFO" "  ✓ A record: appmotel.${domain} → ${host}"
+    log_msg "INFO" "  ✓ Wildcard: *.${domain} → ${host}"
+    log_msg "INFO" "  ✓ BASE_DOMAIN configured in ~/.config/appmotel/.env"
+  fi
+
   log_msg "INFO" ""
   log_msg "INFO" "Connect to your instance:"
   log_msg "INFO" "  ssh -i ${key_file} ${SSH_USER}@${host}"
@@ -437,19 +569,28 @@ display_summary() {
   log_msg "INFO" "3. Run user-level installation:"
   log_msg "INFO" "   curl -fsSL \"https://raw.githubusercontent.com/dirkpetersen/appmotel/main/install.sh?\$(date +%s)\" | bash"
   log_msg "INFO" ""
-  log_msg "INFO" "4. Configure your domain:"
-  log_msg "INFO" "   nano ~/.config/appmotel/.env"
-  log_msg "INFO" "   # Set BASE_DOMAIN to your actual domain"
-  log_msg "INFO" ""
-  log_msg "INFO" "5. Restart Traefik:"
-  log_msg "INFO" "   sudo systemctl restart traefik-appmotel"
-  log_msg "INFO" ""
-  log_msg "INFO" "6. Configure DNS (see documentation):"
-  log_msg "INFO" "   Option 1: Wildcard A record (*.apps.yourdomain.edu → ${host})"
-  log_msg "INFO" "   Option 2: Individual records per app"
-  log_msg "INFO" ""
-  log_msg "INFO" "7. Deploy your first app:"
-  log_msg "INFO" "   appmo add myapp https://github.com/username/repo main"
+
+  if [[ -n "${domain}" ]]; then
+    log_msg "INFO" "4. Deploy your first app (DNS already configured!):"
+    log_msg "INFO" "   appmo add myapp https://github.com/username/repo main"
+    log_msg "INFO" ""
+    log_msg "INFO" "   Your app will be available at: https://myapp.${domain}"
+  else
+    log_msg "INFO" "4. Configure your domain:"
+    log_msg "INFO" "   nano ~/.config/appmotel/.env"
+    log_msg "INFO" "   # Set BASE_DOMAIN to your actual domain"
+    log_msg "INFO" ""
+    log_msg "INFO" "5. Restart Traefik:"
+    log_msg "INFO" "   sudo systemctl restart traefik-appmotel"
+    log_msg "INFO" ""
+    log_msg "INFO" "6. Configure DNS (see documentation):"
+    log_msg "INFO" "   Option 1: Wildcard A record (*.apps.yourdomain.edu → ${host})"
+    log_msg "INFO" "   Option 2: Individual records per app"
+    log_msg "INFO" ""
+    log_msg "INFO" "7. Deploy your first app:"
+    log_msg "INFO" "   appmo add myapp https://github.com/username/repo main"
+  fi
+
   log_msg "INFO" ""
   log_msg "INFO" "AWS Management:"
   log_msg "INFO" "  Stop instance: aws ec2 stop-instances --region ${region} --instance-ids ${instance_id}"
@@ -582,8 +723,36 @@ main() {
   # Install Appmotel
   install_appmotel "${public_ip}" "${key_file}"
 
+  # Configure Route53 DNS (if available)
+  local zone_info domain_name zone_id
+  if zone_info=$(get_route53_hosted_zone "${region}"); then
+    zone_id=$(echo "${zone_info}" | awk '{print $1}')
+    domain_name=$(echo "${zone_info}" | awk '{print $2}')
+
+    # Configure DNS records in Route53
+    if configure_route53_dns "${zone_id}" "${domain_name}" "${public_ip}"; then
+      # Update BASE_DOMAIN on remote server
+      configure_base_domain "${public_ip}" "${key_file}" "${domain_name}"
+
+      # Restart Traefik to apply new domain configuration
+      log_msg "INFO" "Restarting Traefik to apply DNS configuration..."
+      ssh -i "${key_file}" \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          "${SSH_USER}@${public_ip}" \
+          "sudo systemctl restart traefik-appmotel" 2>/dev/null || log_msg "WARN" "Traefik not running yet (expected on first install)"
+    else
+      log_msg "WARN" "DNS configuration failed, continuing without automatic DNS setup"
+      domain_name=""
+    fi
+  else
+    log_msg "INFO" "No Route53 hosted zones found, skipping automatic DNS configuration"
+    domain_name=""
+  fi
+
   # Display summary
-  display_summary "${public_ip}" "${key_file}" "${instance_id}" "${region}"
+  display_summary "${public_ip}" "${key_file}" "${instance_id}" "${region}" "${domain_name:-}"
 }
 
 # Execute main function
