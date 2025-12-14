@@ -335,6 +335,7 @@ wait_for_ssh() {
     if ssh -i "${key_file}" \
            -o StrictHostKeyChecking=no \
            -o UserKnownHostsFile=/dev/null \
+           -o LogLevel=ERROR \
            -o ConnectTimeout=5 \
            -o BatchMode=yes \
            "${SSH_USER}@${host}" \
@@ -373,6 +374,7 @@ install_appmotel() {
   scp -i "${key_file}" \
       -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR \
       "${install_script}" \
       "${SSH_USER}@${host}:/tmp/install.sh"
 
@@ -382,6 +384,7 @@ install_appmotel() {
     scp -i "${key_file}" \
         -o StrictHostKeyChecking=no \
         -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR \
         "${env_default}" \
         "${SSH_USER}@${host}:/tmp/.env.default"
   fi
@@ -391,6 +394,7 @@ install_appmotel() {
   ssh -i "${key_file}" \
       -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR \
       "${SSH_USER}@${host}" \
       "sudo bash /tmp/install.sh"
 

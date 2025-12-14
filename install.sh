@@ -744,10 +744,17 @@ verify_system_setup() {
 install_as_root() {
   log_msg "INFO" "Starting system-level installation (root privileges)"
 
+  # Create user FIRST before creating any directories
+  create_appmotel_user
+
+  # Load env (may create directories as root)
   load_env
 
-  # System-level operations only
-  create_appmotel_user
+  # Fix ownership of home directory and all contents
+  chown -R "${APPMOTEL_USER}:${APPMOTEL_USER}" "${APPMOTEL_HOME}"
+  log_msg "INFO" "Fixed ownership of ${APPMOTEL_HOME}"
+
+  # System-level operations
   configure_sudoers
   enable_linger
 
