@@ -127,7 +127,7 @@ sudo -u appmotel appmo status myapp
 sudo -u appmotel whoami                           # Returns: appmotel
 sudo -u appmotel bash /path/to/install.sh         # Run installation
 sudo -u appmotel appmo list                       # Use appmo CLI
-sudo -u appmotel appmo add myapp https://...       # Add an app (branch defaults to main)
+sudo -u appmotel appmo add myapp https://... main # Add an app
 ```
 
 ## Required Permissions for appmotel User

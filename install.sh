@@ -81,7 +81,7 @@ load_env() {
   local config_dir="${APPMOTEL_HOME}/.config/appmotel"
   local env_file="${config_dir}/.env"
   local env_default_local="${SCRIPT_DIR}/.env.default"
-  local github_env_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/.env.default"
+  local github_env_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/.env.default?$(date +%s)"
 
   # Create config directory if it doesn't exist
   mkdir -p "${config_dir}"
@@ -537,7 +537,7 @@ install_appmo_cli() {
 
   local appmo_source_local="${SCRIPT_DIR}/bin/appmo"
   local appmo_dest="${APPMOTEL_HOME}/.local/bin/appmo"
-  local github_appmo_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmo"
+  local github_appmo_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmo?$(date +%s)"
 
   # Try local file first, download if not found
   if [[ -f "${appmo_source_local}" ]]; then
@@ -558,7 +558,7 @@ install_appmo_cli() {
   # Install shell completion
   local completion_source_local="${SCRIPT_DIR}/bin/appmo-completion.bash"
   local completion_dest="${APPMOTEL_HOME}/.local/share/bash-completion/completions"
-  local github_completion_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmo-completion.bash"
+  local github_completion_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmo-completion.bash?$(date +%s)"
 
   mkdir -p "${completion_dest}"
 
@@ -615,8 +615,8 @@ install_autopull() {
 
   local service_template_local="${SCRIPT_DIR}/templates/appmotel-autopull.service"
   local timer_template_local="${SCRIPT_DIR}/templates/appmotel-autopull.timer"
-  local github_service_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/templates/appmotel-autopull.service"
-  local github_timer_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/templates/appmotel-autopull.timer"
+  local github_service_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/templates/appmotel-autopull.service?$(date +%s)"
+  local github_timer_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/templates/appmotel-autopull.timer?$(date +%s)"
 
   # Install service unit
   if [[ -f "${service_template_local}" ]]; then
@@ -827,7 +827,7 @@ install_as_user() {
     log_msg "INFO" "  appmo add <app-name> <github-url> [branch]"
     log_msg "INFO" ""
     log_msg "INFO" "Example:"
-    log_msg "INFO" "  appmo add myapp https://github.com/username/myrepo"
+    log_msg "INFO" "  appmo add myapp https://github.com/username/myrepo main"
     return 0
   fi
 
