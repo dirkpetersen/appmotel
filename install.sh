@@ -824,10 +824,10 @@ install_as_user() {
     log_msg "INFO" "CLI tool: ~/.local/bin/appmo"
     log_msg "INFO" ""
     log_msg "INFO" "Add your first app:"
-    log_msg "INFO" "  appmo add <app-name> <github-url> <branch>"
+    log_msg "INFO" "  appmo add <app-name> <github-url> [branch]"
     log_msg "INFO" ""
     log_msg "INFO" "Example:"
-    log_msg "INFO" "  appmo add myapp https://github.com/username/myrepo main"
+    log_msg "INFO" "  appmo add myapp https://github.com/username/myrepo"
     return 0
   fi
 

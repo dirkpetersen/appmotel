@@ -97,7 +97,7 @@ When a new application is configured in Appmotel:
 - CLI tool location: `/home/appmotel/.local/bin/appmo`
 
 **Supported Commands:**
-- `appmo add <app-name> <github-url> <branch>` - Add and deploy a new app
+- `appmo add <app-name> <github-url> [branch]` - Add and deploy a new app (default: main)
 - `appmo remove <app-name>` - Remove app (stop service, remove Traefik config, delete all app files)
 - `appmo list` - List all configured apps
 - `appmo status [app-name]` - Show running state, port, URL, last deployment time (checks both systemd status and actual port response)

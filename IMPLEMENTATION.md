@@ -205,8 +205,8 @@ To test the system, you need:
 
 5. **Deploy test applications:**
    ```bash
-   appmo add flask-hello https://github.com/YOUR_USERNAME/test-flask-hello main
-   appmo add express-hello https://github.com/YOUR_USERNAME/test-express-hello main
+   appmo add flask-hello https://github.com/YOUR_USERNAME/test-flask-hello
+   appmo add express-hello https://github.com/YOUR_USERNAME/test-express-hello
    ```
 
 6. **Verify deployments:**

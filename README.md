@@ -19,7 +19,7 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 ## Features
 
 ### 🚀 Core Features
-- **One-Command Deploy**: `appmo add myapp https://github.com/user/repo main`
+- **One-Command Deploy**: `appmo add myapp https://github.com/user/repo`
 - **Automatic HTTPS**: Let's Encrypt integration via Traefik with wildcard certificate support
 - **Zero-Downtime Updates**: Automatic backup and rollback on failure
 - **Multi-Process Apps**: Procfile support for apps requiring multiple processes
@@ -84,7 +84,7 @@ This installs everything under `/home/appmotel` and starts the necessary service
 
 ```bash
 # Add and deploy an app
-sudo -u appmotel appmo add myapp https://github.com/username/myrepo main
+sudo -u appmotel appmo add myapp https://github.com/username/myrepo
 
 # Check status
 sudo -u appmotel appmo status myapp

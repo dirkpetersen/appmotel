@@ -90,7 +90,7 @@ gh repo create test-flask-hello --public --source=. --remote=origin --push
 #### Deploy Application
 
 ```bash
-appmo add flask-hello https://github.com/<username>/test-flask-hello main
+appmo add flask-hello https://github.com/<username>/test-flask-hello
 ```
 
 **Expected Results:**
@@ -137,7 +137,7 @@ gh repo create test-express-hello --public --source=. --remote=origin --push
 #### Deploy Application
 
 ```bash
-appmo add express-hello https://github.com/<username>/test-express-hello main
+appmo add express-hello https://github.com/<username>/test-express-hello
 ```
 
 **Expected Results:**
@@ -279,7 +279,7 @@ appmo list
 ### Test 1: Invalid App Name
 
 ```bash
-appmo add "my app" https://github.com/user/repo main
+appmo add "my app" https://github.com/user/repo
 ```
 
 **Expected:** Error message about invalid app name format
@@ -287,7 +287,7 @@ appmo add "my app" https://github.com/user/repo main
 ### Test 2: Duplicate App Name
 
 ```bash
-appmo add express-hello https://github.com/user/repo main
+appmo add express-hello https://github.com/user/repo
 ```
 
 **Expected:** Error message that app already exists
@@ -295,7 +295,7 @@ appmo add express-hello https://github.com/user/repo main
 ### Test 3: Invalid GitHub URL
 
 ```bash
-appmo add testapp https://github.com/nonexistent/repo main
+appmo add testapp https://github.com/nonexistent/repo
 ```
 
 **Expected:** Clone fails, operation rolls back, no app created
@@ -348,7 +348,7 @@ cat ~/.config/traefik/dynamic/flask-hello.yaml
 
 ```bash
 # Add new app
-appmo add testapp3 <repo> main
+appmo add testapp3 <repo>
 
 # Traefik should automatically pick up new config
 # Check Traefik logs
@@ -365,7 +365,7 @@ Deploy 5 apps simultaneously:
 
 ```bash
 for i in {1..5}; do
-  appmo add testapp$i <repo> main &
+  appmo add testapp$i <repo> &
 done
 wait
 ```
