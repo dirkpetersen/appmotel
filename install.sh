@@ -12,7 +12,12 @@ set -o pipefail
 IFS=$'\n\t'
 
 # Constants
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Handle both direct execution and piped execution (curl | bash)
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  readonly SCRIPT_DIR="$(pwd)"
+fi
 readonly APPMOTEL_USER="appmotel"
 readonly APPMOTEL_HOME="/home/${APPMOTEL_USER}"
 
