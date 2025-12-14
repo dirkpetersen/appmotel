@@ -179,6 +179,7 @@ create_security_group() {
     --group-name "${SECURITY_GROUP_NAME}" \
     --description "Security group for Appmotel PaaS" \
     --vpc-id "${vpc_id}" \
+    --query 'GroupId' \
     --output text)
 
   # Add inbound rules
