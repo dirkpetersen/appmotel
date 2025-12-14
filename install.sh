@@ -77,22 +77,38 @@ die() {
 # -----------------------------------------------------------------------------
 load_env() {
   local env_file="${SCRIPT_DIR}/.env"
+  local env_default="${SCRIPT_DIR}/.env.default"
+  local github_env_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/.env.default"
 
-  if [[ ! -f "${env_file}" ]]; then
-    log_msg "WARN" "No .env file found, copying from .env.default"
-    if [[ -f "${SCRIPT_DIR}/.env.default" ]]; then
-      cp "${SCRIPT_DIR}/.env.default" "${env_file}"
-      log_msg "WARN" "Please edit .env file with your settings"
+  # Load .env file if it exists
+  if [[ -f "${env_file}" ]]; then
+    set -o allexport
+    source "${env_file}"
+    set +o allexport
+    log_msg "INFO" "Loaded configuration from .env"
+    return
+  fi
+
+  # If .env.default doesn't exist, download it from GitHub
+  if [[ ! -f "${env_default}" ]]; then
+    log_msg "INFO" "Downloading .env.default from GitHub"
+    if curl -fsSL "${github_env_url}" -o "${env_default}"; then
+      log_msg "INFO" "Downloaded .env.default successfully"
     else
-      die "No .env.default file found"
+      die "Failed to download .env.default from GitHub"
     fi
   fi
+
+  # Copy .env.default to .env
+  log_msg "WARN" "No .env file found, copying from .env.default"
+  cp "${env_default}" "${env_file}"
 
   # Source the .env file
   set -o allexport
   source "${env_file}"
   set +o allexport
 
+  log_msg "WARN" "Please edit ${env_file} with your settings"
   log_msg "INFO" "Loaded configuration from .env"
 }
 
