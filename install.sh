@@ -530,30 +530,47 @@ EOF
 # -----------------------------------------------------------------------------
 # Function: install_appmo_cli
 # Description: Installs appmo CLI tool
+# Downloads from GitHub if not found locally
 # -----------------------------------------------------------------------------
 install_appmo_cli() {
   log_msg "INFO" "Installing appmo CLI tool"
 
-  local appmo_source="${SCRIPT_DIR}/bin/appmo"
+  local appmo_source_local="${SCRIPT_DIR}/bin/appmo"
   local appmo_dest="${APPMOTEL_HOME}/.local/bin/appmo"
+  local github_appmo_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmo"
 
-  if [[ ! -f "${appmo_source}" ]]; then
-    log_msg "WARN" "appmo CLI not found at ${appmo_source}"
-    return
+  # Try local file first, download if not found
+  if [[ -f "${appmo_source_local}" ]]; then
+    log_msg "INFO" "Using local appmo CLI from repository"
+    cp "${appmo_source_local}" "${appmo_dest}"
+  else
+    log_msg "INFO" "Downloading appmo CLI from GitHub"
+    if curl -fsSL "${github_appmo_url}" -o "${appmo_dest}"; then
+      log_msg "INFO" "Downloaded appmo CLI successfully"
+    else
+      die "Failed to download appmo CLI from GitHub"
+    fi
   fi
 
-  cp "${appmo_source}" "${appmo_dest}"
   chmod +x "${appmo_dest}"
   log_msg "INFO" "appmo CLI installed to ${appmo_dest}"
 
   # Install shell completion
-  local completion_source="${SCRIPT_DIR}/bin/appmo-completion.bash"
+  local completion_source_local="${SCRIPT_DIR}/bin/appmo-completion.bash"
   local completion_dest="${APPMOTEL_HOME}/.local/share/bash-completion/completions"
+  local github_completion_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmo-completion.bash"
 
-  if [[ -f "${completion_source}" ]]; then
-    mkdir -p "${completion_dest}"
-    cp "${completion_source}" "${completion_dest}/appmo"
+  mkdir -p "${completion_dest}"
+
+  # Try local file first, download if not found
+  if [[ -f "${completion_source_local}" ]]; then
+    cp "${completion_source_local}" "${completion_dest}/appmo"
     log_msg "INFO" "Shell completion installed"
+  else
+    log_msg "INFO" "Downloading shell completion from GitHub"
+    if curl -fsSL "${github_completion_url}" -o "${completion_dest}/appmo"; then
+      log_msg "INFO" "Shell completion installed"
+    fi
   fi
 }
 
@@ -586,45 +603,47 @@ EOF
 
 # -----------------------------------------------------------------------------
 # Function: install_autopull
-# Description: Installs autopull script and systemd timer
+# Description: Installs autopull systemd timer (calls 'appmo autopull')
+# Note: appmo-autopull is now integrated as 'appmo autopull' subcommand
 # -----------------------------------------------------------------------------
 install_autopull() {
   log_msg "INFO" "Installing autopull service"
-
-  # Install autopull script
-  local autopull_source="${SCRIPT_DIR}/bin/appmo-autopull"
-  local autopull_dest="${APPMOTEL_HOME}/.local/bin/appmo-autopull"
-
-  if [[ ! -f "${autopull_source}" ]]; then
-    log_msg "WARN" "appmo-autopull script not found at ${autopull_source}"
-    return
-  fi
-
-  cp "${autopull_source}" "${autopull_dest}"
-  chmod +x "${autopull_dest}"
-  log_msg "INFO" "autopull script installed to ${autopull_dest}"
 
   # Install systemd service and timer
   local systemd_user_dir="${APPMOTEL_HOME}/.config/systemd/user"
   mkdir -p "${systemd_user_dir}"
 
-  local service_template="${SCRIPT_DIR}/templates/appmotel-autopull.service"
-  local timer_template="${SCRIPT_DIR}/templates/appmotel-autopull.timer"
+  local service_template_local="${SCRIPT_DIR}/templates/appmotel-autopull.service"
+  local timer_template_local="${SCRIPT_DIR}/templates/appmotel-autopull.timer"
+  local github_service_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/templates/appmotel-autopull.service"
+  local github_timer_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/templates/appmotel-autopull.timer"
 
-  if [[ -f "${service_template}" ]]; then
-    cp "${service_template}" "${systemd_user_dir}/appmotel-autopull.service"
+  # Install service unit
+  if [[ -f "${service_template_local}" ]]; then
+    cp "${service_template_local}" "${systemd_user_dir}/appmotel-autopull.service"
     log_msg "INFO" "autopull service unit installed"
   else
-    log_msg "WARN" "autopull service template not found"
-    return
+    log_msg "INFO" "Downloading autopull service template from GitHub"
+    if curl -fsSL "${github_service_url}" -o "${systemd_user_dir}/appmotel-autopull.service"; then
+      log_msg "INFO" "autopull service unit installed"
+    else
+      log_msg "WARN" "Failed to download autopull service template"
+      return
+    fi
   fi
 
-  if [[ -f "${timer_template}" ]]; then
-    cp "${timer_template}" "${systemd_user_dir}/appmotel-autopull.timer"
+  # Install timer unit
+  if [[ -f "${timer_template_local}" ]]; then
+    cp "${timer_template_local}" "${systemd_user_dir}/appmotel-autopull.timer"
     log_msg "INFO" "autopull timer unit installed"
   else
-    log_msg "WARN" "autopull timer template not found"
-    return
+    log_msg "INFO" "Downloading autopull timer template from GitHub"
+    if curl -fsSL "${github_timer_url}" -o "${systemd_user_dir}/appmotel-autopull.timer"; then
+      log_msg "INFO" "autopull timer unit installed"
+    else
+      log_msg "WARN" "Failed to download autopull timer template"
+      return
+    fi
   fi
 
   # Set up environment for systemd user services
@@ -791,8 +810,11 @@ install_as_user() {
     # Already appmotel user, run installation directly
     run_as_appmotel_user
 
-    log_msg "INFO" "Note: Traefik service must be started/managed by system administrator"
-    log_msg "INFO" "The appmotel user does not have permissions to manage system services"
+    log_msg "INFO" "Note: Traefik service can be managed with:"
+    log_msg "INFO" "  sudo systemctl start traefik-appmotel"
+    log_msg "INFO" "  sudo systemctl restart traefik-appmotel"
+    log_msg "INFO" "  sudo systemctl status traefik-appmotel"
+    log_msg "INFO" ""
     log_msg "INFO" "Traefik automatically reloads configuration from ~/.config/traefik/dynamic/"
 
     log_msg "INFO" "======================================"

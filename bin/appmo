@@ -67,6 +67,7 @@ Commands:
   stop <app-name>                        Stop an app
   restart <app-name>                     Restart an app
   update <app-name>                      Manually update an app
+  autopull                               Check all apps for updates and deploy
   logs <app-name> [lines]                View app logs
   exec <app-name> <command>              Run command in app's environment
   backup <app-name>                      Create a backup of an app
@@ -76,6 +77,7 @@ Commands:
 Examples:
   appmo add myapp https://github.com/user/repo main
   appmo status myapp
+  appmo autopull
   appmo logs myapp 50
   appmo backup myapp
   appmo restore myapp 2024-01-15-120000
@@ -1213,6 +1215,118 @@ cmd_backups() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: cmd_autopull
+# Description: Automatically checks all apps for updates and deploys them
+# This is designed to run periodically via systemd timer
+# -----------------------------------------------------------------------------
+cmd_autopull() {
+  local lockfile="${APPS_DATA_DIR}/.autopull.lock"
+
+  # Acquire lock to prevent concurrent runs
+  local lockdir
+  lockdir=$(dirname "${lockfile}")
+  mkdir -p "${lockdir}"
+
+  if [[ -f "${lockfile}" ]]; then
+    local pid
+    pid=$(cat "${lockfile}")
+
+    # Check if process is still running
+    if kill -0 "${pid}" 2>/dev/null; then
+      log_msg "INFO" "Another autopull instance is running (PID: ${pid}), exiting"
+      exit 0
+    else
+      log_msg "WARN" "Removing stale lock file"
+      rm -f "${lockfile}"
+    fi
+  fi
+
+  echo $$ > "${lockfile}"
+  trap "rm -f ${lockfile}" EXIT
+
+  log_msg "INFO" "Starting autopull check"
+
+  # Check if apps directory exists
+  if [[ ! -d "${APPS_CONFIG_DIR}" ]]; then
+    log_msg "INFO" "No apps configured yet"
+    exit 0
+  fi
+
+  # Get list of all apps
+  local app_count=0
+  local updated_count=0
+
+  for app_dir in "${APPS_CONFIG_DIR}"/*; do
+    if [[ ! -d "${app_dir}" ]]; then
+      continue
+    fi
+
+    local app_name
+    app_name=$(basename "${app_dir}")
+    app_count=$((app_count + 1))
+
+    # Check app for updates
+    local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+
+    if [[ ! -d "${repo_dir}" ]]; then
+      log_msg "WARN" "${app_name}: Repository directory not found"
+      continue
+    fi
+
+    cd "${repo_dir}"
+
+    # Ensure we're in a git repository
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+      log_msg "WARN" "${app_name}: Not a git repository"
+      continue
+    fi
+
+    # Fetch latest changes (quietly)
+    if ! git fetch origin 2>/dev/null; then
+      log_msg "ERROR" "${app_name}: Failed to fetch from origin"
+      continue
+    fi
+
+    # Get current HEAD and remote HEAD
+    local local_head
+    local remote_head
+    local_head=$(git rev-parse HEAD)
+
+    # Get the tracking branch
+    local tracking_branch
+    tracking_branch=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "")
+
+    if [[ -z "${tracking_branch}" ]]; then
+      log_msg "WARN" "${app_name}: No tracking branch configured"
+      continue
+    fi
+
+    remote_head=$(git rev-parse "${tracking_branch}")
+
+    # Check if update is needed
+    if [[ "${local_head}" != "${remote_head}" ]]; then
+      log_msg "INFO" "${app_name}: Update detected (${local_head:0:8} → ${remote_head:0:8})"
+
+      # Trigger update via cmd_update
+      if cmd_update "${app_name}"; then
+        log_msg "INFO" "${app_name}: Successfully updated"
+        updated_count=$((updated_count + 1))
+      else
+        log_msg "ERROR" "${app_name}: Update failed"
+      fi
+    fi
+  done
+
+  if [[ ${app_count} -eq 0 ]]; then
+    log_msg "INFO" "No apps found"
+  elif [[ ${updated_count} -eq 0 ]]; then
+    log_msg "INFO" "Checked ${app_count} app(s), no updates available"
+  else
+    log_msg "INFO" "Checked ${app_count} app(s), updated ${updated_count}"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: main
 # Description: Main CLI dispatcher
 # -----------------------------------------------------------------------------
@@ -1233,6 +1347,7 @@ main() {
     stop) cmd_stop "$@" ;;
     restart) cmd_restart "$@" ;;
     update) cmd_update "$@" ;;
+    autopull) cmd_autopull "$@" ;;
     logs) cmd_logs "$@" ;;
     exec) cmd_exec "$@" ;;
     backup) cmd_backup "$@" ;;

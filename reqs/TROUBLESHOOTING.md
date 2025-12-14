@@ -59,7 +59,7 @@ This document covers common issues and their solutions for Appmotel.
 3. **Verify changes:**
    ```bash
    # Traefik auto-reloads, but you can restart to be sure
-   sudo -u appmotel sudo /bin/systemctl restart traefik-appmotel
+   sudo -u appmotel sudo systemctl restart traefik-appmotel
 
    # Check the certificate
    openssl s_client -connect myapp.domain.edu:443 -servername myapp.domain.edu </dev/null 2>&1 | grep "subject="
@@ -111,7 +111,7 @@ sudo find /etc/letsencrypt/archive -name "privkey*.pem" -exec chmod 640 {} \;
 sudo find /etc/letsencrypt/archive -name "*.pem" ! -name "privkey*.pem" -exec chmod 644 {} \;
 
 # 6. Restart Traefik to apply group membership
-sudo -u appmotel sudo /bin/systemctl restart traefik-appmotel
+sudo -u appmotel sudo systemctl restart traefik-appmotel
 ```
 
 **Alternative (Less secure, not recommended):**
@@ -142,7 +142,7 @@ log:
 
 Restart Traefik and watch logs:
 ```bash
-sudo -u appmotel sudo /bin/systemctl restart traefik-appmotel
+sudo -u appmotel sudo systemctl restart traefik-appmotel
 sudo journalctl -u traefik-appmotel -f
 ```
 
@@ -235,7 +235,7 @@ sudo -u appmotel whoami
 # Expected: appmotel
 
 # Test appmotel → root (limited) delegation
-sudo -u appmotel sudo /bin/systemctl status traefik-appmotel
+sudo -u appmotel sudo systemctl status traefik-appmotel
 # Expected: Shows Traefik service status
 
 # Test that appmotel cannot run arbitrary root commands
@@ -273,7 +273,7 @@ When reporting issues, include:
 
 1. **Service status:**
    ```bash
-   sudo -u appmotel sudo /bin/systemctl status traefik-appmotel
+   sudo -u appmotel sudo systemctl status traefik-appmotel
    sudo -u appmotel systemctl --user status appmotel-myapp
    ```
 

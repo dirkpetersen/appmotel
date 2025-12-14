@@ -10,7 +10,7 @@ _appmo_completions() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   # Main commands
-  local commands="add remove list status start stop restart update logs exec backup restore backups help"
+  local commands="add remove list status start stop restart update autopull logs exec backup restore backups help"
 
   # Get list of apps for completion
   local apps=""

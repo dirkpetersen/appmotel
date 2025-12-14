@@ -77,12 +77,13 @@ When a new application is configured in Appmotel:
 
 **Automatic Updates (Autopull):**
 - A systemd timer (`appmotel-autopull.timer`) runs every 2 minutes
-- The `appmo-autopull` script checks all configured apps for updates
+- The timer calls `appmo autopull` which checks all configured apps for updates
 - For each app, it runs `git fetch` and compares local vs remote HEAD
 - If updates are found, it automatically runs `appmo update <app-name>`
 - This provides automatic deployment without requiring public server access
 - Works on private networks (only outbound git connections needed)
 - Logs available via `journalctl --user -u appmotel-autopull`
+- Can be manually triggered: `appmo autopull`
 
 ### The `appmo` CLI Tool
 
@@ -104,6 +105,7 @@ When a new application is configured in Appmotel:
 - `appmo stop <app-name>` - Stop app (systemctl wrapper)
 - `appmo restart <app-name>` - Restart app
 - `appmo update <app-name>` - Manually trigger pull + reinstall (with automatic backup and rollback on failure)
+- `appmo autopull` - Check all apps for git updates and automatically deploy (used by systemd timer)
 - `appmo logs <app-name>` - View logs (journalctl wrapper)
 - `appmo exec <app-name> <command>` - Run command in app's environment
 - `appmo backup <app-name>` - Create a backup of an app
@@ -301,9 +303,9 @@ appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/syste
 **Managing Traefik Service (correct command format):**
 ```bash
 # From operator user, execute as appmotel, then use sudo
-sudo -u appmotel sudo /bin/systemctl start traefik-appmotel
-sudo -u appmotel sudo /bin/systemctl restart traefik-appmotel
-sudo -u appmotel sudo /bin/systemctl status traefik-appmotel
+sudo -u appmotel sudo systemctl start traefik-appmotel
+sudo -u appmotel sudo systemctl restart traefik-appmotel
+sudo -u appmotel sudo systemctl status traefik-appmotel
 ```
 
 **Note:** App services do NOT need root - they use `systemctl --user`. Traefik config changes are auto-reloaded (no restart needed).

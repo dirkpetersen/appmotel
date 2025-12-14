@@ -69,10 +69,10 @@ The Traefik service runs as a **system-level service** (not user-level) because 
 **Correct way to manage Traefik:**
 ```bash
 # From operator user (apps), execute as appmotel, then use sudo
-sudo -u appmotel sudo /bin/systemctl start traefik-appmotel
-sudo -u appmotel sudo /bin/systemctl stop traefik-appmotel
-sudo -u appmotel sudo /bin/systemctl restart traefik-appmotel
-sudo -u appmotel sudo /bin/systemctl status traefik-appmotel
+sudo -u appmotel sudo systemctl start traefik-appmotel
+sudo -u appmotel sudo systemctl stop traefik-appmotel
+sudo -u appmotel sudo systemctl restart traefik-appmotel
+sudo -u appmotel sudo systemctl status traefik-appmotel
 ```
 
 **Why this pattern?**
@@ -262,7 +262,7 @@ sudo -u appmotel whoami
 # Expected: appmotel
 
 # Test appmotel → root (limited) delegation
-sudo -u appmotel sudo /bin/systemctl status traefik-appmotel
+sudo -u appmotel sudo systemctl status traefik-appmotel
 # Expected: Shows Traefik service status
 
 # Test that appmotel cannot run arbitrary root commands

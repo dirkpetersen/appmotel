@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/appmo-autopull
+ExecStart=%h/.local/bin/appmo autopull
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=appmotel-autopull
