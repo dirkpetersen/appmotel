@@ -283,9 +283,9 @@ launch_instance() {
 
   log_msg "INFO" "Instance is running"
 
-  # Wait additional time for SSH to be ready
-  log_msg "INFO" "Waiting for SSH to be ready (60 seconds)..."
-  sleep 60
+  # Brief wait for instance initialization (AL2023 boots quickly)
+  log_msg "INFO" "Waiting for instance initialization (20 seconds)..."
+  sleep 20
 
   echo "${instance_id}"
 }
@@ -326,7 +326,7 @@ get_instance_ip() {
 wait_for_ssh() {
   local host="$1"
   local key_file="$2"
-  local max_attempts=30
+  local max_attempts=24
   local attempt=0
 
   log_msg "INFO" "Waiting for SSH to be accessible..."
@@ -345,10 +345,10 @@ wait_for_ssh() {
 
     attempt=$((attempt + 1))
     log_msg "INFO" "Attempt ${attempt}/${max_attempts}..."
-    sleep 10
+    sleep 5
   done
 
-  die "SSH did not become accessible after ${max_attempts} attempts"
+  die "SSH did not become accessible after ${max_attempts} attempts (2 minutes)"
 }
 
 # -----------------------------------------------------------------------------
