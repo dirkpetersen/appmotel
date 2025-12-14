@@ -49,7 +49,7 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 ### Prerequisites
 - Ubuntu 24.04 LTS (or similar Linux distribution)
 - Root access for initial setup
-- Domain name with DNS configured
+- Domain name with DNS configured (see [DNS Configuration](#dns-configuration) below)
 
 ### Installation
 
@@ -212,6 +212,164 @@ DISABLE_RATE_LIMIT=true  # Disable rate limiting
 # Health Checks
 HEALTH_CHECK_PATH=/api/health  # Health endpoint (default: /health)
 ```
+
+## DNS Configuration
+
+Appmotel requires DNS to route traffic from your domain (e.g., `apps.yourdomain.edu`) to your deployed applications. Each app gets a unique subdomain like `myapp.apps.yourdomain.edu`.
+
+### Configuration Options
+
+Choose the DNS configuration method that best fits your environment:
+
+#### Option 1: Subdomain Delegation (Best)
+
+**When to use:**
+- You have full control over your parent domain
+- You want complete DNS autonomy for app subdomains
+- You're willing to run a DNS server on this machine
+
+**Setup:**
+1. Run a DNS server on your Appmotel host (e.g., CoreDNS, PowerDNS, BIND)
+2. Configure the server to handle queries for `*.apps.yourdomain.edu`
+3. In your parent domain's DNS, add NS records:
+
+```dns
+apps.yourdomain.edu.  IN  NS  ns1.yourdomain.edu.
+ns1.yourdomain.edu.   IN  A   203.0.113.10
+```
+
+**Advantages:**
+- ✅ New apps automatically work without DNS updates
+- ✅ Complete control over subdomain DNS
+- ✅ Can implement custom DNS records (TXT, SRV, etc.)
+- ✅ Best for large deployments with many apps
+
+**Disadvantages:**
+- ⚠️ Requires running and maintaining a DNS server
+- ⚠️ More complex setup
+
+#### Option 2: Wildcard A Record (Recommended)
+
+**When to use:**
+- You control the DNS zone for your domain
+- Your DNS provider supports wildcard records
+- You want a simple, maintenance-free solution
+
+**Setup:**
+Add a wildcard A record in your DNS zone:
+
+```dns
+*.apps.yourdomain.edu.  IN  A  203.0.113.10
+```
+
+This routes ALL subdomains under `apps.yourdomain.edu` to your server.
+
+**Advantages:**
+- ✅ New apps automatically work without DNS updates
+- ✅ Simple to configure (single DNS record)
+- ✅ No additional software required
+- ✅ Best for most use cases
+
+**Disadvantages:**
+- ⚠️ Not all DNS providers support wildcards
+- ⚠️ All subdomains point to same IP (not ideal for split deployments)
+
+#### Option 3: Individual CNAME or A Records (Fallback)
+
+**When to use:**
+- Your DNS provider doesn't support wildcard records
+- You need explicit control over each subdomain
+- You have a small number of apps
+
+**Setup:**
+For each app, add a DNS record:
+
+**Option 3a: A Record (points directly to IP)**
+```dns
+myapp.apps.yourdomain.edu.  IN  A  203.0.113.10
+```
+
+**Option 3b: CNAME Record (points to another hostname)**
+```dns
+myapp.apps.yourdomain.edu.  IN  CNAME  server.yourdomain.edu.
+```
+
+**Advantages:**
+- ✅ Works with all DNS providers
+- ✅ Explicit control over each app's DNS
+- ✅ Can point different apps to different servers
+
+**Disadvantages:**
+- ⚠️ Requires manual DNS update for EVERY new app
+- ⚠️ More maintenance overhead
+- ⚠️ DNS propagation delay for new apps
+
+### DNS Configuration Workflow
+
+When you add a new app, Appmotel automatically displays DNS configuration guidance:
+
+```bash
+$ appmo add myapp https://github.com/username/myrepo main
+
+App 'myapp' added successfully
+URL: https://myapp.apps.yourdomain.edu
+
+DNS Configuration Required:
+
+   Configure DNS to route traffic to this app. Choose one option:
+
+   Option 1 (Best): Subdomain delegation via NS records
+     Delegate apps.yourdomain.edu to this server's nameserver
+     → Enables automatic DNS for all apps without manual updates
+     → Requires running a DNS server (e.g., CoreDNS, PowerDNS)
+
+   Option 2 (Recommended): Wildcard A record
+     *.apps.yourdomain.edu IN A 203.0.113.10
+     → All subdomains automatically route to this server
+     → Simplest option if you control the DNS zone
+
+   Option 3 (Fallback): Individual CNAME or A record
+     myapp.apps.yourdomain.edu IN A 203.0.113.10
+     or
+     myapp.apps.yourdomain.edu IN CNAME server.yourdomain.edu.
+     → Requires manual DNS update for each new app
+     → Use if wildcards are not supported by your DNS provider
+```
+
+### Testing DNS Configuration
+
+After configuring DNS, verify it's working:
+
+```bash
+# Test DNS resolution
+dig myapp.apps.yourdomain.edu
+
+# Test HTTP connectivity (should redirect to HTTPS)
+curl -v http://myapp.apps.yourdomain.edu
+
+# Test HTTPS connectivity
+curl -v https://myapp.apps.yourdomain.edu
+
+# Check certificate
+openssl s_client -connect myapp.apps.yourdomain.edu:443 -servername myapp.apps.yourdomain.edu </dev/null 2>&1 | grep "subject="
+```
+
+### Troubleshooting DNS Issues
+
+**DNS not resolving:**
+- Check DNS propagation: `dig myapp.apps.yourdomain.edu`
+- Wait for DNS TTL to expire (usually 300-3600 seconds)
+- Verify your DNS records in your provider's control panel
+
+**Certificate errors:**
+- Ensure Let's Encrypt is enabled in `~/.config/appmotel/.env`
+- Check Traefik logs: `sudo journalctl -u traefik-appmotel -f`
+- Verify DNS is resolving correctly before attempting HTTPS
+
+**404 errors on HTTPS:**
+- Verify app is running: `appmo status myapp`
+- Check Traefik dynamic config: `cat ~/.config/traefik/dynamic/myapp.yaml`
+- Review app logs: `appmo logs myapp`
 
 ## Architecture
 

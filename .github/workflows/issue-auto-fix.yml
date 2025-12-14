@@ -1,0 +1,264 @@
+name: Auto-Fix Issue with Claude Code
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to process manually'
+        required: true
+        type: number
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine issue number
+        id: issue_num
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ github.event.inputs.issue_number }}" >> $GITHUB_OUTPUT
+          else
+            echo "value=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch issue data
+        id: issue_data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_NUM=${{ steps.issue_num.outputs.value }}
+          ISSUE_JSON=$(gh api repos/${{ github.repository }}/issues/$ISSUE_NUM)
+          ISSUE_TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
+          ISSUE_BODY=$(echo "$ISSUE_JSON" | jq -r '.body')
+
+          echo "number=$ISSUE_NUM" >> $GITHUB_OUTPUT
+          echo "title=$ISSUE_TITLE" >> $GITHUB_OUTPUT
+
+          # Save body to file since it can be multiline
+          echo "$ISSUE_BODY" > /tmp/issue-body.txt
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Install Claude Code
+        run: npm i -g @anthropic-ai/claude-code
+
+      - name: Configure Git
+        run: |
+          git config user.email "automated-claude@users.noreply.github.com"
+          git config user.name "Automated Claude Code"
+
+      - name: Create feature branch
+        run: |
+          BRANCH_NAME="fix/issue-${{ steps.issue_data.outputs.number }}"
+          git checkout -b "$BRANCH_NAME"
+          git push origin "$BRANCH_NAME"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create issue context file
+        run: |
+          ISSUE_NUM=${{ steps.issue_data.outputs.number }}
+          ISSUE_TITLE="${{ steps.issue_data.outputs.title }}"
+          ISSUE_BODY=$(cat /tmp/issue-body.txt)
+
+          mkdir -p /tmp
+          cat > /tmp/issue-context.txt <<EOF
+          Issue #$ISSUE_NUM: $ISSUE_TITLE
+
+          Description:
+          $ISSUE_BODY
+          EOF
+
+      - name: Run Claude Code to fix issue
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: us-west-2
+          CLAUDE_CODE_USE_BEDROCK: 1
+        run: |
+          cat > /tmp/fix-prompt.md <<'PROMPT_EOF'
+          # Fix GitHub Issue - Documentation and Code Implementation
+
+          You are an expert software engineer working on the Appmotel project. Please analyze and fix the following issue:
+
+          PROMPT_EOF
+          cat /tmp/issue-context.txt >> /tmp/fix-prompt.md
+          cat >> /tmp/fix-prompt.md <<'PROMPT_EOF'
+
+          ## Your Task
+
+          Carefully analyze this issue and determine what needs to be done. You should handle:
+
+          ### 1. Documentation Issues
+          - Fix typos, grammar, or formatting problems in markdown files
+          - Update outdated documentation
+          - Add missing documentation sections
+          - Improve code examples and usage instructions
+          - Update README, skills, or other documentation files
+
+          ### 2. Code Implementation
+          - Implement new features described in the issue
+          - Fix bugs in existing code (Bash scripts, configuration files, etc.)
+          - Add new functionality to the appmo CLI tool
+          - Update installation scripts or workflows
+          - Implement improvements to existing code
+          - Add new tests or validation
+
+          ### 3. Configuration Changes
+          - Update YAML configuration files
+          - Modify environment templates
+          - Adjust system configuration files
+
+          ## Guidelines
+
+          1. **Analyze First**: Read the issue carefully to understand what's being requested
+          2. **Scope**: Determine if this is a documentation fix, code change, or both
+          3. **Implementation**:
+             - Use the Edit tool to modify existing files
+             - Use the Write tool to create new files if needed
+             - Follow the project's Bash 4.4 coding standards (see CLAUDE.md)
+             - Maintain idempotency for installation scripts
+             - Test your changes with bash -n for syntax validation
+          4. **Quality**:
+             - Keep changes minimal and focused on the issue
+             - Preserve existing code style and conventions
+             - Add comments where logic isn't obvious
+             - Ensure all scripts follow strict mode (set -o errexit, etc.)
+          5. **Testing**: Validate Bash scripts with syntax checks before completing
+
+          ## Project Context
+
+          - **Language**: Primarily Bash 4.4+ (see CLAUDE.md for coding standards)
+          - **Purpose**: Appmotel is a PaaS system using systemd, Traefik, and GitHub
+          - **Key Files**:
+            - `install.sh`: Main installation script
+            - `bin/appmo`: CLI tool for app management
+            - `README.md`: Main documentation
+            - `.github/workflows/`: GitHub Actions workflows
+            - `.claude/skills/`: Documentation for Claude Code
+
+          When done, I will automatically commit your changes and create a PR for review.
+          PROMPT_EOF
+
+          # Run Claude Code with stdin in fully automated mode using Opus 4.5
+          cat /tmp/fix-prompt.md | claude --dangerously-skip-permissions --model opus
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet; then
+            echo "HAS_CHANGES=false" >> $GITHUB_OUTPUT
+          else
+            echo "HAS_CHANGES=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit changes
+        if: steps.changes.outputs.HAS_CHANGES == 'true'
+        run: |
+          git add -A
+          git commit -m "fix: Resolve issue #${{ steps.issue_data.outputs.number }}
+
+          Automated fix generated by Claude Code (Opus 4.5)
+
+          Closes #${{ steps.issue_data.outputs.number }}"
+          git push origin "fix/issue-${{ steps.issue_data.outputs.number }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.HAS_CHANGES == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_NUM=${{ steps.issue_data.outputs.number }}
+          ISSUE_TITLE="${{ steps.issue_data.outputs.title }}"
+          BRANCH="fix/issue-$ISSUE_NUM"
+
+          # Create PR using gh CLI with heredoc for multiline body
+          PR_BODY=$(cat <<EOF
+          ## Automated Fix 🤖
+
+          This PR automatically addresses issue #$ISSUE_NUM using Claude Code (Opus 4.5).
+
+          **Issue**: $ISSUE_TITLE
+
+          ### What Changed
+
+          This automated fix may include:
+          - Documentation updates and corrections
+          - Code implementation and bug fixes
+          - Configuration file changes
+          - New features or improvements
+
+          ### Review Checklist
+
+          - [ ] Changes are focused and address the issue
+          - [ ] Code follows project standards (Bash 4.4, idempotency, etc.)
+          - [ ] Documentation is clear and accurate
+          - [ ] Scripts pass syntax validation
+          - [ ] No unintended side effects
+
+          Please review carefully before merging. The automated system aims to be helpful, but human oversight is essential.
+
+          Fixes #$ISSUE_NUM
+          EOF
+          )
+
+          PR_URL=$(gh pr create \
+            --repo ${{ github.repository }} \
+            --head "$BRANCH" \
+            --base main \
+            --title "Fix: Resolve issue #$ISSUE_NUM" \
+            --body "$PR_BODY")
+
+          echo "Created PR: $PR_URL"
+
+          # Comment on the issue
+          gh issue comment $ISSUE_NUM \
+            --repo ${{ github.repository }} \
+            --body "🤖 Automated fix completed!
+
+          A pull request has been created with changes to address this issue: $PR_URL
+
+          **Generated by**: Claude Code (Opus 4.5)
+
+          Please review the PR and merge if the changes look correct."
+
+          # Close the issue since a PR was created
+          gh issue close $ISSUE_NUM \
+            --repo ${{ github.repository }} \
+            --comment "✅ Automated fix completed. Closing this issue as PR $PR_URL has been created with the solution.
+
+          The PR will be reviewed by maintainers before merging."
+
+      - name: Comment if no changes
+        if: steps.changes.outputs.HAS_CHANGES == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_NUM=${{ steps.issue_data.outputs.number }}
+
+          gh issue comment $ISSUE_NUM \
+            --repo ${{ github.repository }} \
+            --body "⚠️ **No changes were made**
+
+          Claude Code (Opus 4.5) analyzed this issue but did not make any file modifications.
+
+          This could mean:
+          - The issue is already resolved
+          - The request requires clarification
+          - Manual intervention is needed
+          - The issue is outside the scope of automated fixes
+
+          A maintainer will review this issue manually."
