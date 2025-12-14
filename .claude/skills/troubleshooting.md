@@ -1,6 +1,4 @@
-# Troubleshooting Guide
-
-This document covers common issues and their solutions for Appmotel.
+# Appmotel Troubleshooting Guide
 
 ## Traefik Issues
 
@@ -30,66 +28,30 @@ This document covers common issues and their solutions for Appmotel.
            keyFile: /etc/letsencrypt/live/yourdomain.edu/privkey.pem
    ```
 
-2. **Fix router TLS syntax in app config files:**
+2. **Fix router TLS syntax:**
 
-   Change from:
-   ```yaml
-   http:
-     routers:
-       myapp:
-         rule: "Host(`myapp.domain.edu`)"
-         entryPoints:
-           - websecure
-         service: myapp
-         tls:  # WRONG - null/empty
-   ```
+   Change from `tls:` to `tls: {}` in app config files.
 
-   To:
-   ```yaml
-   http:
-     routers:
-       myapp:
-         rule: "Host(`myapp.domain.edu`)"
-         entryPoints:
-           - websecure
-         service: myapp
-         tls: {}  # CORRECT - empty object
-   ```
-
-3. **Verify changes:**
+3. **Verify:**
    ```bash
-   # Traefik auto-reloads, but you can restart to be sure
    sudo -u appmotel sudo systemctl restart traefik-appmotel
-
-   # Check the certificate
    openssl s_client -connect myapp.domain.edu:443 -servername myapp.domain.edu </dev/null 2>&1 | grep "subject="
-
-   # Test the app
    curl https://myapp.domain.edu/
    ```
-
-**Why This Happens:**
-In Traefik v3, TLS certificate stores MUST be defined in dynamic configuration, not static configuration. Additionally, an empty `tls:` (null value) does not properly enable TLS termination - it must be an empty object `tls: {}`.
 
 ### Issue: Permission Denied Reading Certificates
 
 **Symptoms:**
 - Traefik cannot read `/etc/letsencrypt/live/` certificate files
 - Logs show permission errors
-- Certificate files are world-readable (security issue!)
 
-**Secure Solution (Recommended):**
-
-Use the `ssl-cert` group approach (already implemented in install.sh).
-
-**Background:** This follows the Debian/Ubuntu convention where the `ssl-cert` package provides a dedicated group for secure certificate access. On RHEL/CentOS/Fedora, this package doesn't exist, so the group must be created manually.
+**Secure Solution (ssl-cert group):**
 
 ```bash
 # 1. Ensure ssl-cert group exists
-# On Debian/Ubuntu (recommended - also creates /etc/ssl/private):
+# Debian/Ubuntu:
 sudo apt-get install -y ssl-cert
-
-# On RHEL/CentOS/Fedora (or if package installation fails):
+# RHEL/CentOS/Fedora:
 sudo groupadd ssl-cert
 
 # 2. Add appmotel to the group
@@ -110,21 +72,11 @@ sudo find /etc/letsencrypt/archive -name "privkey*.pem" -exec chmod 640 {} \;
 # Public certs: 644
 sudo find /etc/letsencrypt/archive -name "*.pem" ! -name "privkey*.pem" -exec chmod 644 {} \;
 
-# 6. Restart Traefik to apply group membership
+# 6. Restart Traefik
 sudo -u appmotel sudo systemctl restart traefik-appmotel
 ```
 
-**Alternative (Less secure, not recommended):**
-```bash
-# Using ACLs
-sudo setfacl -R -m u:appmotel:rx /etc/letsencrypt/live/
-sudo setfacl -R -m u:appmotel:rx /etc/letsencrypt/archive/
-```
-
-**Security Note:**
-Never use `chmod 644` or `chmod 744` on private keys! This makes them readable by all users on the system. Always use `640` for private keys with group-based access.
-
-Verify access:
+**Verify access:**
 ```bash
 sudo -u appmotel test -r /etc/letsencrypt/live/yourdomain.edu/fullchain.pem && echo "OK" || echo "FAILED"
 sudo -u appmotel test -r /etc/letsencrypt/live/yourdomain.edu/privkey.pem && echo "OK" || echo "FAILED"
@@ -134,74 +86,52 @@ sudo -u appmotel test -r /etc/letsencrypt/live/yourdomain.edu/privkey.pem && ech
 
 ### Enable Debug Logging
 
-Temporarily enable debug logging in `/home/appmotel/.config/traefik/traefik.yaml`:
+In `/home/appmotel/.config/traefik/traefik.yaml`:
 ```yaml
 log:
   level: DEBUG
 ```
 
-Restart Traefik and watch logs:
 ```bash
 sudo -u appmotel sudo systemctl restart traefik-appmotel
 sudo journalctl -u traefik-appmotel -f
 ```
 
-Remember to set back to `INFO` after debugging.
-
 ### Check Traefik API
 
-Enable the dashboard in static config:
-```yaml
-api:
-  dashboard: true
-  insecure: true  # Only for debugging on localhost
-```
-
-Query the API:
 ```bash
 # List all routers
 curl -s http://localhost:8080/api/http/routers | python3 -m json.tool
 
 # Check specific router
 curl -s http://localhost:8080/api/http/routers/myapp@file | python3 -m json.tool
-
-# Check services
-curl -s http://localhost:8080/api/http/services/myapp@file | python3 -m json.tool
 ```
 
 ### Test Components Individually
 
-1. **Test app directly:**
-   ```bash
-   curl http://localhost:8000/
-   ```
+```bash
+# 1. Test app directly
+curl http://localhost:8000/
 
-2. **Test Traefik HTTP (should redirect):**
-   ```bash
-   curl -v -H "Host: myapp.domain.edu" http://localhost:80/
-   ```
+# 2. Test Traefik HTTP (should redirect)
+curl -v -H "Host: myapp.domain.edu" http://localhost:80/
 
-3. **Test Traefik HTTPS:**
-   ```bash
-   curl -v https://myapp.domain.edu/
-   ```
+# 3. Test Traefik HTTPS
+curl -v https://myapp.domain.edu/
 
-4. **Check certificate being served:**
-   ```bash
-   openssl s_client -connect myapp.domain.edu:443 -servername myapp.domain.edu </dev/null 2>&1 | grep -E "(subject=|issuer=)"
-   ```
+# 4. Check certificate
+openssl s_client -connect myapp.domain.edu:443 -servername myapp.domain.edu </dev/null 2>&1 | grep -E "(subject=|issuer=)"
+```
 
 ## Application Issues
 
 ### App Service Won't Start
 
-**Check service status:**
 ```bash
+# Check status
 sudo -u appmotel systemctl --user status appmotel-myapp
-```
 
-**View logs:**
-```bash
+# View logs
 sudo -u appmotel journalctl --user -u appmotel-myapp -n 50
 ```
 
@@ -213,21 +143,17 @@ sudo -u appmotel journalctl --user -u appmotel-myapp -n 50
 
 ### Port Conflicts
 
-**Check what's using a port:**
 ```bash
+# Check what's using a port
 ss -tlnp | grep :8000
-```
 
-**Kill process (if needed):**
-```bash
+# Stop service
 sudo -u appmotel systemctl --user stop appmotel-myapp
 ```
 
 ## Permission Issues
 
 ### Verify Execution Model
-
-Test the three-tier permission model:
 
 ```bash
 # Test operator → appmotel delegation
@@ -247,24 +173,20 @@ sudo -u appmotel systemctl --user status
 # Expected: Shows user services
 ```
 
-If any of these fail, check `/etc/sudoers.d/appmotel`.
+If any fail, check `/etc/sudoers.d/appmotel`.
 
 ## Configuration Validation
 
 ### Validate YAML Syntax
 
 ```bash
-# Check all dynamic configs
 sudo -u appmotel bash -c 'cd ~/.config/traefik/dynamic && for f in *.yaml; do echo "=== $f ==="; python3 -c "import yaml; yaml.safe_load(open(\"$f\"))" && echo "OK" || echo "SYNTAX ERROR"; done'
 ```
 
 ### Verify File Permissions
 
 ```bash
-# Check dynamic config files
 ls -la /home/appmotel/.config/traefik/dynamic/
-
-# All files should be readable by appmotel user
 ```
 
 ## Getting Help
@@ -287,5 +209,3 @@ When reporting issues, include:
    - `/home/appmotel/.config/traefik/traefik.yaml`
    - `/home/appmotel/.config/traefik/dynamic/*.yaml`
    - App's systemd service file
-
-4. **Test results from debugging tools above**
