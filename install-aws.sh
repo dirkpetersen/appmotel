@@ -136,6 +136,46 @@ create_key_pair() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: add_security_group_rules
+# Description: Adds ingress rules to security group
+# Arguments:
+#   $1 - Region
+#   $2 - Security group ID
+# -----------------------------------------------------------------------------
+add_security_group_rules() {
+  local region="$1"
+  local sg_id="$2"
+
+  log_msg "INFO" "Adding ingress rules to security group..."
+
+  # SSH (22)
+  aws ec2 authorize-security-group-ingress \
+    --region "${region}" \
+    --group-id "${sg_id}" \
+    --protocol tcp \
+    --port 22 \
+    --cidr 0.0.0.0/0 >/dev/null 2>&1 || log_msg "WARN" "SSH rule may already exist"
+
+  # HTTP (80)
+  aws ec2 authorize-security-group-ingress \
+    --region "${region}" \
+    --group-id "${sg_id}" \
+    --protocol tcp \
+    --port 80 \
+    --cidr 0.0.0.0/0 >/dev/null 2>&1 || log_msg "WARN" "HTTP rule may already exist"
+
+  # HTTPS (443)
+  aws ec2 authorize-security-group-ingress \
+    --region "${region}" \
+    --group-id "${sg_id}" \
+    --protocol tcp \
+    --port 443 \
+    --cidr 0.0.0.0/0 >/dev/null 2>&1 || log_msg "WARN" "HTTPS rule may already exist"
+
+  log_msg "INFO" "Ingress rules added successfully"
+}
+
+# -----------------------------------------------------------------------------
 # Function: create_security_group
 # Description: Creates security group with required ports if it doesn't exist
 # Arguments:
@@ -155,6 +195,22 @@ create_security_group() {
 
   if [[ -n "${sg_id}" ]] && [[ "${sg_id}" != "None" ]]; then
     log_msg "INFO" "Security group '${SECURITY_GROUP_NAME}' already exists: ${sg_id}"
+
+    # Check if ingress rules exist
+    local rule_count
+    rule_count=$(aws ec2 describe-security-groups \
+      --region "${region}" \
+      --group-ids "${sg_id}" \
+      --query 'length(SecurityGroups[0].IpPermissions)' \
+      --output text)
+
+    if [[ "${rule_count}" == "0" ]]; then
+      log_msg "WARN" "Security group has no ingress rules, adding them now..."
+      add_security_group_rules "${region}" "${sg_id}"
+    else
+      log_msg "INFO" "Security group has ${rule_count} ingress rule(s)"
+    fi
+
     echo "${sg_id}"
     return
   fi
@@ -182,32 +238,10 @@ create_security_group() {
     --query 'GroupId' \
     --output text)
 
-  # Add inbound rules
-  # SSH (22)
-  aws ec2 authorize-security-group-ingress \
-    --region "${region}" \
-    --group-id "${sg_id}" \
-    --protocol tcp \
-    --port 22 \
-    --cidr 0.0.0.0/0 >/dev/null
-
-  # HTTP (80)
-  aws ec2 authorize-security-group-ingress \
-    --region "${region}" \
-    --group-id "${sg_id}" \
-    --protocol tcp \
-    --port 80 \
-    --cidr 0.0.0.0/0 >/dev/null
-
-  # HTTPS (443)
-  aws ec2 authorize-security-group-ingress \
-    --region "${region}" \
-    --group-id "${sg_id}" \
-    --protocol tcp \
-    --port 443 \
-    --cidr 0.0.0.0/0 >/dev/null
-
   log_msg "INFO" "Security group created: ${sg_id}"
+
+  # Add inbound rules
+  add_security_group_rules "${region}" "${sg_id}"
   echo "${sg_id}"
 }
 
