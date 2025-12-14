@@ -59,4 +59,3 @@ _appmo_completions() {
 }
 
 complete -F _appmo_completions appmo
-complete -F _appmo_completions appmo-admin

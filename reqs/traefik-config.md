@@ -41,6 +41,11 @@ File: `~/.config/traefik/traefik.yaml`
 entryPoints:
   web:
     address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
   websecure:
     address: ":443"
 
@@ -59,9 +64,56 @@ certificatesResolvers:
 
 api:
   dashboard: true
+
+log:
+  level: INFO
 ```
 
+**IMPORTANT - TLS Configuration Notes (Traefik v3):**
+
+1. **TLS certificate stores MUST be in dynamic configuration, NOT static configuration**. If using existing certificates (e.g., Let's Encrypt managed externally), create a separate TLS config file in the dynamic directory.
+
+2. **Router TLS sections must use `tls: {}` (empty object), NOT `tls:` (null/empty)**. The empty object syntax properly enables TLS termination.
+
 Now you can put any number of YAML files for your apps inside `~/.config/traefik/dynamic/`.
+
+**Example TLS Configuration File** (if using external certificates):
+
+File: `~/.config/traefik/dynamic/tls-config.yaml`
+
+```yaml
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/letsencrypt/live/yourdomain.edu/fullchain.pem
+        keyFile: /etc/letsencrypt/live/yourdomain.edu/privkey.pem
+```
+
+**Example Application Router** (dynamic config):
+
+File: `~/.config/traefik/dynamic/myapp.yaml`
+
+```yaml
+http:
+  routers:
+    myapp:
+      rule: "Host(`myapp.yourdomain.edu`)"
+      entryPoints:
+        - websecure
+      service: myapp
+      tls: {}  # IMPORTANT: Use empty object, not null
+
+  services:
+    myapp:
+      loadBalancer:
+        servers:
+          - url: "http://localhost:8000"
+        healthCheck:
+          path: /health
+          interval: 30s
+          timeout: 5s
+```
 
 ### Step 3: Create the Systemd Service (Run as `sudo`)
 

@@ -217,11 +217,34 @@ sudo systemctl status traefik-appmotel
 ```
 
 **Entry Points:**
-- `web`: Port 80
+- `web`: Port 80 (auto-redirects to HTTPS)
 - `websecure`: Port 443
 
 **Dynamic Configuration:**
 Add YAML files to `~/.config/traefik/dynamic/` for application routing. Traefik watches this directory and auto-reloads changes.
+
+**CRITICAL TLS Configuration Notes (Traefik v3):**
+1. **TLS certificate stores MUST be in dynamic configuration, NOT static configuration**
+   - Create a separate file (e.g., `tls-config.yaml`) in the dynamic directory
+   - Example:
+     ```yaml
+     tls:
+       stores:
+         default:
+           defaultCertificate:
+             certFile: /etc/letsencrypt/live/domain.edu/fullchain.pem
+             keyFile: /etc/letsencrypt/live/domain.edu/privkey.pem
+     ```
+2. **Router TLS sections must use `tls: {}` (empty object), NOT `tls:` (null/empty)**
+   - Correct: `tls: {}`
+   - Incorrect: `tls:` or `tls: null`
+   - The empty object syntax properly enables TLS termination
+3. **Certificate Access**: The `appmotel` user must have secure read access to certificate files
+   - Uses `ssl-cert` group (Debian/Ubuntu convention)
+   - Private keys: mode 640 (NOT world-readable!)
+   - Directories: mode 750
+   - On Debian/Ubuntu: `apt-get install ssl-cert` provides the group
+   - On RHEL/CentOS: Group must be created manually with `groupadd ssl-cert`
 
 ## Environment Configuration
 
@@ -320,28 +343,32 @@ This performs:
 3. Configures `/etc/sudoers.d/appmotel`
 4. Enables systemd linger for appmotel user
 
-After completion, it instructs you to run the script again as a regular user.
+After completion, it instructs you to switch to the appmotel user and run the installation.
 
-**Step 2: User-Level Setup (run as any user with sudo access):**
+**Step 2: User-Level Setup (run as appmotel user):**
+
+Switch to the appmotel user and run the installation:
+
 ```bash
-bash install.sh
+sudo su - appmotel
+curl -fsSL "https://raw.githubusercontent.com/dirkpetersen/appmotel/main/install.sh?$(date +%s)" | bash
 ```
 
-The script automatically:
-1. Switches to the `appmotel` user (via `sudo su - appmotel`)
-2. Downloads Traefik binary to `/home/appmotel/.local/bin/`
-3. Creates required directory structure
-4. Generates Traefik configuration files (including Let's Encrypt setup based on `.env`)
-5. Installs the `appmo` CLI tool to `/home/appmotel/.local/bin/`
-6. Adds `~/.local/bin` to PATH in `.bashrc`
-7. Starts the Traefik service
+Or if you have the repository locally:
 
-**The script can also run directly as appmotel user** if you're already switched:
 ```bash
 sudo su - appmotel
 cd /path/to/appmotel
 bash install.sh
 ```
+
+The script performs:
+1. Downloads Traefik binary to `/home/appmotel/.local/bin/`
+2. Creates required directory structure
+3. Generates Traefik configuration files (including Let's Encrypt setup based on `.env`)
+4. Installs the `appmo` CLI tool to `/home/appmotel/.local/bin/`
+5. Adds `~/.local/bin` to PATH in `.bashrc`
+6. Sets up autopull service for automatic updates
 
 The installation script is idempotent and handles both fresh installations and updates.
 

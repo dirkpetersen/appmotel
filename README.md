@@ -53,31 +53,44 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 
 ### Installation
 
-**1. System-level setup (as root):**
+**Step 1: System-level setup (as root)**
+
+Run this once to create the `appmotel` user, configure systemd services, and set up permissions:
+
 ```bash
 sudo bash install.sh
 ```
 
-This creates the `appmotel` user, configures systemd services, and sets up permissions.
+**Step 2: User-level setup (as appmotel user)**
 
-**2. User-level setup (as regular user):**
+Switch to the `appmotel` user and run the installation to download Traefik, install the CLI tool, and configure everything:
+
 ```bash
+sudo su - appmotel
+curl -fsSL "https://raw.githubusercontent.com/dirkpetersen/appmotel/main/install.sh?$(date +%s)" | bash
+```
+
+Or if you have the repository locally:
+
+```bash
+sudo su - appmotel
+cd /path/to/appmotel
 bash install.sh
 ```
 
-This downloads Traefik, installs the CLI tool, and configures everything under `/home/appmotel`.
+This installs everything under `/home/appmotel` and starts the necessary services.
 
 ### Deploy Your First App
 
 ```bash
 # Add and deploy an app
-appmo-admin add myapp https://github.com/username/myrepo main
+sudo -u appmotel appmo add myapp https://github.com/username/myrepo main
 
 # Check status
-appmo-admin status myapp
+sudo -u appmotel appmo status myapp
 
 # View logs
-appmo-admin logs myapp
+sudo -u appmotel appmo logs myapp
 
 # Your app is now live at: https://myapp.apps.yourdomain.edu
 ```
@@ -328,12 +341,12 @@ This project follows strict Bash 4.4+ standards:
 
 ### Check App Status
 ```bash
-appmo-admin status myapp
+sudo -u appmotel appmo status myapp
 ```
 
 ### View Logs
 ```bash
-appmo-admin logs myapp 100
+sudo -u appmotel appmo logs myapp 100
 ```
 
 ### Manual Service Control
@@ -348,10 +361,10 @@ journalctl --user -u appmotel-myapp -f
 ### Restore from Backup
 ```bash
 # List backups
-appmo-admin backups myapp
+sudo -u appmotel appmo backups myapp
 
 # Restore specific backup
-appmo-admin restore myapp 2025-12-03-120000
+sudo -u appmotel appmo restore myapp 2025-12-03-120000
 ```
 
 ### Check Traefik

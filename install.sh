@@ -17,6 +17,37 @@ readonly APPMOTEL_USER="appmotel"
 readonly APPMOTEL_HOME="/home/${APPMOTEL_USER}"
 
 # -----------------------------------------------------------------------------
+# Function: detect_os
+# Description: Detects the operating system type
+# Returns: "debian", "rhel", or "unknown"
+# -----------------------------------------------------------------------------
+detect_os() {
+  if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    case "${ID}" in
+      debian|ubuntu|linuxmint|pop)
+        echo "debian"
+        return
+        ;;
+      rhel|centos|fedora|rocky|almalinux)
+        echo "rhel"
+        return
+        ;;
+    esac
+  fi
+
+  # Fallback detection
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "debian"
+  elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+    echo "rhel"
+  else
+    echo "unknown"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: log_msg
 # Description: Prints messages with timestamp
 # -----------------------------------------------------------------------------
@@ -154,6 +185,9 @@ apps ALL=(appmotel) NOPASSWD: ALL
 # TIER 2 -> TIER 3: Allow appmotel to manage ONLY the Traefik system service
 # This is needed because Traefik runs as a system service to bind ports 80/443
 appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/systemctl stop traefik-appmotel, /bin/systemctl start traefik-appmotel, /bin/systemctl status traefik-appmotel
+
+# Allow appmotel to view ONLY traefik-appmotel logs with any journalctl options (for debugging)
+appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/journalctl -u traefik-appmotel *
 
 # Note: App services use systemctl --user (no sudo needed)
 # Traefik config changes are auto-reloaded (no restart needed for config updates)
@@ -312,9 +346,10 @@ find_existing_wildcard_cert() {
 
 # -----------------------------------------------------------------------------
 # Function: ensure_cert_readable
-# Description: Ensures appmotel user can read the certificate files
+# Description: Ensures appmotel user can read the certificate files securely
 # Parameters: $1 = domain name
 # Note: Must be run as root
+# Uses ssl-cert group for secure access (following Debian/Ubuntu convention)
 # -----------------------------------------------------------------------------
 ensure_cert_readable() {
   local domain="${1}"
@@ -323,18 +358,55 @@ ensure_cert_readable() {
     return
   fi
 
-  # Make the letsencrypt directories readable
-  chmod 755 /etc/letsencrypt/live 2>/dev/null || true
-  chmod 755 "/etc/letsencrypt/live/${domain}" 2>/dev/null || true
-  chmod 755 /etc/letsencrypt/archive 2>/dev/null || true
-  chmod 755 "/etc/letsencrypt/archive/${domain}" 2>/dev/null || true
+  local os_type
+  os_type=$(detect_os)
 
-  # Make certificate files readable by all users
-  chmod 744 "/etc/letsencrypt/live/${domain}/fullchain.pem" 2>/dev/null || true
-  chmod 744 "/etc/letsencrypt/live/${domain}/privkey.pem" 2>/dev/null || true
-  chmod 744 "/etc/letsencrypt/archive/${domain}"/* 2>/dev/null || true
+  # Ensure ssl-cert group exists (Debian/Ubuntu convention)
+  if ! getent group ssl-cert >/dev/null 2>&1; then
+    if [[ "${os_type}" == "debian" ]]; then
+      # On Debian/Ubuntu, install the ssl-cert package which provides the group
+      log_msg "INFO" "Installing ssl-cert package (Debian/Ubuntu convention)"
+      if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq >/dev/null 2>&1 || true
+        apt-get install -y ssl-cert >/dev/null 2>&1 || {
+          log_msg "WARN" "Failed to install ssl-cert package, creating group manually"
+          groupadd ssl-cert
+        }
+      else
+        groupadd ssl-cert
+      fi
+      log_msg "INFO" "ssl-cert group is now available"
+    else
+      # On RHEL/CentOS/Fedora, manually create the group
+      log_msg "INFO" "Creating ssl-cert group manually (RHEL/CentOS convention)"
+      groupadd ssl-cert
+      log_msg "INFO" "Created ssl-cert group"
+    fi
+  fi
 
-  log_msg "INFO" "Set certificate permissions for appmotel user to read"
+  # Add appmotel user to ssl-cert group
+  if ! groups appmotel 2>/dev/null | grep -q ssl-cert; then
+    usermod -aG ssl-cert appmotel
+    log_msg "INFO" "Added appmotel user to ssl-cert group"
+  fi
+
+  # Set group ownership to ssl-cert
+  chgrp -R ssl-cert /etc/letsencrypt/archive 2>/dev/null || true
+  chgrp -R ssl-cert /etc/letsencrypt/live 2>/dev/null || true
+
+  # Set secure directory permissions (750: owner full, group read/execute, world none)
+  chmod 750 /etc/letsencrypt/live 2>/dev/null || true
+  chmod 750 "/etc/letsencrypt/live/${domain}" 2>/dev/null || true
+  chmod 750 /etc/letsencrypt/archive 2>/dev/null || true
+  chmod 750 "/etc/letsencrypt/archive/${domain}" 2>/dev/null || true
+
+  # Set secure file permissions
+  # Private keys: 640 (owner read/write, group read, world none)
+  # Public certs: 644 (owner read/write, group/world read - these are public anyway)
+  find "/etc/letsencrypt/archive/${domain}" -name "privkey*.pem" -exec chmod 640 {} \; 2>/dev/null || true
+  find "/etc/letsencrypt/archive/${domain}" -name "*.pem" ! -name "privkey*.pem" -exec chmod 644 {} \; 2>/dev/null || true
+
+  log_msg "INFO" "Set secure certificate permissions using ssl-cert group"
 }
 
 # -----------------------------------------------------------------------------
@@ -443,26 +515,6 @@ install_appmo_cli() {
     cp "${completion_source}" "${completion_dest}/appmo"
     log_msg "INFO" "Shell completion installed"
   fi
-}
-
-# -----------------------------------------------------------------------------
-# Function: install_appmo_admin_wrapper
-# Description: Installs appmo-admin wrapper for apps user (requires root)
-# -----------------------------------------------------------------------------
-install_appmo_admin_wrapper() {
-  log_msg "INFO" "Installing appmo-admin wrapper to /usr/local/bin"
-
-  local wrapper_source="${SCRIPT_DIR}/bin/appmo-admin"
-  local wrapper_dest="/usr/local/bin/appmo-admin"
-
-  if [[ ! -f "${wrapper_source}" ]]; then
-    log_msg "WARN" "appmo-admin wrapper not found at ${wrapper_source}"
-    return
-  fi
-
-  cp "${wrapper_source}" "${wrapper_dest}"
-  chmod 755 "${wrapper_dest}"
-  log_msg "INFO" "appmo-admin wrapper installed to ${wrapper_dest}"
 }
 
 # -----------------------------------------------------------------------------
@@ -643,9 +695,6 @@ install_as_root() {
   # Create systemd service (requires root, but Traefik binary doesn't exist yet)
   create_traefik_service
 
-  # Install appmo-admin wrapper for apps user
-  install_appmo_admin_wrapper
-
   # Check for and prepare existing certificates
   local existing_cert
   existing_cert=$(find_existing_wildcard_cert)
@@ -657,13 +706,16 @@ install_as_root() {
   log_msg "INFO" "System-level installation complete!"
   log_msg "INFO" "======================================"
   log_msg "INFO" ""
-  log_msg "INFO" "Next step: Run user-level installation"
-  log_msg "INFO" "You can run this as any regular user with sudo access:"
+  log_msg "INFO" "Next step: Switch to appmotel user and run installation"
   log_msg "INFO" ""
+  log_msg "INFO" "  sudo su - appmotel"
+  log_msg "INFO" "  curl -fsSL \"https://raw.githubusercontent.com/dirkpetersen/appmotel/main/install.sh?\$(date +%s)\" | bash"
+  log_msg "INFO" ""
+  log_msg "INFO" "Or if you have the repository locally:"
+  log_msg "INFO" ""
+  log_msg "INFO" "  sudo su - appmotel"
+  log_msg "INFO" "  cd /path/to/appmotel"
   log_msg "INFO" "  bash install.sh"
-  log_msg "INFO" ""
-  log_msg "INFO" "The script will automatically switch to the appmotel user"
-  log_msg "INFO" "to complete the installation."
 }
 
 # -----------------------------------------------------------------------------

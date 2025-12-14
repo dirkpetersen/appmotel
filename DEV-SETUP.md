@@ -44,7 +44,10 @@ apps ALL=(appmotel) NOPASSWD: ALL
 # Allow appmotel to manage ONLY the Traefik system service
 appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/systemctl stop traefik-appmotel, /bin/systemctl start traefik-appmotel, /bin/systemctl status traefik-appmotel
 
-# Note: appmotel user does NOT need sudo access for Traefik config
+# Allow appmotel to view ONLY traefik-appmotel logs with any journalctl options
+appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/journalctl -u traefik-appmotel *
+
+# Note: appmotel user does NOT need sudo access for Traefik config changes
 # Traefik automatically reloads dynamic configuration changes
 ```
 
@@ -52,9 +55,10 @@ appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/syste
 
 | Line | Purpose |
 |------|---------|
-| `apps ALL=(ALL) NOPASSWD: /bin/su - appmotel` | Allows interactive shell sessions as appmotel |
-| `apps ALL=(appmotel) NOPASSWD: ALL` | Allows non-interactive command execution as appmotel |
+| `apps ALL=(ALL) NOPASSWD: /bin/su - appmotel` | Allows operator user to switch to appmotel interactively |
+| `apps ALL=(appmotel) NOPASSWD: ALL` | Allows operator user to run any command as appmotel (for automation) |
 | `appmotel ALL=(ALL) NOPASSWD: /bin/systemctl ...` | Allows appmotel to manage Traefik system service |
+| `appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel*` | Allows appmotel to view full Traefik logs for debugging |
 
 ## Correct Command Execution
 
@@ -80,6 +84,26 @@ sudo -u appmotel sudo /bin/systemctl status traefik-appmotel
 # This fails because "apps" user doesn't have direct systemctl sudo access
 sudo systemctl start traefik-appmotel
 ```
+
+### Viewing Traefik Logs
+
+The `appmotel` user has full access to Traefik logs for debugging:
+
+```bash
+# View recent logs
+sudo -u appmotel sudo /usr/bin/journalctl -u traefik-appmotel -n 50
+
+# View logs since a time
+sudo -u appmotel sudo /usr/bin/journalctl -u traefik-appmotel --since "1 hour ago"
+
+# Follow logs in real-time
+sudo -u appmotel sudo /usr/bin/journalctl -u traefik-appmotel -f
+
+# View logs without pager
+sudo -u appmotel sudo /usr/bin/journalctl -u traefik-appmotel --no-pager
+```
+
+**Note:** The appmotel user can ONLY view traefik-appmotel logs. Attempting to view other service logs will be denied by sudoers.
 
 ### Managing Application Services
 
@@ -117,17 +141,58 @@ sudo loginctl enable-linger appmotel
 ```
 
 ### 2. Let's Encrypt Certificate Access (Required for HTTPS)
-Read access to TLS certificates:
-```bash
-# Certificates at /etc/letsencrypt/live/<domain>/
-# appmotel needs read access to:
-#   - fullchain.pem
-#   - privkey.pem
+Secure read access to TLS certificates using group-based permissions.
 
-# Option A: Add appmotel to a group with access
+**Background: The `ssl-cert` Convention**
+
+This follows the Debian/Ubuntu convention for secure certificate access:
+- **Debian/Ubuntu**: The `ssl-cert` package provides the `ssl-cert` group and `/etc/ssl/private` directory (mode 710)
+- **RHEL/CentOS/Fedora**: No such package exists; the group must be created manually
+- **Purpose**: Allows non-root services to read SSL/TLS private keys without making them world-readable
+
+**The Secure Approach (Recommended - Implemented by install.sh):**
+```bash
+# 1. Install ssl-cert package (Debian/Ubuntu only)
+# On Debian/Ubuntu:
+sudo apt-get install -y ssl-cert
+
+# On RHEL/CentOS/Fedora, manually create the group:
+sudo groupadd ssl-cert
+
+# 2. Add appmotel user to ssl-cert group
 sudo usermod -aG ssl-cert appmotel
 
-# Option B: Use ACLs
+# 3. Set group ownership
+sudo chgrp -R ssl-cert /etc/letsencrypt/archive
+sudo chgrp -R ssl-cert /etc/letsencrypt/live
+
+# 4. Set secure permissions
+# Directories: 750 (owner full, group read/execute, world none)
+sudo chmod 750 /etc/letsencrypt/{archive,live}
+sudo chmod 750 /etc/letsencrypt/archive/*
+sudo chmod 750 /etc/letsencrypt/live/*
+
+# 5. Private keys: 640 (owner read/write, group read, world none)
+sudo find /etc/letsencrypt/archive -name "privkey*.pem" -exec chmod 640 {} \;
+
+# 6. Public certs: 644 (standard for public certificates)
+sudo find /etc/letsencrypt/archive -name "*.pem" ! -name "privkey*.pem" -exec chmod 644 {} \;
+```
+
+**Why This Approach:**
+- **Security**: Private keys are NOT readable by all users (prevents unauthorized access)
+- **Access Control**: Only members of `ssl-cert` group can access certificates
+- **Standard Convention**:
+  - Debian/Ubuntu systems use the `ssl-cert` package which provides this group and `/etc/ssl/private` (mode 710)
+  - RHEL/CentOS/Fedora don't have this package but the convention still applies
+- **Manageable**: Group membership can be managed centrally
+- **Clean**: Uses standard Unix permissions, no ACLs needed
+- **Portable**: Works across different Linux distributions
+- **Much more secure** than world-readable files (744) or overly permissive ACLs
+
+**Alternative (Not Recommended):**
+```bash
+# Using ACLs - works but less standard
 sudo setfacl -R -m u:appmotel:rx /etc/letsencrypt/live/
 sudo setfacl -R -m u:appmotel:rx /etc/letsencrypt/archive/
 ```
