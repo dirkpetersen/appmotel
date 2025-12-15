@@ -12,6 +12,7 @@ IFS=$'\n\t'
 
 # Constants
 readonly APPMOTEL_HOME="/home/appmotel"
+readonly APPMOTEL_ENV_FILE="${APPMOTEL_HOME}/.config/appmotel/.env"
 readonly APPS_CONFIG_DIR="${APPMOTEL_HOME}/.config/appmotel/apps"
 readonly APPS_DATA_DIR="${APPMOTEL_HOME}/.local/share/appmotel"
 readonly TRAEFIK_DYNAMIC_DIR="${APPMOTEL_HOME}/.config/traefik/dynamic"
@@ -19,6 +20,17 @@ readonly SYSTEMD_USER_DIR="${APPMOTEL_HOME}/.config/systemd/user"
 readonly BACKUPS_DIR="${APPMOTEL_HOME}/.local/share/appmotel-backups"
 readonly MIN_PORT=10001
 readonly MAX_PORT=59999
+
+# Load appmotel configuration
+# Note: Temporarily reset IFS for proper .env parsing, then restore
+if [[ -f "${APPMOTEL_ENV_FILE}" ]]; then
+  _saved_ifs="${IFS}"
+  IFS=$' \t\n'
+  # shellcheck source=/dev/null
+  source "${APPMOTEL_ENV_FILE}"
+  IFS="${_saved_ifs}"
+  unset _saved_ifs
+fi
 
 # Default resource limits (can be overridden in .env)
 readonly DEFAULT_MEMORY_LIMIT="512M"
@@ -815,7 +827,7 @@ cmd_add() {
     die "Installation failed, rolling back"
   fi
 
-  # Load BASE_DOMAIN from .env if available
+  # Use BASE_DOMAIN from .env (sourced at script start) or default
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
   # Check for Procfile (multi-process app)

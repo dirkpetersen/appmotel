@@ -261,9 +261,20 @@ This fixed location allows both root and user installations to access the same c
 - `LETSENCRYPT_EMAIL`: Email for Let's Encrypt notifications
 - `LETSENCRYPT_MODE`: "http" (HTTP-01 challenge) or "dns" (DNS-01 via Route53)
 - `BASE_DOMAIN`: Base domain for applications
-- AWS credentials (only for DNS-01 challenge mode)
+- `AWS_ACCESS_KEY_ID`: AWS access key (only for DNS-01 mode, not needed if using IAM instance role)
+- `AWS_SECRET_ACCESS_KEY`: AWS secret key (only for DNS-01 mode, not needed if using IAM instance role)
+- `AWS_HOSTED_ZONE_ID`: Route53 hosted zone ID (only for DNS-01 mode)
+- `AWS_REGION`: AWS region for Route53 API calls (only for DNS-01 mode)
 
 **Note:** The `.env` file is shared between system-level (root) and user-level (appmotel) installations.
+
+**IAM Instance Role (EC2 Deployments):**
+When running on EC2, AWS credentials can be provided via IAM instance role instead of access keys:
+- More secure (no long-lived credentials to manage)
+- Credentials automatically rotate via instance metadata
+- Uses managed policy `AmazonRoute53FullAccess` for DNS-01 challenge
+- No need to set `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` in `.env`
+- Follows AWS security best practices
 
 ## Systemd Architecture
 
@@ -382,6 +393,72 @@ The script performs:
 
 The installation script is idempotent and handles both fresh installations and updates.
 
+## AWS Deployment (Automated)
+
+For automated EC2 deployment with full Route53 DNS integration:
+
+**Script:** `install-aws.sh`
+
+**Usage:**
+```bash
+bash install-aws.sh [instance-type] [region]
+```
+
+**What It Does:**
+1. **EC2 Instance Setup:**
+   - Launches EC2 instance (default: t4g.micro ARM-based in us-west-2)
+   - Automatically finds latest Amazon Linux 2023 AMI
+   - Creates security group with ports 22, 80, 443 open
+   - Creates SSH key pair (`~/.ssh/appmotel-key.pem`)
+
+2. **IAM Role Configuration (Credential-less):**
+   - Creates IAM role `appmotel-route53-role` with Route53 permissions
+   - Attaches role to EC2 instance at launch
+   - Uses `AmazonRoute53FullAccess` managed policy
+   - Instance uses temporary credentials via metadata service
+   - NO need for AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY
+   - More secure - credentials can't leak and auto-rotate
+
+3. **Automatic DNS-01 Configuration:**
+   - Auto-detects first Route53 hosted zone in account
+   - Creates DNS records automatically:
+     * A record: `appmotel.<domain>` → server IP
+     * Wildcard: `*.<domain>` → server IP (all apps auto-route)
+   - Configures `.env` with:
+     * `BASE_DOMAIN=<detected-domain>`
+     * `USE_LETSENCRYPT=yes`
+     * `LETSENCRYPT_MODE=dns`
+     * `AWS_HOSTED_ZONE_ID=<detected-zone-id>`
+     * `AWS_REGION=<zone-region>`
+   - Restarts Traefik to apply configuration
+
+4. **Appmotel Installation:**
+   - Runs `install.sh` as root (system-level setup)
+   - Runs `install.sh` as appmotel user (user-level setup)
+   - Starts all services automatically
+
+**Benefits:**
+- ✓ Fully automated deployment from zero to production-ready
+- ✓ Wildcard certificates automatically (*.yourdomain.com)
+- ✓ Works even if port 80 is blocked by ISP/firewall
+- ✓ Single certificate for all apps
+- ✓ Zero manual DNS configuration if Route53 hosted zone exists
+- ✓ Zero credential management (uses IAM role)
+- ✓ More secure than HTTP-01 challenge + access keys
+
+**Prerequisites:**
+- AWS CLI configured (`aws configure`)
+- Route53 hosted zone (optional, for automatic DNS setup)
+- Required tools: `aws`, `jq`, `ssh`, `ssh-keygen`
+
+**Connection After Deployment:**
+```bash
+ssh -i ~/.ssh/appmotel-key.pem ec2-user@<instance-ip>
+```
+
+**Graceful Fallback:**
+If no Route53 hosted zones found, installation continues without DNS setup and shows manual configuration instructions.
+
 ## Development Workflow
 
 **Documentation Location:** All requirements and coding instructions are in the `reqs/` folder.
@@ -398,3 +475,61 @@ When writing Bash scripts:
 2. Ensure scripts are idempotent (can be run multiple times safely)
 3. Test with strict mode enabled
 4. Verify proper error handling with `set -o errexit` and `set -o pipefail`
+
+### Common Testing Commands
+
+**Clean Installation Testing:**
+```bash
+# Reset appmotel home directory (as apps user)
+sudo -u appmotel bash reset-home.sh --force
+
+# Run fresh installation
+bash install.sh
+```
+
+**Service Testing:**
+```bash
+# Check Traefik status
+sudo -u appmotel sudo systemctl status traefik-appmotel
+
+# Check autopull timer
+sudo -u appmotel systemctl --user status appmotel-autopull.timer
+
+# View Traefik logs
+sudo journalctl -u traefik-appmotel -f
+
+# View app logs
+sudo -u appmotel appmo logs <app-name>
+```
+
+**App Deployment Testing:**
+```bash
+# Deploy test apps from examples/
+sudo -u appmotel appmo add flask-test https://github.com/dirkpetersen/appmotel main examples/flask-hello
+sudo -u appmotel appmo add express-test https://github.com/dirkpetersen/appmotel main examples/express-hello
+
+# Check status
+sudo -u appmotel appmo status
+
+# Test updates
+sudo -u appmotel appmo update flask-test
+
+# Test backup/restore
+sudo -u appmotel appmo backup flask-test
+sudo -u appmotel appmo restore flask-test
+```
+
+**DNS and Certificate Testing:**
+```bash
+# Test DNS resolution
+dig myapp.apps.yourdomain.edu
+
+# Test HTTP to HTTPS redirect
+curl -v http://myapp.apps.yourdomain.edu
+
+# Test HTTPS connectivity
+curl -v https://myapp.apps.yourdomain.edu
+
+# Verify certificate
+openssl s_client -connect myapp.apps.yourdomain.edu:443 -servername myapp.apps.yourdomain.edu </dev/null 2>&1 | grep "subject="
+```

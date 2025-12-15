@@ -26,6 +26,49 @@ readonly IAM_ROLE_NAME="appmotel-route53-role"
 readonly IAM_INSTANCE_PROFILE="appmotel-instance-profile"
 
 # -----------------------------------------------------------------------------
+# Global Variables (set via command line options)
+# -----------------------------------------------------------------------------
+AWS_PROFILE_EC2=""
+AWS_PROFILE_IAM=""
+REQUESTED_HOSTED_ZONE=""
+FORCE_OVERWRITE=0
+
+# -----------------------------------------------------------------------------
+# AWS CLI Profile Wrapper Functions
+# -----------------------------------------------------------------------------
+aws_ec2() {
+  if [[ -n "${AWS_PROFILE_EC2}" ]]; then
+    aws ec2 --profile="${AWS_PROFILE_EC2}" "$@"
+  else
+    aws ec2 "$@"
+  fi
+}
+
+aws_iam() {
+  if [[ -n "${AWS_PROFILE_IAM}" ]]; then
+    aws iam --profile="${AWS_PROFILE_IAM}" "$@"
+  else
+    aws iam "$@"
+  fi
+}
+
+aws_route53() {
+  if [[ -n "${AWS_PROFILE_IAM}" ]]; then
+    aws route53 --profile="${AWS_PROFILE_IAM}" "$@"
+  else
+    aws route53 "$@"
+  fi
+}
+
+aws_sts() {
+  if [[ -n "${AWS_PROFILE_EC2}" ]]; then
+    aws sts --profile="${AWS_PROFILE_EC2}" "$@"
+  else
+    aws sts "$@"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: log_msg
 # Description: Prints messages with timestamp
 # -----------------------------------------------------------------------------
@@ -42,6 +85,59 @@ log_msg() {
 die() {
   log_msg "ERROR" "$1"
   exit 1
+}
+
+# -----------------------------------------------------------------------------
+# Function: die_iam_permission_error
+# Description: Prints IAM permission error with helpful guidance
+# Arguments:
+#   $1 - IAM action that failed
+# -----------------------------------------------------------------------------
+die_iam_permission_error() {
+  local iam_action="$1"
+  log_msg "ERROR" "Access Denied: IAM permission required"
+  log_msg "ERROR" ""
+  log_msg "ERROR" "The current AWS credentials do not have permission for: ${iam_action}"
+  log_msg "ERROR" ""
+  log_msg "ERROR" "To fix this issue, you have two options:"
+  log_msg "ERROR" ""
+  log_msg "ERROR" "Option 1: Use an IAM profile with higher privileges"
+  log_msg "ERROR" "  Run with --iam-profile using a profile that has IAM permissions:"
+  log_msg "ERROR" "  bash install-aws.sh --iam-profile <ADMIN_PROFILE>"
+  log_msg "ERROR" ""
+  log_msg "ERROR" "Option 2: Pre-create the IAM role manually"
+  log_msg "ERROR" "  Ask your AWS administrator to create:"
+  log_msg "ERROR" "  - Role: ${IAM_ROLE_NAME}"
+  log_msg "ERROR" "  - Instance Profile: ${IAM_INSTANCE_PROFILE}"
+  log_msg "ERROR" "  - Policy: AmazonRoute53FullAccess"
+  log_msg "ERROR" ""
+  if [[ -n "${AWS_PROFILE_IAM}" ]]; then
+    log_msg "ERROR" "Current IAM Profile: ${AWS_PROFILE_IAM}"
+  else
+    log_msg "ERROR" "Current IAM Profile: default"
+  fi
+  exit 1
+}
+
+# -----------------------------------------------------------------------------
+# Function: profile_exists
+# Description: Checks if an AWS profile exists in ~/.aws/config
+# Arguments:
+#   $1 - Profile name
+# Returns: 0 if exists, 1 if not
+# -----------------------------------------------------------------------------
+profile_exists() {
+  local profile="$1"
+  if [[ -z "${profile}" ]]; then
+    return 0
+  fi
+  # Check both [profile name] and [name] formats in ~/.aws/config
+  if grep -q "^\[profile ${profile}\]" ~/.aws/config 2>/dev/null || \
+     grep -q "^\[${profile}\]" ~/.aws/config 2>/dev/null || \
+     grep -q "^\[${profile}\]" ~/.aws/credentials 2>/dev/null; then
+    return 0
+  fi
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -62,8 +158,23 @@ check_dependencies() {
     die "Missing required commands: ${missing[*]}. Please install them first."
   fi
 
+  # Validate AWS profiles if specified
+  if [[ -n "${AWS_PROFILE_EC2}" ]]; then
+    if ! profile_exists "${AWS_PROFILE_EC2}"; then
+      die "EC2 profile '${AWS_PROFILE_EC2}' not found in ~/.aws/config or ~/.aws/credentials"
+    fi
+    log_msg "INFO" "Using AWS profile for EC2 operations: ${AWS_PROFILE_EC2}"
+  fi
+
+  if [[ -n "${AWS_PROFILE_IAM}" ]]; then
+    if ! profile_exists "${AWS_PROFILE_IAM}"; then
+      die "IAM profile '${AWS_PROFILE_IAM}' not found in ~/.aws/config or ~/.aws/credentials"
+    fi
+    log_msg "INFO" "Using AWS profile for IAM/Route53 operations: ${AWS_PROFILE_IAM}"
+  fi
+
   # Check AWS CLI is configured
-  if ! aws sts get-caller-identity >/dev/null 2>&1; then
+  if ! aws_sts get-caller-identity >/dev/null 2>&1; then
     die "AWS CLI is not configured. Run 'aws configure' first."
   fi
 
@@ -85,7 +196,7 @@ get_latest_al2023_ami() {
   log_msg "INFO" "Finding latest Amazon Linux 2023 ${arch} AMI in ${region}..."
 
   local ami_id
-  ami_id=$(aws ec2 describe-images \
+  ami_id=$(aws_ec2 describe-images \
     --region "${region}" \
     --owners "${DEFAULT_AMI_OWNER}" \
     --filters \
@@ -114,7 +225,7 @@ create_key_pair() {
   local key_file="${HOME}/.ssh/${KEY_NAME}.pem"
 
   # Check if key already exists in AWS
-  if aws ec2 describe-key-pairs --region "${region}" --key-names "${KEY_NAME}" >/dev/null 2>&1; then
+  if aws_ec2 describe-key-pairs --region "${region}" --key-names "${KEY_NAME}" >/dev/null 2>&1; then
     log_msg "INFO" "Key pair '${KEY_NAME}' already exists in AWS"
 
     # Verify local key file exists
@@ -127,7 +238,7 @@ create_key_pair() {
   log_msg "INFO" "Creating key pair '${KEY_NAME}'..."
 
   # Create key pair and save to file
-  aws ec2 create-key-pair \
+  aws_ec2 create-key-pair \
     --region "${region}" \
     --key-name "${KEY_NAME}" \
     --query 'KeyMaterial' \
@@ -151,7 +262,7 @@ add_security_group_rules() {
   log_msg "INFO" "Adding ingress rules to security group..."
 
   # SSH (22)
-  aws ec2 authorize-security-group-ingress \
+  aws_ec2 authorize-security-group-ingress \
     --region "${region}" \
     --group-id "${sg_id}" \
     --protocol tcp \
@@ -159,7 +270,7 @@ add_security_group_rules() {
     --cidr 0.0.0.0/0 >/dev/null 2>&1 || log_msg "WARN" "SSH rule may already exist"
 
   # HTTP (80)
-  aws ec2 authorize-security-group-ingress \
+  aws_ec2 authorize-security-group-ingress \
     --region "${region}" \
     --group-id "${sg_id}" \
     --protocol tcp \
@@ -167,7 +278,7 @@ add_security_group_rules() {
     --cidr 0.0.0.0/0 >/dev/null 2>&1 || log_msg "WARN" "HTTP rule may already exist"
 
   # HTTPS (443)
-  aws ec2 authorize-security-group-ingress \
+  aws_ec2 authorize-security-group-ingress \
     --region "${region}" \
     --group-id "${sg_id}" \
     --protocol tcp \
@@ -189,7 +300,7 @@ create_security_group() {
   local sg_id
 
   # Check if security group already exists
-  sg_id=$(aws ec2 describe-security-groups \
+  sg_id=$(aws_ec2 describe-security-groups \
     --region "${region}" \
     --filters "Name=group-name,Values=${SECURITY_GROUP_NAME}" \
     --query 'SecurityGroups[0].GroupId' \
@@ -200,7 +311,7 @@ create_security_group() {
 
     # Check if ingress rules exist
     local rule_count
-    rule_count=$(aws ec2 describe-security-groups \
+    rule_count=$(aws_ec2 describe-security-groups \
       --region "${region}" \
       --group-ids "${sg_id}" \
       --query 'length(SecurityGroups[0].IpPermissions)' \
@@ -221,7 +332,7 @@ create_security_group() {
 
   # Get default VPC
   local vpc_id
-  vpc_id=$(aws ec2 describe-vpcs \
+  vpc_id=$(aws_ec2 describe-vpcs \
     --region "${region}" \
     --filters "Name=is-default,Values=true" \
     --query 'Vpcs[0].VpcId' \
@@ -232,7 +343,7 @@ create_security_group() {
   fi
 
   # Create security group
-  sg_id=$(aws ec2 create-security-group \
+  sg_id=$(aws_ec2 create-security-group \
     --region "${region}" \
     --group-name "${SECURITY_GROUP_NAME}" \
     --description "Security group for Appmotel PaaS" \
@@ -266,7 +377,7 @@ launch_instance() {
   log_msg "INFO" "Launching EC2 instance (${instance_type})..."
 
   local instance_id
-  instance_id=$(aws ec2 run-instances \
+  instance_id=$(aws_ec2 run-instances \
     --region "${region}" \
     --image-id "${ami_id}" \
     --instance-type "${instance_type}" \
@@ -280,7 +391,7 @@ launch_instance() {
   log_msg "INFO" "Instance launched: ${instance_id}"
   log_msg "INFO" "Waiting for instance to be running..."
 
-  aws ec2 wait instance-running \
+  aws_ec2 wait instance-running \
     --region "${region}" \
     --instance-ids "${instance_id}"
 
@@ -302,7 +413,7 @@ get_instance_ip() {
   local instance_id="$2"
 
   local public_ip
-  public_ip=$(aws ec2 describe-instances \
+  public_ip=$(aws_ec2 describe-instances \
     --region "${region}" \
     --instance-ids "${instance_id}" \
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
@@ -361,10 +472,16 @@ create_iam_role() {
   log_msg "INFO" "Setting up IAM role for Route53 access..."
 
   # Check if role already exists
-  if aws iam get-role --role-name "${IAM_ROLE_NAME}" >/dev/null 2>&1; then
+  local role_check_output
+  role_check_output=$(aws_iam get-role --role-name "${IAM_ROLE_NAME}" 2>&1) && {
     log_msg "INFO" "IAM role '${IAM_ROLE_NAME}' already exists"
-  else
-    log_msg "INFO" "Creating IAM role '${IAM_ROLE_NAME}'..."
+  } || {
+    # Check for access denied error
+    if echo "${role_check_output}" | grep -q "AccessDenied"; then
+      die_iam_permission_error "iam:GetRole"
+    fi
+
+    log_msg "INFO" "Creating IAM role - this may take a few seconds..."
 
     # Trust policy - allows EC2 to assume this role
     local trust_policy
@@ -381,48 +498,67 @@ EOF
 )
 
     # Create the role
-    aws iam create-role \
+    local create_output
+    create_output=$(aws_iam create-role \
       --role-name "${IAM_ROLE_NAME}" \
       --assume-role-policy-document "${trust_policy}" \
       --description "Allows Appmotel/Traefik to manage Route53 for Let's Encrypt DNS-01 challenge" \
-      >/dev/null
+      2>&1) || {
+      if echo "${create_output}" | grep -q "AccessDenied"; then
+        die_iam_permission_error "iam:CreateRole"
+      fi
+      die "Failed to create IAM role: ${create_output}"
+    }
 
     log_msg "INFO" "IAM role created"
-  fi
+  }
 
   # Check if policy is attached
-  if aws iam list-attached-role-policies --role-name "${IAM_ROLE_NAME}" | grep -q "Route53FullAccess"; then
+  if aws_iam list-attached-role-policies --role-name "${IAM_ROLE_NAME}" 2>/dev/null | grep -q "Route53FullAccess"; then
     log_msg "INFO" "Route53 policy already attached"
   else
     log_msg "INFO" "Attaching Route53 policy to role..."
 
     # Attach AWS managed Route53 policy
-    aws iam attach-role-policy \
+    local attach_output
+    attach_output=$(aws_iam attach-role-policy \
       --role-name "${IAM_ROLE_NAME}" \
-      --policy-arn "arn:aws:iam::aws:policy/AmazonRoute53FullAccess"
+      --policy-arn "arn:aws:iam::aws:policy/AmazonRoute53FullAccess" \
+      2>&1) || {
+      if echo "${attach_output}" | grep -q "AccessDenied"; then
+        die_iam_permission_error "iam:AttachRolePolicy"
+      fi
+      die "Failed to attach policy: ${attach_output}"
+    }
 
     log_msg "INFO" "Route53 policy attached"
   fi
 
   # Create instance profile if it doesn't exist
-  if aws iam get-instance-profile --instance-profile-name "${IAM_INSTANCE_PROFILE}" >/dev/null 2>&1; then
+  if aws_iam get-instance-profile --instance-profile-name "${IAM_INSTANCE_PROFILE}" >/dev/null 2>&1; then
     log_msg "INFO" "Instance profile '${IAM_INSTANCE_PROFILE}' already exists"
   else
     log_msg "INFO" "Creating instance profile..."
 
-    aws iam create-instance-profile \
+    local profile_output
+    profile_output=$(aws_iam create-instance-profile \
       --instance-profile-name "${IAM_INSTANCE_PROFILE}" \
-      >/dev/null
+      2>&1) || {
+      if echo "${profile_output}" | grep -q "AccessDenied"; then
+        die_iam_permission_error "iam:CreateInstanceProfile"
+      fi
+      die "Failed to create instance profile: ${profile_output}"
+    }
 
     # Add role to instance profile
-    aws iam add-role-to-instance-profile \
+    aws_iam add-role-to-instance-profile \
       --instance-profile-name "${IAM_INSTANCE_PROFILE}" \
-      --role-name "${IAM_ROLE_NAME}"
+      --role-name "${IAM_ROLE_NAME}" || die "Failed to add role to instance profile"
 
     log_msg "INFO" "Instance profile created"
 
     # Wait for instance profile to be ready
-    log_msg "INFO" "Waiting for IAM resources to propagate (10 seconds)..."
+    log_msg "INFO" "Waiting for IAM resources to propagate - 10 seconds..."
     sleep 10
   fi
 
@@ -430,33 +566,227 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
+# Function: list_all_route53_zones
+# Description: Lists all Route53 hosted zones for user selection
+# -----------------------------------------------------------------------------
+list_all_route53_zones() {
+  log_msg "INFO" ""
+  log_msg "INFO" "Available Route53 hosted zones:"
+  log_msg "INFO" "================================"
+
+  local zones
+  zones=$(aws_route53 list-hosted-zones \
+    --query 'HostedZones[].[Id,Name]' \
+    --output text 2>/dev/null)
+
+  if [[ -z "${zones}" ]]; then
+    log_msg "INFO" "  No zones found"
+    return
+  fi
+
+  while IFS=$'\t' read -r zone_id zone_name; do
+    local clean_id clean_name
+    clean_id="${zone_id#/hostedzone/}"
+    clean_name="${zone_name%.}"
+    log_msg "INFO" "  --hosted-zone ${clean_id}    # ${clean_name}"
+  done <<< "${zones}"
+
+  log_msg "INFO" ""
+}
+
+# -----------------------------------------------------------------------------
 # Function: get_route53_hosted_zone
-# Description: Gets the first hosted zone from Route53
+# Description: Gets hosted zone from Route53
 # Arguments:
 #   $1 - Region
+#   $2 - Requested zone ID (optional, from --hosted-zone)
 # Returns: Hosted zone ID and domain name (format: "ID DOMAIN")
 # -----------------------------------------------------------------------------
 get_route53_hosted_zone() {
   local region="$1"
+  local requested_zone_id="${2-}"
 
   log_msg "INFO" "Looking for Route53 hosted zones..."
 
-  local zone_info
-  zone_info=$(aws route53 list-hosted-zones \
-    --query 'HostedZones[0].[Id,Name]' \
+  # Get all hosted zones
+  local all_zones zone_count
+  all_zones=$(aws_route53 list-hosted-zones \
+    --query 'HostedZones[].[Id,Name]' \
     --output text 2>/dev/null)
 
-  if [[ -z "${zone_info}" ]] || [[ "${zone_info}" == "None" ]]; then
+  if [[ -z "${all_zones}" ]] || [[ "${all_zones}" == "None" ]]; then
     log_msg "WARN" "No Route53 hosted zones found"
     return 1
   fi
 
-  local zone_id zone_name
-  zone_id=$(echo "${zone_info}" | awk '{print $1}' | sed 's|/hostedzone/||')
-  zone_name=$(echo "${zone_info}" | awk '{print $2}' | sed 's/\.$//')  # Remove trailing dot
+  zone_count=$(echo "${all_zones}" | wc -l)
 
-  log_msg "INFO" "Found hosted zone: ${zone_name} (${zone_id})"
-  echo "${zone_id} ${zone_name}"
+  # If a specific zone was requested, validate and use it
+  if [[ -n "${requested_zone_id}" ]]; then
+    local found_zone=""
+    while IFS=$'\t' read -r zone_id zone_name; do
+      local clean_id="${zone_id#/hostedzone/}"
+      if [[ "${clean_id}" == "${requested_zone_id}" ]]; then
+        local clean_name="${zone_name%.}"
+        found_zone="${clean_id} ${clean_name}"
+        break
+      fi
+    done <<< "${all_zones}"
+
+    if [[ -z "${found_zone}" ]]; then
+      log_msg "ERROR" "Hosted zone '${requested_zone_id}' not found"
+      list_all_route53_zones
+      die "Please use one of the zone IDs listed above with --hosted-zone"
+    fi
+
+    log_msg "INFO" "Using requested hosted zone: ${found_zone}"
+    echo "${found_zone}"
+    return 0
+  fi
+
+  # If only one zone exists, use it automatically
+  if [[ "${zone_count}" -eq 1 ]]; then
+    local zone_id zone_name
+    zone_id=$(echo "${all_zones}" | awk '{print $1}' | sed 's|/hostedzone/||')
+    zone_name=$(echo "${all_zones}" | awk '{print $2}' | sed 's/\.$//')
+    log_msg "INFO" "Found hosted zone: ${zone_name} - ${zone_id}"
+    echo "${zone_id} ${zone_name}"
+    return 0
+  fi
+
+  # Multiple zones found - require user to select one
+  log_msg "ERROR" "Multiple Route53 hosted zones found"
+  list_all_route53_zones
+  die "Please specify which zone to use with --hosted-zone <ZONE_ID>"
+}
+
+# -----------------------------------------------------------------------------
+# Function: check_existing_appmotel_records
+# Description: Checks if appmotel DNS records already exist in the zone
+# Arguments:
+#   $1 - Hosted zone ID
+#   $2 - Domain name
+# Returns: 0 if records exist, 1 if not
+# -----------------------------------------------------------------------------
+check_existing_appmotel_records() {
+  local zone_id="$1"
+  local domain="$2"
+
+  log_msg "INFO" "Checking for existing appmotel DNS records..."
+
+  local records
+  records=$(aws_route53 list-resource-record-sets \
+    --hosted-zone-id "${zone_id}" \
+    --query "ResourceRecordSets[?Name=='appmotel.${domain}.' || Name=='*.${domain}.'].Name" \
+    --output text 2>/dev/null)
+
+  if [[ -n "${records}" ]] && [[ "${records}" != "None" ]]; then
+    log_msg "WARN" ""
+    log_msg "WARN" "Existing appmotel DNS records found in zone ${zone_id}:"
+    for record in ${records}; do
+      log_msg "WARN" "  - ${record}"
+    done
+    log_msg "WARN" ""
+    return 0  # Records exist
+  fi
+
+  return 1  # No records
+}
+
+# -----------------------------------------------------------------------------
+# Function: validate_route53_early
+# Description: Validates Route53 configuration before launching EC2
+# Arguments:
+#   $1 - Region
+#   $2 - Requested zone ID (optional)
+# Returns: zone_id and domain_name via global variables
+# -----------------------------------------------------------------------------
+VALIDATED_ZONE_ID=""
+VALIDATED_DOMAIN=""
+
+validate_route53_early() {
+  local region="$1"
+  local requested_zone_id="${2-}"
+
+  log_msg "INFO" "============================================"
+  log_msg "INFO" "Phase 1: Validating Route53 configuration"
+  log_msg "INFO" "============================================"
+
+  log_msg "INFO" "Looking for Route53 hosted zones..."
+
+  # Get all hosted zones
+  local all_zones zone_count
+  all_zones=$(aws_route53 list-hosted-zones \
+    --query 'HostedZones[].[Id,Name]' \
+    --output text 2>/dev/null)
+
+  if [[ -z "${all_zones}" ]] || [[ "${all_zones}" == "None" ]]; then
+    log_msg "INFO" "No Route53 hosted zones found - skipping DNS configuration"
+    return 1
+  fi
+
+  zone_count=$(echo "${all_zones}" | wc -l)
+
+  # If a specific zone was requested, validate it
+  if [[ -n "${requested_zone_id}" ]]; then
+    local found_zone=""
+    while IFS=$'\t' read -r zone_id zone_name; do
+      local clean_id="${zone_id#/hostedzone/}"
+      if [[ "${clean_id}" == "${requested_zone_id}" ]]; then
+        local clean_name="${zone_name%.}"
+        VALIDATED_ZONE_ID="${clean_id}"
+        VALIDATED_DOMAIN="${clean_name}"
+        found_zone="yes"
+        break
+      fi
+    done <<< "${all_zones}"
+
+    if [[ -z "${found_zone}" ]]; then
+      log_msg "ERROR" "Hosted zone '${requested_zone_id}' not found"
+      list_all_route53_zones
+      die "Please use one of the zone IDs listed above with --hosted-zone"
+    fi
+
+    log_msg "INFO" "Using requested hosted zone: ${VALIDATED_ZONE_ID} ${VALIDATED_DOMAIN}"
+
+  # If only one zone exists, use it automatically
+  elif [[ "${zone_count}" -eq 1 ]]; then
+    VALIDATED_ZONE_ID=$(echo "${all_zones}" | awk '{print $1}' | sed 's|/hostedzone/||')
+    VALIDATED_DOMAIN=$(echo "${all_zones}" | awk '{print $2}' | sed 's/\.$//')
+    log_msg "INFO" "Found hosted zone: ${VALIDATED_DOMAIN} - ${VALIDATED_ZONE_ID}"
+
+  # Multiple zones found - require user to select one (STOP HERE!)
+  else
+    log_msg "ERROR" "Multiple Route53 hosted zones found"
+    list_all_route53_zones
+    die "Please specify which zone to use with --hosted-zone <ZONE_ID>"
+  fi
+
+  # Check for existing records
+  if check_existing_appmotel_records "${VALIDATED_ZONE_ID}" "${VALIDATED_DOMAIN}"; then
+    if [[ "${FORCE_OVERWRITE}" -eq 1 ]]; then
+      log_msg "INFO" "Existing records will be overwritten due to --force flag"
+    else
+      log_msg "ERROR" ""
+      log_msg "ERROR" "DNS records for appmotel already exist in this zone."
+      log_msg "ERROR" ""
+      log_msg "ERROR" "To resolve this, you have two options:"
+      log_msg "ERROR" ""
+      log_msg "ERROR" "Option 1: Use --force to overwrite existing records"
+      log_msg "ERROR" "  bash install-aws.sh --force"
+      log_msg "ERROR" ""
+      log_msg "ERROR" "Option 2: Manually remove the existing records from Route53"
+      log_msg "ERROR" "  - appmotel.${VALIDATED_DOMAIN}"
+      log_msg "ERROR" "  - *.${VALIDATED_DOMAIN}"
+      log_msg "ERROR" ""
+      die "Aborting to prevent DNS conflicts"
+    fi
+  fi
+
+  log_msg "INFO" "Route53 validation passed"
+  log_msg "INFO" "  Zone ID: ${VALIDATED_ZONE_ID}"
+  log_msg "INFO" "  Domain: ${VALIDATED_DOMAIN}"
+  return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -504,7 +834,7 @@ EOF
 
   # Apply changes
   local change_id
-  change_id=$(aws route53 change-resource-record-sets \
+  change_id=$(aws_route53 change-resource-record-sets \
     --hosted-zone-id "${zone_id}" \
     --change-batch "${change_batch}" \
     --query 'ChangeInfo.Id' \
@@ -730,7 +1060,24 @@ Launches an EC2 instance with Amazon Linux 2023 and installs Appmotel on it.
 Options:
   -t, --type INSTANCE_TYPE    EC2 instance type (default: ${DEFAULT_INSTANCE_TYPE})
   -r, --region REGION         AWS region (default: ${DEFAULT_REGION})
+  --ec2-profile PROFILE       AWS profile for EC2 operations
+  --iam-profile PROFILE       AWS profile for IAM/Route53 operations
+  --hosted-zone ZONE_ID       Route53 hosted zone ID to use
+  --force                     Overwrite existing appmotel DNS records
   -h, --help                  Show this help message
+
+AWS Profile Options:
+  Use --ec2-profile and --iam-profile when you have separate AWS profiles with
+  different permissions. For example, if your default profile has EC2 access
+  but not IAM permissions, use --iam-profile to specify a profile with IAM
+  admin permissions for creating the instance role.
+
+Route53 Configuration:
+  If you have multiple Route53 hosted zones, use --hosted-zone to specify which
+  zone to use. If only one zone exists, it will be selected automatically.
+
+  If appmotel DNS records already exist in the zone, the script will stop.
+  Use --force to overwrite existing records.
 
 Examples:
   # Launch with defaults (t4g.micro ARM instance in us-west-2)
@@ -741,6 +1088,12 @@ Examples:
 
   # Launch in different region
   bash install-aws.sh --region us-east-1
+
+  # Use separate AWS profile for IAM operations
+  bash install-aws.sh --iam-profile admin-profile
+
+  # Specify hosted zone and force overwrite
+  bash install-aws.sh --hosted-zone Z1234567890ABC --force
 
   # Launch x86 instance
   bash install-aws.sh --type t3.micro --region us-east-1
@@ -787,6 +1140,30 @@ main() {
         region="${2}"
         shift
         ;;
+      --ec2-profile)
+        if [[ -z "${2-}" ]]; then
+          die "Option $1 requires an argument"
+        fi
+        AWS_PROFILE_EC2="${2}"
+        shift
+        ;;
+      --iam-profile)
+        if [[ -z "${2-}" ]]; then
+          die "Option $1 requires an argument"
+        fi
+        AWS_PROFILE_IAM="${2}"
+        shift
+        ;;
+      --hosted-zone)
+        if [[ -z "${2-}" ]]; then
+          die "Option $1 requires an argument"
+        fi
+        REQUESTED_HOSTED_ZONE="${2}"
+        shift
+        ;;
+      --force)
+        FORCE_OVERWRITE=1
+        ;;
       -?*)
         die "Unknown option: $1"
         ;;
@@ -803,6 +1180,17 @@ main() {
 
   # Check dependencies
   check_dependencies
+
+  # Validate Route53 configuration BEFORE launching EC2
+  # This prevents launching an instance only to fail at DNS config
+  local route53_available=0
+  if validate_route53_early "${region}" "${REQUESTED_HOSTED_ZONE}"; then
+    route53_available=1
+  fi
+
+  log_msg "INFO" "============================================"
+  log_msg "INFO" "Phase 2: Launching EC2 instance"
+  log_msg "INFO" "============================================"
 
   # Determine architecture based on instance type
   local arch
@@ -844,19 +1232,18 @@ main() {
   # Install Appmotel
   install_appmotel "${public_ip}" "${key_file}"
 
-  # Configure Route53 DNS (if available)
-  local zone_info domain_name zone_id
-  if zone_info=$(get_route53_hosted_zone "${region}"); then
-    zone_id=$(echo "${zone_info}" | awk '{print $1}')
-    domain_name=$(echo "${zone_info}" | awk '{print $2}')
-
+  # Configure Route53 DNS using pre-validated zone info
+  local domain_name=""
+  if [[ "${route53_available}" -eq 1 ]] && [[ -n "${VALIDATED_ZONE_ID}" ]]; then
     # Configure DNS records in Route53
-    if configure_route53_dns "${zone_id}" "${domain_name}" "${public_ip}"; then
+    if configure_route53_dns "${VALIDATED_ZONE_ID}" "${VALIDATED_DOMAIN}" "${public_ip}"; then
+      domain_name="${VALIDATED_DOMAIN}"
+
       # Update BASE_DOMAIN on remote server
       configure_base_domain "${public_ip}" "${key_file}" "${domain_name}"
 
       # Configure DNS-01 mode for Let's Encrypt wildcard certificates
-      configure_dns01_mode "${public_ip}" "${key_file}" "${zone_id}" "${region}"
+      configure_dns01_mode "${public_ip}" "${key_file}" "${VALIDATED_ZONE_ID}" "${region}"
 
       # Restart Traefik to apply new domain configuration
       log_msg "INFO" "Restarting Traefik to apply DNS configuration..."
@@ -865,14 +1252,12 @@ main() {
           -o UserKnownHostsFile=/dev/null \
           -o LogLevel=ERROR \
           "${SSH_USER}@${public_ip}" \
-          "sudo systemctl restart traefik-appmotel" 2>/dev/null || log_msg "WARN" "Traefik not running yet (expected on first install)"
+          "sudo systemctl restart traefik-appmotel" 2>/dev/null || log_msg "WARN" "Traefik not running yet - expected on first install"
     else
       log_msg "WARN" "DNS configuration failed, continuing without automatic DNS setup"
-      domain_name=""
     fi
   else
-    log_msg "INFO" "No Route53 hosted zones found, skipping automatic DNS configuration"
-    domain_name=""
+    log_msg "INFO" "No Route53 hosted zones configured, skipping automatic DNS setup"
   fi
 
   # Display summary

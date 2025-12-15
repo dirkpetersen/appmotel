@@ -53,6 +53,42 @@ detect_os() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: install_required_packages
+# Description: Installs required system packages (git)
+# Note: Must be run as root
+# Note: curl-minimal is pre-installed on Amazon Linux 2023 and conflicts with curl
+# -----------------------------------------------------------------------------
+install_required_packages() {
+  local os_family
+  os_family=$(detect_os)
+
+  # Check if git is already installed
+  if command -v git >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log_msg "INFO" "Installing git..."
+
+  case "${os_family}" in
+    debian)
+      apt-get update -qq
+      apt-get install -y -qq git
+      ;;
+    rhel)
+      if command -v dnf >/dev/null 2>&1; then
+        dnf install -y -q git
+      else
+        yum install -y -q git
+      fi
+      ;;
+    *)
+      # Can't install automatically, warn the user
+      log_msg "WARN" "git is not installed. Please install it manually."
+      ;;
+  esac
+}
+
+# -----------------------------------------------------------------------------
 # Function: log_msg
 # Description: Prints messages with timestamp
 # -----------------------------------------------------------------------------
@@ -744,6 +780,10 @@ verify_system_setup() {
 install_as_root() {
   log_msg "INFO" "Starting system-level installation (root privileges)"
 
+  # Install required packages (git, curl, etc.)
+  log_msg "INFO" "Checking and installing required packages..."
+  install_required_packages
+
   # Create user FIRST before creating any directories
   create_appmotel_user
 
@@ -830,17 +870,27 @@ install_as_user() {
     log_msg "INFO" "Traefik: https://localhost (dashboard may be available)"
     log_msg "INFO" "CLI tool: ~/.local/bin/appmo"
     log_msg "INFO" ""
-    log_msg "WARN" "⚠️  IMPORTANT: Configure your domain before adding apps"
-    log_msg "INFO" ""
-    log_msg "INFO" "1. Edit the configuration file:"
-    log_msg "INFO" "   nano ~/.config/appmotel/.env"
-    log_msg "INFO" ""
-    log_msg "INFO" "2. Update BASE_DOMAIN to your actual domain:"
-    log_msg "INFO" "   BASE_DOMAIN=\"apps.yourdomain.edu\""
-    log_msg "INFO" ""
-    log_msg "INFO" "3. Restart Traefik to apply changes:"
-    log_msg "INFO" "   sudo systemctl restart traefik-appmotel"
-    log_msg "INFO" ""
+
+    # Only show domain configuration warning if BASE_DOMAIN is still set to default
+    if [[ "${BASE_DOMAIN:-}" == "apps.example.edu" ]] || \
+       [[ "${BASE_DOMAIN:-}" == "apps.yourdomain.edu" ]] || \
+       [[ -z "${BASE_DOMAIN:-}" ]]; then
+      log_msg "WARN" "⚠️  IMPORTANT: Configure your domain before adding apps"
+      log_msg "INFO" ""
+      log_msg "INFO" "1. Edit the configuration file:"
+      log_msg "INFO" "   nano ~/.config/appmotel/.env"
+      log_msg "INFO" ""
+      log_msg "INFO" "2. Update BASE_DOMAIN to your actual domain:"
+      log_msg "INFO" "   BASE_DOMAIN=\"apps.yourdomain.edu\""
+      log_msg "INFO" ""
+      log_msg "INFO" "3. Restart Traefik to apply changes:"
+      log_msg "INFO" "   sudo systemctl restart traefik-appmotel"
+      log_msg "INFO" ""
+    else
+      log_msg "INFO" "Domain configured: ${BASE_DOMAIN}"
+      log_msg "INFO" ""
+    fi
+
     log_msg "INFO" "Add your first app:"
     log_msg "INFO" "  appmo add <app-name> <github-url> [branch]"
     log_msg "INFO" ""
