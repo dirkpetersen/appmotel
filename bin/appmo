@@ -876,38 +876,40 @@ cmd_add() {
   # Save metadata
   save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}"
 
+  local app_url="https://${app_name}.${base_domain}"
+
   log_msg "INFO" "App '${app_name}' added successfully"
-  log_msg "INFO" "URL: https://${app_name}.${base_domain}"
+  log_msg "INFO" "URL: ${app_url}"
   log_msg "INFO" "Status: appmo status ${app_name}"
   log_msg "INFO" "Logs: appmo logs ${app_name}"
   log_msg "INFO" ""
 
-  # DNS configuration warning
+  # Check if BASE_DOMAIN is still set to default
   if [[ "${base_domain}" == "apps.example.edu" ]] || [[ "${base_domain}" == "apps.yourdomain.edu" ]]; then
     log_msg "WARN" "⚠️  BASE_DOMAIN is set to default value: ${base_domain}"
     log_msg "WARN" "   Please update BASE_DOMAIN in ~/.config/appmotel/.env"
     log_msg "WARN" "   Then restart Traefik: sudo systemctl restart traefik-appmotel"
+    return
+  fi
+
+  # Check if the app URL is reachable (5 second timeout)
+  log_msg "INFO" "Checking if app is accessible..."
+  if curl -s -o /dev/null -w '' --connect-timeout 5 --max-time 10 -k "${app_url}" 2>/dev/null; then
+    log_msg "INFO" "✓ App is accessible at ${app_url}"
   else
+    log_msg "WARN" "App not yet accessible - DNS may need configuration"
+    log_msg "INFO" ""
     log_msg "INFO" "DNS Configuration Required:"
     log_msg "INFO" ""
     log_msg "INFO" "   Configure DNS to route traffic to this app. Choose one option:"
     log_msg "INFO" ""
-    log_msg "INFO" "   Option 1 (Best): Subdomain delegation via NS records"
-    log_msg "INFO" "     Delegate ${base_domain} to this server's nameserver"
-    log_msg "INFO" "     → Enables automatic DNS for all apps without manual updates"
-    log_msg "INFO" "     → Requires running a DNS server (e.g., CoreDNS, PowerDNS)"
-    log_msg "INFO" ""
-    log_msg "INFO" "   Option 2 (Recommended): Wildcard A record"
-    log_msg "INFO" "     *.${base_domain} IN A $(curl -s ifconfig.me || echo 'YOUR_SERVER_IP')"
+    log_msg "INFO" "   Option 1 (Recommended): Wildcard A record"
+    log_msg "INFO" "     *.${base_domain} IN A $(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
     log_msg "INFO" "     → All subdomains automatically route to this server"
-    log_msg "INFO" "     → Simplest option if you control the DNS zone"
     log_msg "INFO" ""
-    log_msg "INFO" "   Option 3 (Fallback): Individual CNAME or A record"
-    log_msg "INFO" "     ${app_name}.${base_domain} IN A $(curl -s ifconfig.me || echo 'YOUR_SERVER_IP')"
-    log_msg "INFO" "     or"
-    log_msg "INFO" "     ${app_name}.${base_domain} IN CNAME your-server.domain.edu."
+    log_msg "INFO" "   Option 2: Individual A record"
+    log_msg "INFO" "     ${app_name}.${base_domain} IN A $(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
     log_msg "INFO" "     → Requires manual DNS update for each new app"
-    log_msg "INFO" "     → Use if wildcards are not supported by your DNS provider"
   fi
 }
 
