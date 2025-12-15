@@ -22,6 +22,8 @@ readonly KEY_NAME="appmotel-key"
 readonly SECURITY_GROUP_NAME="appmotel-sg"
 readonly INSTANCE_NAME="appmotel-server"
 readonly SSH_USER="ec2-user"  # Default user for Amazon Linux 2023
+readonly IAM_ROLE_NAME="appmotel-route53-role"
+readonly IAM_INSTANCE_PROFILE="appmotel-instance-profile"
 
 # -----------------------------------------------------------------------------
 # Function: log_msg
@@ -270,6 +272,7 @@ launch_instance() {
     --instance-type "${instance_type}" \
     --key-name "${KEY_NAME}" \
     --security-group-ids "${sg_id}" \
+    --iam-instance-profile "Name=${IAM_INSTANCE_PROFILE}" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${INSTANCE_NAME}}]" \
     --query 'Instances[0].InstanceId' \
     --output text)
@@ -347,6 +350,83 @@ wait_for_ssh() {
   done
 
   die "SSH did not become accessible after ${max_attempts} attempts (2 minutes)"
+}
+
+# -----------------------------------------------------------------------------
+# Function: create_iam_role
+# Description: Creates IAM role for EC2 to access Route53
+# Returns: Success (0) or failure (1)
+# -----------------------------------------------------------------------------
+create_iam_role() {
+  log_msg "INFO" "Setting up IAM role for Route53 access..."
+
+  # Check if role already exists
+  if aws iam get-role --role-name "${IAM_ROLE_NAME}" >/dev/null 2>&1; then
+    log_msg "INFO" "IAM role '${IAM_ROLE_NAME}' already exists"
+  else
+    log_msg "INFO" "Creating IAM role '${IAM_ROLE_NAME}'..."
+
+    # Trust policy - allows EC2 to assume this role
+    local trust_policy
+    trust_policy=$(cat <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"Service": "ec2.amazonaws.com"},
+    "Action": "sts:AssumeRole"
+  }]
+}
+EOF
+)
+
+    # Create the role
+    aws iam create-role \
+      --role-name "${IAM_ROLE_NAME}" \
+      --assume-role-policy-document "${trust_policy}" \
+      --description "Allows Appmotel/Traefik to manage Route53 for Let's Encrypt DNS-01 challenge" \
+      >/dev/null
+
+    log_msg "INFO" "IAM role created"
+  fi
+
+  # Check if policy is attached
+  if aws iam list-attached-role-policies --role-name "${IAM_ROLE_NAME}" | grep -q "Route53FullAccess"; then
+    log_msg "INFO" "Route53 policy already attached"
+  else
+    log_msg "INFO" "Attaching Route53 policy to role..."
+
+    # Attach AWS managed Route53 policy
+    aws iam attach-role-policy \
+      --role-name "${IAM_ROLE_NAME}" \
+      --policy-arn "arn:aws:iam::aws:policy/AmazonRoute53FullAccess"
+
+    log_msg "INFO" "Route53 policy attached"
+  fi
+
+  # Create instance profile if it doesn't exist
+  if aws iam get-instance-profile --instance-profile-name "${IAM_INSTANCE_PROFILE}" >/dev/null 2>&1; then
+    log_msg "INFO" "Instance profile '${IAM_INSTANCE_PROFILE}' already exists"
+  else
+    log_msg "INFO" "Creating instance profile..."
+
+    aws iam create-instance-profile \
+      --instance-profile-name "${IAM_INSTANCE_PROFILE}" \
+      >/dev/null
+
+    # Add role to instance profile
+    aws iam add-role-to-instance-profile \
+      --instance-profile-name "${IAM_INSTANCE_PROFILE}" \
+      --role-name "${IAM_ROLE_NAME}"
+
+    log_msg "INFO" "Instance profile created"
+
+    # Wait for instance profile to be ready
+    log_msg "INFO" "Waiting for IAM resources to propagate (10 seconds)..."
+    sleep 10
+  fi
+
+  return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -469,6 +549,38 @@ configure_base_domain() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: configure_dns01_mode
+# Description: Enables Let's Encrypt DNS-01 challenge mode with Route53
+# Arguments:
+#   $1 - Host IP
+#   $2 - Key file path
+#   $3 - Hosted zone ID
+#   $4 - Region
+# -----------------------------------------------------------------------------
+configure_dns01_mode() {
+  local host="$1"
+  local key_file="$2"
+  local zone_id="$3"
+  local region="$4"
+
+  log_msg "INFO" "Configuring Let's Encrypt DNS-01 mode with Route53..."
+
+  ssh -i "${key_file}" \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR \
+      "${SSH_USER}@${host}" \
+      "sudo sed -i \
+        -e 's|^USE_LETSENCRYPT=.*|USE_LETSENCRYPT=\"yes\"|' \
+        -e 's|^LETSENCRYPT_MODE=.*|LETSENCRYPT_MODE=\"dns\"|' \
+        -e 's|^AWS_HOSTED_ZONE_ID=.*|AWS_HOSTED_ZONE_ID=\"${zone_id}\"|' \
+        -e 's|^AWS_REGION=.*|AWS_REGION=\"${region}\"|' \
+        /home/appmotel/.config/appmotel/.env"
+
+  log_msg "INFO" "DNS-01 mode configured (using IAM instance role for credentials)"
+}
+
+# -----------------------------------------------------------------------------
 # Function: install_appmotel
 # Description: Uploads and runs install.sh on remote instance
 # Arguments:
@@ -552,6 +664,12 @@ display_summary() {
     log_msg "INFO" "  ✓ A record: appmotel.${domain} → ${host}"
     log_msg "INFO" "  ✓ Wildcard: *.${domain} → ${host}"
     log_msg "INFO" "  ✓ BASE_DOMAIN configured in ~/.config/appmotel/.env"
+    log_msg "INFO" ""
+    log_msg "INFO" "Let's Encrypt Configuration:"
+    log_msg "INFO" "  ✓ DNS-01 challenge mode enabled"
+    log_msg "INFO" "  ✓ Route53 integration configured"
+    log_msg "INFO" "  ✓ IAM instance role (no credentials needed!)"
+    log_msg "INFO" "  ✓ Wildcard certificates will be issued automatically"
   fi
 
   log_msg "INFO" ""
@@ -700,6 +818,9 @@ main() {
   local ami_id
   ami_id=$(get_latest_al2023_ami "${region}" "${arch}")
 
+  # Create IAM role for Route53 access (for Let's Encrypt DNS-01)
+  create_iam_role
+
   # Create key pair
   create_key_pair "${region}"
   local key_file="${HOME}/.ssh/${KEY_NAME}.pem"
@@ -708,7 +829,7 @@ main() {
   local sg_id
   sg_id=$(create_security_group "${region}")
 
-  # Launch instance
+  # Launch instance with IAM role
   local instance_id
   instance_id=$(launch_instance "${region}" "${instance_type}" "${ami_id}" "${sg_id}")
 
@@ -733,6 +854,9 @@ main() {
     if configure_route53_dns "${zone_id}" "${domain_name}" "${public_ip}"; then
       # Update BASE_DOMAIN on remote server
       configure_base_domain "${public_ip}" "${key_file}" "${domain_name}"
+
+      # Configure DNS-01 mode for Let's Encrypt wildcard certificates
+      configure_dns01_mode "${public_ip}" "${key_file}" "${zone_id}" "${region}"
 
       # Restart Traefik to apply new domain configuration
       log_msg "INFO" "Restarting Traefik to apply DNS configuration..."
