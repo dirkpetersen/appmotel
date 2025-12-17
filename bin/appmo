@@ -516,21 +516,45 @@ detect_app_type() {
     cmd_ref="bin/${module_name}"
     return 0
   elif [[ -f "${repo_dir}/requirements.txt" ]]; then
-    # Python app
+    # Python app - try multiple detection strategies
+    local py_file=""
+
+    # 1. Check for app.py (most common)
     if [[ -f "${repo_dir}/app.py" ]]; then
-      cmd_ref="python3 app.py"
-    elif [[ $(find "${repo_dir}" -maxdepth 1 -name "*.py" -type f | wc -l) -eq 1 ]]; then
-      local py_file
-      py_file=$(find "${repo_dir}" -maxdepth 1 -name "*.py" -type f | head -1)
-      cmd_ref="python3 $(basename "${py_file}")"
+      py_file="app.py"
+    # 2. Check for main.py
+    elif [[ -f "${repo_dir}/main.py" ]]; then
+      py_file="main.py"
+    # 3. Check for <repo_name>.py (e.g., bedbot.py for bedbot repo)
+    else
+      local repo_name
+      repo_name=$(basename "${repo_dir}")
+      # Handle "repo" directory from our clone structure
+      if [[ "${repo_name}" == "repo" ]]; then
+        repo_name=$(basename "$(dirname "${repo_dir}")")
+      fi
+      if [[ -f "${repo_dir}/${repo_name}.py" ]]; then
+        py_file="${repo_name}.py"
+      # 4. Check for *<repo_name>*.py pattern (e.g., my-bedbot-app.py)
+      elif [[ -n "$(find "${repo_dir}" -maxdepth 1 -name "*${repo_name}*.py" -type f 2>/dev/null | head -1)" ]]; then
+        py_file=$(basename "$(find "${repo_dir}" -maxdepth 1 -name "*${repo_name}*.py" -type f | head -1)")
+      # 5. Check if there's exactly one .py file
+      elif [[ $(find "${repo_dir}" -maxdepth 1 -name "*.py" -type f | wc -l) -eq 1 ]]; then
+        py_file=$(basename "$(find "${repo_dir}" -maxdepth 1 -name "*.py" -type f | head -1)")
+      fi
+    fi
+
+    if [[ -n "${py_file}" ]]; then
+      cmd_ref="python3 ${py_file}"
+      return 0
     elif [[ -d "${repo_dir}/bin" ]] && [[ $(find "${repo_dir}/bin" -type f -executable | wc -l) -eq 1 ]]; then
       local bin_file
       bin_file=$(find "${repo_dir}/bin" -type f -executable | head -1)
       cmd_ref="$(basename "${bin_file}")"
+      return 0
     else
       return 1
     fi
-    return 0
   elif [[ -f "${repo_dir}/package.json" ]]; then
     # Node.js app
     cmd_ref="npm start"
