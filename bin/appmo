@@ -777,7 +777,7 @@ create_traefik_config() {
   # Get rate limit settings from .env or use defaults
   local rate_limit_avg="${DEFAULT_RATE_LIMIT_AVG}"
   local rate_limit_burst="${DEFAULT_RATE_LIMIT_BURST}"
-  local health_check_path="/health"
+  local health_check_path=""  # No health check by default - only if app explicitly sets it
   local enable_rate_limit="true"
 
   if [[ -n "${repo_dir}" ]] && [[ -f "${repo_dir}/.env" ]]; then
@@ -804,6 +804,15 @@ create_traefik_config() {
         - ${app_name}-ratelimit"
   fi
 
+  # Build health check section (only if explicitly configured)
+  local health_check_section=""
+  if [[ -n "${health_check_path}" ]]; then
+    health_check_section="healthCheck:
+          path: ${health_check_path}
+          interval: 30s
+          timeout: 5s"
+  fi
+
   cat > "${config_file}" <<EOF
 http:
   routers:
@@ -820,10 +829,7 @@ http:
       loadBalancer:
         servers:
           - url: "http://localhost:${port}"
-        healthCheck:
-          path: ${health_check_path}
-          interval: 30s
-          timeout: 5s
+        ${health_check_section}
 
   middlewares:
     ${app_name}-ratelimit:
