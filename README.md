@@ -8,7 +8,7 @@
 
 ## Overview
 
-Appmotel is a minimalist PaaS that makes deploying and managing web applications as simple as a single command. Deploy Python and Node.js applications with automatic HTTPS, health checks, rate limiting, and seamless updates—all managed through systemd user services and Traefik reverse proxy.
+Appmotel is a minimalist PaaS that makes deploying and managing web applications as simple as a single command. Deploy Python, Node.js, and Go applications with automatic HTTPS, health checks, rate limiting, and seamless updates—all managed through systemd user services and Traefik reverse proxy.
 
 **Key Philosophy:**
 - Use battle-tested, ubiquitous tools (systemd, Traefik, GitHub)
@@ -42,6 +42,7 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 ### 🔧 Supported Platforms
 - **Python**: Automatic virtual environment setup with `requirements.txt`
 - **Node.js**: Automatic dependency installation with `package.json`
+- **Go**: Automatic build with `go.mod` (supports `cmd/` directory structure)
 - **Multi-Process**: Procfile support (web, worker, etc.)
 
 ## Quick Start
@@ -154,6 +155,7 @@ echo "Installing dependencies..."
 **3. Application entry point** - One of:
 - Python: `app.py` or `requirements.txt`
 - Node.js: `package.json` with `start` script
+- Go: `go.mod` (builds to `bin/` directory, supports `cmd/` structure)
 - Procfile: For multi-process apps
 
 ### Procfile Support
@@ -613,6 +615,75 @@ echo "Installing Express application..."
 node --version
 npm --version
 echo "Installation completed successfully"
+```
+
+### Go HTTP Server
+
+**go.mod:**
+```go
+module myapp
+
+go 1.21
+```
+
+**main.go:**
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+    "os"
+)
+
+func main() {
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080"
+    }
+
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        appName := os.Getenv("APP_NAME")
+        if appName == "" {
+            appName = "Go App"
+        }
+        fmt.Fprintf(w, "Hello from %s!", appName)
+    })
+
+    http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        fmt.Fprint(w, "OK")
+    })
+
+    fmt.Printf("Server running on port %s\n", port)
+    http.ListenAndServe(":"+port, nil)
+}
+```
+
+**.env:**
+```bash
+PORT=8002
+APP_NAME="My Go App"
+```
+
+**install.sh:**
+```bash
+#!/usr/bin/env bash
+echo "Installing Go application..."
+go version
+echo "Installation completed successfully"
+```
+
+**Note:** Go apps are automatically built during deployment. The binary is placed in `bin/` and executed directly. For projects with multiple commands, use the standard `cmd/` directory structure:
+```
+myapp/
+├── go.mod
+├── cmd/
+│   ├── server/
+│   │   └── main.go
+│   └── worker/
+│       └── main.go
+└── ...
 ```
 
 ## Security Considerations

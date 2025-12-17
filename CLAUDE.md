@@ -102,11 +102,13 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 ### Application Deployment Flow
 
 1. `appmo add <name> <github-url> [branch]` clones repo
-2. Detects app type (Python/Node.js), installs dependencies
+2. Detects app type (Go/Python/Node.js), installs dependencies or builds binary
 3. Runs app's `install.sh`
 4. Assigns port (from `.env` or auto-assigned 10001-59999)
 5. Creates systemd user service and Traefik dynamic config
 6. Autopull timer checks for git updates every 2 minutes
+
+**App Type Detection Priority:** Go (`go.mod`) > Python (`requirements.txt`) > Node.js (`package.json`)
 
 ### appmo CLI Commands
 
@@ -132,7 +134,7 @@ appmo backup|restore|backups    # Backup management
 Each deployed app needs:
 1. `.env` file with `PORT` (or auto-assigned)
 2. `install.sh` script (runs on deploy and update)
-3. Entry point: `app.py`, `package.json` with start script, or `Procfile`
+3. Entry point: `go.mod`, `app.py`, `package.json` with start script, or `Procfile`
 
 **Optional `.env` settings:**
 - `MEMORY_LIMIT=512M`, `CPU_QUOTA=100%` - Resource limits
