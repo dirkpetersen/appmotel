@@ -221,11 +221,15 @@ restore_backup() {
     cp "${backup_dir}/${app_name}.yaml" "${TRAEFIK_DYNAMIC_DIR}/"
   fi
 
-  # Reinstall dependencies
+  # Reinstall dependencies based on app type
   local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
-  setup_python_env "${repo_dir}"
-  setup_nodejs_env "${repo_dir}"
-  setup_go_env "${repo_dir}"
+  if [[ -f "${repo_dir}/go.mod" ]]; then
+    setup_go_env "${repo_dir}"
+  elif [[ -f "${repo_dir}/requirements.txt" ]]; then
+    setup_python_env "${repo_dir}"
+  elif [[ -f "${repo_dir}/package.json" ]]; then
+    setup_nodejs_env "${repo_dir}"
+  fi
 
   # Start service
   systemctl --user start "appmotel-${app_name}"
@@ -563,7 +567,8 @@ create_systemd_service() {
   log_msg "INFO" "Detected start command: ${start_cmd}"
 
   # For Python apps, use the venv python directly
-  if [[ -f "${repo_dir}/requirements.txt" ]] && [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
+  # Only apply if start_cmd actually uses python3 (not for Go/Node apps with requirements.txt)
+  if [[ "${start_cmd}" == *"python3"* ]] && [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
     # Replace python3 with full path to venv python
     start_cmd="${start_cmd/python3/${repo_dir}\/.venv\/bin\/python3}"
     log_msg "INFO" "Using virtual environment Python: ${start_cmd}"
@@ -640,7 +645,8 @@ create_systemd_service_procfile() {
   local env_file="${repo_dir}/.env"
 
   # For Python apps, use the venv python directly
-  if [[ -f "${repo_dir}/requirements.txt" ]] && [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
+  # Only apply if start_cmd actually uses python (not for Go/Node apps)
+  if [[ "${start_cmd}" == *"python"* ]] && [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
     start_cmd="${start_cmd/python3/${repo_dir}\/.venv\/bin\/python3}"
     start_cmd="${start_cmd/python /${repo_dir}\/.venv\/bin\/python3 }"
   fi
@@ -999,21 +1005,42 @@ cmd_add() {
   # Setup .env file (physical in config dir, symlink in repo)
   setup_app_env_file "${app_name}" "${port}"
 
-  # Setup environments
-  setup_python_env "${repo_dir}" || {
-    rm -rf "${app_data_dir}"
-    die "Failed to setup Python environment"
-  }
+  # Detect primary app type and setup accordingly
+  # Priority: Go > Python > Node.js (only run setup for detected type)
+  local app_type="unknown"
+  if [[ -f "${repo_dir}/go.mod" ]]; then
+    app_type="go"
+  elif [[ -f "${repo_dir}/requirements.txt" ]]; then
+    app_type="python"
+  elif [[ -f "${repo_dir}/package.json" ]]; then
+    app_type="nodejs"
+  fi
 
-  setup_nodejs_env "${repo_dir}" || {
-    rm -rf "${app_data_dir}"
-    die "Failed to setup Node.js environment"
-  }
+  log_msg "INFO" "Detected app type: ${app_type}"
 
-  setup_go_env "${repo_dir}" || {
-    rm -rf "${app_data_dir}"
-    die "Failed to build Go application"
-  }
+  case "${app_type}" in
+    go)
+      setup_go_env "${repo_dir}" || {
+        rm -rf "${app_data_dir}"
+        die "Failed to build Go application"
+      }
+      ;;
+    python)
+      setup_python_env "${repo_dir}" || {
+        rm -rf "${app_data_dir}"
+        die "Failed to setup Python environment"
+      }
+      ;;
+    nodejs)
+      setup_nodejs_env "${repo_dir}" || {
+        rm -rf "${app_data_dir}"
+        die "Failed to setup Node.js environment"
+      }
+      ;;
+    *)
+      log_msg "WARN" "Unknown app type, skipping environment setup"
+      ;;
+  esac
 
   # Run install script
   if ! run_install_script "${repo_dir}"; then
@@ -1199,8 +1226,8 @@ cmd_list() {
     return
   fi
 
-  printf "%-20s %-10s %-40s\n" "APP NAME" "STATUS" "URL"
-  printf "%-20s %-10s %-40s\n" "--------" "------" "---"
+  printf "%-15s %-10s %-35s %s\n" "APP NAME" "STATUS" "URL" "REPO"
+  printf "%-15s %-10s %-35s %s\n" "--------" "------" "---" "----"
 
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
@@ -1219,7 +1246,17 @@ cmd_list() {
 
     local url="https://${app}.${base_domain}"
 
-    printf "%-20s %-10s %-40s\n" "${app}" "${status}" "${url}"
+    # Get repo from metadata (extract user/repo from GitHub URL)
+    local repo=""
+    local metadata_file="${APPS_CONFIG_DIR}/${app}/metadata.conf"
+    if [[ -f "${metadata_file}" ]]; then
+      local github_url
+      github_url=$(grep "^GITHUB_URL=" "${metadata_file}" | cut -d'"' -f2)
+      # Extract user/repo from URL (handles https://github.com/user/repo or git@github.com:user/repo)
+      repo=$(echo "${github_url}" | sed -E 's|^https?://github\.com/||; s|^git@github\.com:||; s|\.git$||')
+    fi
+
+    printf "%-15s %-10s %-35s %s\n" "${app}" "${status}" "${url}" "${repo}"
   done
 
   if [[ ${found_apps} -eq 0 ]]; then
