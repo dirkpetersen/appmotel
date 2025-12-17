@@ -223,32 +223,33 @@ Appmotel requires DNS to route traffic from your domain (e.g., `apps.yourdomain.
 
 Choose the DNS configuration method that best fits your environment:
 
-#### Option 1: Subdomain Delegation (Best)
+#### Option 1: AWS Route53 Automatic DNS (Best for AWS)
 
 **When to use:**
-- You have full control over your parent domain
-- You want complete DNS autonomy for app subdomains
-- You're willing to run a DNS server on this machine
+- You're deploying on AWS EC2
+- Your domain is hosted in Route53
+- You want fully automatic DNS configuration
 
 **Setup:**
-1. Run a DNS server on your Appmotel host (e.g., CoreDNS, PowerDNS, BIND)
-2. Configure the server to handle queries for `*.apps.yourdomain.edu`
-3. In your parent domain's DNS, add NS records:
+Use the `install-aws.sh` script which automatically:
+1. Creates an EC2 instance with IAM role for Route53 access
+2. Detects your hosted zone
+3. Creates wildcard DNS records (`*.apps.yourdomain.edu`)
+4. Configures DNS-01 challenge for wildcard SSL certificates
 
-```dns
-apps.yourdomain.edu.  IN  NS  ns1.yourdomain.edu.
-ns1.yourdomain.edu.   IN  A   203.0.113.10
+```bash
+bash install-aws.sh [instance-type] [region]  # Default: t4g.micro us-west-2
 ```
 
 **Advantages:**
-- ✅ New apps automatically work without DNS updates
-- ✅ Complete control over subdomain DNS
-- ✅ Can implement custom DNS records (TXT, SRV, etc.)
-- ✅ Best for large deployments with many apps
+- ✅ Fully automatic DNS and SSL setup
+- ✅ No manual DNS configuration required
+- ✅ Wildcard certificates via DNS-01 challenge
+- ✅ IAM role authentication (no AWS keys on server)
 
 **Disadvantages:**
-- ⚠️ Requires running and maintaining a DNS server
-- ⚠️ More complex setup
+- ⚠️ AWS-specific (requires Route53 hosted zone)
+- ⚠️ Requires AWS account with Route53 access
 
 #### Option 2: Wildcard A Record (Recommended)
 
@@ -308,7 +309,7 @@ myapp.apps.yourdomain.edu.  IN  CNAME  server.yourdomain.edu.
 
 ### DNS Configuration Workflow
 
-When you add a new app, Appmotel automatically displays DNS configuration guidance:
+When you add a new app, Appmotel automatically displays DNS configuration guidance if the app URL is not yet accessible:
 
 ```bash
 $ appmo add myapp https://github.com/username/myrepo main
@@ -320,23 +321,16 @@ DNS Configuration Required:
 
    Configure DNS to route traffic to this app. Choose one option:
 
-   Option 1 (Best): Subdomain delegation via NS records
-     Delegate apps.yourdomain.edu to this server's nameserver
-     → Enables automatic DNS for all apps without manual updates
-     → Requires running a DNS server (e.g., CoreDNS, PowerDNS)
-
-   Option 2 (Recommended): Wildcard A record
+   Option 1 (Recommended): Wildcard A record
      *.apps.yourdomain.edu IN A 203.0.113.10
      → All subdomains automatically route to this server
-     → Simplest option if you control the DNS zone
 
-   Option 3 (Fallback): Individual CNAME or A record
+   Option 2: Individual A record
      myapp.apps.yourdomain.edu IN A 203.0.113.10
-     or
-     myapp.apps.yourdomain.edu IN CNAME server.yourdomain.edu.
      → Requires manual DNS update for each new app
-     → Use if wildcards are not supported by your DNS provider
 ```
+
+**Note:** If you deployed via `install-aws.sh` with Route53, DNS is configured automatically and you won't see this message.
 
 ### Testing DNS Configuration
 

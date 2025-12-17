@@ -15,65 +15,55 @@ To make applications reachable, you must configure DNS to route traffic from the
 
 ## DNS Configuration Options
 
-### Option 1: Subdomain Delegation (Best)
+### Option 1: AWS Route53 Automatic DNS (Best for AWS)
 
-**Priority:** 🥇 Best for production deployments
+**Priority:** 🥇 Best for AWS deployments
 
 **When to use:**
-- You have full control over your parent domain
-- You want complete DNS autonomy for app subdomains
-- You're willing to run a DNS server on your Appmotel host
+- You're deploying on AWS EC2
+- Your domain is hosted in Route53
+- You want fully automatic DNS and SSL configuration
 - You expect to deploy many applications
 
 **Requirements:**
-- A DNS server running on your Appmotel host (CoreDNS, PowerDNS, BIND, etc.)
-- Access to modify NS records in parent domain zone
-- Static IP address for Appmotel server
+- AWS account with Route53 hosted zone
+- Domain managed by Route53
+- AWS CLI installed locally (for initial setup)
 
-**Setup Example:**
+**Setup:**
 
-1. **Install and configure DNS server on Appmotel host:**
-   ```bash
-   # Example with CoreDNS
-   # Install CoreDNS and configure it to handle *.apps.yourdomain.edu
-   ```
+Use the automated `install-aws.sh` script which handles everything:
 
-2. **Add NS records in parent domain zone:**
-   ```dns
-   ; Delegate apps.yourdomain.edu to this server
-   apps.yourdomain.edu.  IN  NS  ns1.yourdomain.edu.
+```bash
+bash install-aws.sh [instance-type] [region]  # Default: t4g.micro us-west-2
+```
 
-   ; Point NS hostname to server IP
-   ns1.yourdomain.edu.   IN  A   203.0.113.10
-   ```
-
-3. **Configure DNS server to answer queries for app subdomains:**
-   ```dns
-   ; In your DNS server's zone file for apps.yourdomain.edu
-   *.apps.yourdomain.edu.  IN  A  203.0.113.10
-   ```
+The script automatically:
+1. Creates an EC2 instance with IAM role for Route53 access
+2. Detects your Route53 hosted zone
+3. Creates wildcard DNS records (`*.apps.yourdomain.edu`)
+4. Configures DNS-01 challenge for wildcard SSL certificates
+5. No AWS credentials needed on the server (uses IAM role)
 
 **Advantages:**
+- ✅ Fully automatic DNS and SSL setup
+- ✅ No manual DNS configuration required
 - ✅ New apps automatically work without DNS updates
-- ✅ Complete control over subdomain DNS (A, AAAA, TXT, SRV, etc.)
-- ✅ Can implement dynamic DNS updates programmatically
-- ✅ Best for large-scale deployments with many apps
-- ✅ Can delegate to different IPs per app if needed
+- ✅ Wildcard certificates via DNS-01 challenge
+- ✅ IAM role authentication (no AWS keys on server)
+- ✅ Secure and auditable
 
 **Disadvantages:**
-- ⚠️ Requires running and maintaining a DNS server
-- ⚠️ More complex initial setup
-- ⚠️ DNS server becomes a critical dependency
+- ⚠️ AWS-specific (requires Route53 hosted zone)
+- ⚠️ Requires AWS account with Route53 access
 
 **Testing:**
 ```bash
-# Verify NS delegation
-dig NS apps.yourdomain.edu
-
-# Test subdomain resolution
+# Test wildcard resolution
 dig myapp.apps.yourdomain.edu
+dig another-app.apps.yourdomain.edu
 
-# Verify it points to correct IP
+# All should return your EC2 instance IP
 dig +short myapp.apps.yourdomain.edu
 ```
 
@@ -187,14 +177,14 @@ dig +short myapp.apps.yourdomain.edu
 
 ## Decision Matrix
 
-| Factor | Option 1 (NS) | Option 2 (Wildcard) | Option 3 (Individual) |
-|--------|---------------|---------------------|----------------------|
+| Factor | Option 1 (Route53) | Option 2 (Wildcard) | Option 3 (Individual) |
+|--------|-------------------|---------------------|----------------------|
 | **Automatic for new apps** | ✅ Yes | ✅ Yes | ❌ No |
-| **Setup complexity** | 🔴 High | 🟢 Low | 🟡 Medium |
-| **Maintenance required** | 🟡 DNS server | 🟢 None | 🔴 Per app |
-| **DNS provider requirements** | None | Wildcard support | None |
-| **Flexibility** | 🟢 Maximum | 🟡 Limited | 🟢 High |
-| **Best for** | Large/production | Most users | Small/stable |
+| **Setup complexity** | 🟢 Low (scripted) | 🟢 Low | 🟡 Medium |
+| **Maintenance required** | 🟢 None | 🟢 None | 🔴 Per app |
+| **DNS provider requirements** | AWS Route53 | Wildcard support | None |
+| **SSL certificates** | ✅ Wildcard auto | 🟡 Per-domain | 🟡 Per-domain |
+| **Best for** | AWS deployments | Most non-AWS | Small/stable |
 
 ## Configuration Workflow
 
@@ -320,18 +310,17 @@ $ dig myapp.apps.yourdomain.edu
 
 ### AWS Route53
 - ✅ Supports wildcard records
-- ✅ Supports subdomain delegation (NS records)
-- 💡 Can use DNS-01 challenge for Let's Encrypt wildcard certificates
+- ✅ **Best choice** - Use `install-aws.sh` for fully automatic setup
+- 💡 DNS-01 challenge for wildcard certificates (automatic with install-aws.sh)
+- 💡 IAM role authentication (no credentials on server)
 
 ### Cloudflare
 - ✅ Supports wildcard records
-- ✅ Supports subdomain delegation (NS records)
 - ⚠️ Proxied records (orange cloud) may interfere with Let's Encrypt HTTP-01
 - 💡 Use DNS-01 challenge or disable proxy for ACME validation
 
 ### Google Cloud DNS
 - ✅ Supports wildcard records
-- ✅ Supports subdomain delegation
 - 💡 Excellent for programmatic DNS management
 
 ### GoDaddy / Namecheap / Basic Providers
@@ -361,7 +350,7 @@ $ dig myapp.apps.yourdomain.edu
 
 5. **Security considerations:**
    - Use DNS-01 challenge for wildcard Let's Encrypt certificates (more secure)
-   - Restrict DNS server access (if using Option 1)
+   - Use IAM roles instead of stored credentials when possible (AWS Route53)
    - Enable DNSSEC if your provider supports it
 
 ## Related Files
