@@ -372,6 +372,29 @@ find_free_port() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: update_port_in_env
+# Description: Updates PORT and FLASK_PORT in .env file
+# -----------------------------------------------------------------------------
+update_port_in_env() {
+  local env_file="$1"
+  local new_port="$2"
+
+  if [[ ! -f "${env_file}" ]]; then
+    return 1
+  fi
+
+  # Update PORT if it exists
+  if grep -q "^PORT=" "${env_file}"; then
+    sed -i "s/^PORT=.*/PORT=${new_port}/" "${env_file}"
+  fi
+
+  # Also update FLASK_PORT if it exists (Flask apps)
+  if grep -q "^FLASK_PORT=" "${env_file}"; then
+    sed -i "s/^FLASK_PORT=.*/FLASK_PORT=${new_port}/" "${env_file}"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: get_port_from_env
 # Description: Extracts port from app's .env file
 # Checks both config dir (preferred) and repo dir for .env
@@ -391,19 +414,26 @@ get_port_from_env() {
     return 1
   fi
 
-  # Look for PORT variable
+  # Look for PORT variable (priority order: PORT, FLASK_PORT, other *PORT* vars)
   local port
-  port=$(grep -E '^PORT=' "${env_file}" | head -1 | cut -d'=' -f2 | tr -d ' "'"'" || true)
 
-  if [[ -n "${port}" ]]; then
+  # 1. Check for PORT=
+  port=$(grep -E '^PORT=' "${env_file}" | head -1 | cut -d'=' -f2 | tr -d ' "'"'" || true)
+  if [[ -n "${port}" ]] && [[ "${port}" =~ ^[0-9]+$ ]]; then
     echo "${port}"
     return 0
   fi
 
-  # Look for other variables containing PORT
-  port=$(grep -iE '^[A-Z_]*PORT[A-Z_]*=' "${env_file}" | head -1 | cut -d'=' -f2 | tr -d ' "'"'" || true)
+  # 2. Check for FLASK_PORT= (common in Flask apps)
+  port=$(grep -E '^FLASK_PORT=' "${env_file}" | head -1 | cut -d'=' -f2 | tr -d ' "'"'" || true)
+  if [[ -n "${port}" ]] && [[ "${port}" =~ ^[0-9]+$ ]]; then
+    echo "${port}"
+    return 0
+  fi
 
-  if [[ -n "${port}" ]]; then
+  # 3. Check for any other *PORT* variable (NODE_PORT, SERVER_PORT, etc.)
+  port=$(grep -iE '^[A-Z_]*PORT[A-Z_]*=' "${env_file}" | head -1 | cut -d'=' -f2 | tr -d ' "'"'" || true)
+  if [[ -n "${port}" ]] && [[ "${port}" =~ ^[0-9]+$ ]]; then
     echo "${port}"
     return 0
   fi
@@ -491,7 +521,7 @@ setup_app_env_file() {
     existing_port=$(grep "^PORT=" "${config_env}" | cut -d'=' -f2 | tr -d ' ')
     if [[ "${existing_port}" =~ ^[0-9]+$ ]] && [[ "${existing_port}" -lt 10001 ]]; then
       log_msg "WARN" "Overriding low port ${existing_port} with assigned port ${port}"
-      sed -i "s/^PORT=.*/PORT=${port}/" "${config_env}"
+      update_port_in_env "${config_env}" "${port}"
     fi
   else
     echo "PORT=${port}" >> "${config_env}"
@@ -1080,7 +1110,7 @@ cmd_add() {
       # Update the .env file with new port if it exists
       local config_env="${APPS_CONFIG_DIR}/${app_name}/.env"
       if [[ -f "${config_env}" ]]; then
-        sed -i "s/^PORT=.*/PORT=${port}/" "${config_env}"
+        update_port_in_env "${config_env}" "${port}"
       fi
     # Check if the port from .env is still free
     elif ss -tuln | grep -q ":${port_from_env} "; then
@@ -1090,7 +1120,7 @@ cmd_add() {
       # Update the .env file with new port if it exists
       local config_env="${APPS_CONFIG_DIR}/${app_name}/.env"
       if [[ -f "${config_env}" ]]; then
-        sed -i "s/^PORT=.*/PORT=${port}/" "${config_env}"
+        update_port_in_env "${config_env}" "${port}"
       fi
     else
       port="${port_from_env}"
@@ -1509,7 +1539,7 @@ cmd_update() {
           assigned_port=$(find_free_port)
         fi
         log_msg "WARN" "App's .env.default has low port ${default_port}, overriding with ${assigned_port}"
-        sed -i "s/^PORT=.*/PORT=${assigned_port}/" "${config_env}"
+        update_port_in_env "${config_env}" "${assigned_port}"
         PORT="${assigned_port}"
 
         # Update Traefik config with new port
