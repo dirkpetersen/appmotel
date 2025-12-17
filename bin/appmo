@@ -106,7 +106,7 @@ Commands:
   stop <app-name>                        Stop an app
   restart <app-name>                     Restart an app
   update <app-name>                      Manually update an app
-  check                                  Check for available updates (no deploy)
+  check [app-name]                       Check for available updates (no deploy)
   autopull                               Check all apps for updates and deploy
   logs <app-name> [lines]                View app logs
   env <app-name>                         Edit app's .env file in default editor
@@ -1730,10 +1730,17 @@ cmd_backups() {
 # Description: Check for available updates without deploying
 # -----------------------------------------------------------------------------
 cmd_check() {
+  local filter_app="${1:-}"
+
   # Check if apps directory exists
   if [[ ! -d "${APPS_CONFIG_DIR}" ]]; then
     echo "No apps configured yet"
     return 0
+  fi
+
+  # If specific app requested, verify it exists
+  if [[ -n "${filter_app}" ]]; then
+    require_app_exists "${filter_app}"
   fi
 
   local updates_available=0
@@ -1749,6 +1756,11 @@ cmd_check() {
 
     local app_name
     app_name=$(basename "${app_dir}")
+
+    # If filter specified, skip non-matching apps
+    if [[ -n "${filter_app}" ]] && [[ "${app_name}" != "${filter_app}" ]]; then
+      continue
+    fi
 
     # Skip directories that only have .env.backup (removed apps)
     if ! app_exists "${app_name}"; then
