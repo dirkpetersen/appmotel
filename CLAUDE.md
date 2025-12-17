@@ -113,7 +113,7 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 ### appmo CLI Commands
 
 ```bash
-appmo add <app> <url> [branch]  # Deploy new app (prompts to restore .env if backup exists)
+appmo add <app> <url|user/repo> [branch]  # Deploy new app (short form auto-expands)
 appmo remove <app>              # Remove app completely (backs up .env)
 appmo rm <app>                  # Alias for remove
 appmo list                      # List all apps

@@ -102,7 +102,7 @@ sudo -u appmotel appmo logs myapp
 
 ```bash
 # Application Management
-appmo add <app-name> <github-url> <branch>   # Deploy a new app
+appmo add <app-name> <url|user/repo> [branch] # Deploy a new app
 appmo remove <app-name>                       # Remove an app
 appmo list                                    # List all apps
 appmo status [app-name]                       # Show app status
