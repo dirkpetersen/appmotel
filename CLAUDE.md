@@ -6,15 +6,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Appmotel is a no-frills PaaS system using ubiquitous components such as Systemd and GitHub runner in combination with Traefik, a reverse proxy with advanced capabilities.
 
+## Quick Reference Commands
+
+```bash
+# Development testing (from apps user)
+sudo -u appmotel bash reset-home.sh --force  # Reset appmotel home for clean install
+sudo bash install.sh                          # System-level setup (as root)
+sudo su - appmotel && bash install.sh         # User-level setup (as appmotel)
+
+# Validate Bash scripts before committing
+bash -n script.sh
+
+# Service management
+sudo -u appmotel sudo systemctl status traefik-appmotel
+sudo -u appmotel systemctl --user status appmotel-autopull.timer
+
+# App testing
+sudo -u appmotel appmo add flask-test https://github.com/dirkpetersen/appmotel main examples/flask-hello
+sudo -u appmotel appmo status
+sudo -u appmotel appmo logs flask-test
+```
+
 ## Code Language and Style
 
 **Primary Language:** Bash (version <= 4.4.20)
 
-Use Bash for all installation and configuration tasks and most general coding tasks. Follow strict Bash 4.4 coding guidelines (detailed below). Use Go only for advanced features where Bash would be unmaintainable.
+Use Bash for all installation and configuration tasks. Use Go only for advanced features where Bash would be unmaintainable.
 
-### Bash Coding Standards (Bash 4.4.20)
+### Bash Coding Standards
 
-**Strict Mode Preamble (Required for all scripts):**
+**Required Strict Mode Preamble:**
 ```bash
 #!/usr/bin/env bash
 set -o errexit   # Exit on most errors
@@ -24,512 +45,223 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 ```
 
 **Modern Bash Features to Use:**
-- **Associative Arrays (Bash 4.0+):** Use `declare -A` for hashmaps instead of multiple arrays
-- **Namerefs (Bash 4.3+):** Use `declare -n` to pass variables by reference to functions
-- **Parameter Transformation (Bash 4.4):** Use `${var@Q}` for safe quoting when generating commands dynamically
-- **Double Brackets:** Always use `[[ ... ]]` for conditionals (supports regex `=~` and pattern matching, safer than `[ ... ]`)
-- **Integer Declaration:** Use `declare -i` for math counters to prevent string concatenation accidents
-- **Constants:** Use `declare -r` or `readonly` for immutable values
+- **Associative Arrays (4.0+):** `declare -A` for hashmaps
+- **Namerefs (4.3+):** `declare -n` to pass variables by reference
+- **Parameter Transformation (4.4):** `${var@Q}` for safe quoting
+- **Double Brackets:** Always use `[[ ... ]]` for conditionals
+- **Integer Declaration:** `declare -i` for math counters
+- **Constants:** `declare -r` or `readonly` for immutable values
 
-**Command Line Parsing:**
-Use manual `while` loop with `case` (not `getopt` or `getopts`):
-```bash
-while :; do
-  case "${1-}" in
-    -h | --help) usage ;;
-    -v | --verbose) param_verbose=1 ;;
-    -f | --file)
-      if [[ -z "${2-}" ]]; then die "Option $1 requires an argument"; fi
-      param_file="${2}"
-      shift
-      ;;
-    -?*) die "Unknown option: $1" ;;
-    *) break ;;
-  esac
-  shift
-done
-```
+**Command Line Parsing:** Use manual `while` loop with `case` (not `getopt` or `getopts`). See `bin/appmo` for reference implementation.
 
-**Performance Guidelines:**
-- Avoid subshells when possible
-- Use native Bash parameter expansion over `sed`/`awk` for simple operations
+**Performance:**
+- Avoid subshells; use native Bash parameter expansion over `sed`/`awk` for simple operations
 - Use `while IFS= read -r line; do ... done < file` instead of `cat file | while read line`
-- Use `printf "[%(%Y-%m-%d %H:%M:%S)T]" -1` for timestamps (Bash 4.2+ native, no subshell)
+- Use `printf "[%(%Y-%m-%d %H:%M:%S)T]" -1` for timestamps (native, no subshell)
 
 **Variable Naming:**
-- Use `snake_case` for function and variable names
-- Uppercase for exported environment variables and constants
-- Always use `local` for function variables to avoid global scope pollution
+- `snake_case` for functions and variables
+- `UPPERCASE` for exported environment variables and constants
+- Always use `local` for function variables
 
-**Idempotency:**
-All installation and configuration scripts must be strictly idempotent. You can use `sed` for editing config files but ensure actions can be run multiple times safely.
+**Idempotency:** All scripts must be safe to run multiple times.
 
 ## Architecture
 
-### Application Deployment Model
+### Key Files
 
-When a new application is configured in Appmotel:
-1. The GitHub repository URL and branch are specified
-2. Appmotel clones the repository
-3. A systemd timer automatically polls the repository for updates every 2 minutes
-4. Each application is accessible via a subdomain under `BASE_DOMAIN` (e.g., `myapp.apps.example.edu`)
-5. DNS routing can be handled through subdomain delegation or cgroups
+| File | Purpose |
+|------|---------|
+| `install.sh` | Main installation script (handles both root and user-level setup) |
+| `bin/appmo` | CLI tool for managing apps |
+| `bin/appmo-completion.bash` | Shell completion for appmo |
+| `templates/appmotel-autopull.*` | Systemd units for automatic git polling |
+| `.claude/skills/` | Reference docs for bash, traefik, troubleshooting, DNS |
 
-**Automatic Updates (Autopull):**
-- A systemd timer (`appmotel-autopull.timer`) runs every 2 minutes
-- The timer calls `appmo autopull` which checks all configured apps for updates
-- For each app, it runs `git fetch` and compares local vs remote HEAD
-- If updates are found, it automatically runs `appmo update <app-name>`
-- This provides automatic deployment without requiring public server access
-- Works on private networks (only outbound git connections needed)
-- Logs available via `journalctl --user -u appmotel-autopull`
-- Can be manually triggered: `appmo autopull`
+### Directory Structure (appmotel user)
 
-### The `appmo` CLI Tool
+```
+/home/appmotel/
+├── .config/
+│   ├── appmotel/
+│   │   ├── .env              # Main appmotel configuration
+│   │   └── <app>/            # Per-app config (metadata.conf, physical .env)
+│   ├── traefik/
+│   │   ├── traefik.yaml      # Static config
+│   │   └── dynamic/          # Per-app routing (auto-watched)
+│   └── systemd/user/         # User services
+├── .local/
+│   ├── bin/                  # traefik, appmo binaries
+│   └── share/
+│       ├── appmotel/<app>/   # App git repos (repo/.env is symlink to config/.env)
+│       └── traefik/acme.json # ACME certificates (mode 600)
+```
 
-**Implementation:** Try Bash first (following project standards). Fall back to Go if the code becomes too complex or difficult to maintain.
+**Note:** Each app's physical `.env` file lives in `~/.config/appmotel/<app>/.env`. The repository has a symlink at `~/.local/share/appmotel/<app>/repo/.env` pointing to the config directory.
 
-**Directory Structure:**
-- App metadata: `/home/appmotel/.config/appmotel/apps/<app-name>/` (stores GitHub URL, branch, assigned port, last deployment timestamp)
-- Git repositories: `/home/appmotel/.local/share/appmotel/<app-name>/repo/`
-- Systemd user services: `/home/appmotel/.config/systemd/user/appmotel-<app-name>.service`
-- Traefik dynamic configs: `/home/appmotel/.config/traefik/dynamic/<app-name>.yaml`
-- CLI tool location: `/home/appmotel/.local/bin/appmo`
+### Application Deployment Flow
 
-**Supported Commands:**
-- `appmo add <app-name> <github-url> [branch]` - Add and deploy a new app (default: main)
-- `appmo remove <app-name>` - Remove app (stop service, remove Traefik config, delete all app files)
-- `appmo list` - List all configured apps
-- `appmo status [app-name]` - Show running state, port, URL, last deployment time (checks both systemd status and actual port response)
-- `appmo start <app-name>` - Start app (systemctl wrapper)
-- `appmo stop <app-name>` - Stop app (systemctl wrapper)
-- `appmo restart <app-name>` - Restart app
-- `appmo update <app-name>` - Manually trigger pull + reinstall (with automatic backup and rollback on failure)
-- `appmo autopull` - Check all apps for git updates and automatically deploy (used by systemd timer)
-- `appmo logs <app-name>` - View logs (journalctl wrapper)
-- `appmo exec <app-name> <command>` - Run command in app's environment
-- `appmo backup <app-name>` - Create a backup of an app
-- `appmo restore <app-name> [backup-id]` - Restore an app from backup
-- `appmo backups <app-name>` - List available backups for an app
+1. `appmo add <name> <github-url> [branch]` clones repo
+2. Detects app type (Python/Node.js), installs dependencies
+3. Runs app's `install.sh`
+4. Assigns port (from `.env` or auto-assigned 10001-59999)
+5. Creates systemd user service and Traefik dynamic config
+6. Autopull timer checks for git updates every 2 minutes
 
-**App Naming Rules:**
-- No spaces allowed in app names
-- App names must be valid DNS subdomain labels (alphanumeric and hyphens)
+### appmo CLI Commands
 
-**Conflict Handling:**
-- If an app name already exists: error and exit
-- If a subdomain conflicts with existing app: error and exit
-- If an assigned port is already in use: error and exit
+```bash
+appmo add <app> <url> [branch]  # Deploy new app (prompts to restore .env if backup exists)
+appmo remove <app>              # Remove app completely (backs up .env)
+appmo rm <app>                  # Alias for remove
+appmo list                      # List all apps
+appmo status [app]              # Show status
+appmo start|stop|restart <app>  # Service control
+appmo update <app>              # Pull and redeploy
+appmo autopull                  # Check all apps for updates
+appmo logs <app> [lines]        # View logs
+appmo env <app>                 # Edit app's .env file in default editor
+appmo exec <app> <cmd>          # Run command in app env
+appmo backup|restore|backups    # Backup management
+```
 
-**Application Requirements:**
+**Note on `remove`/`rm`:** When removing an app, the `.env` file is backed up to `.env.backup`. If the same app is re-added, the user is prompted to restore it.
 
-Each app repository must contain:
-1. `.env` file - Environment variables and configuration
-2. `install.sh` - Installation/setup script (run on initial deploy and every update)
+### App Requirements
 
-**Port Assignment Logic:**
-1. Check for `PORT` variable in `.env`
-2. If not found, check for other variables containing "PORT" in the name (e.g., `APP_PORT`, `HTTP_PORT`)
-3. If found, use that: `PORT=$OTHERPORT`
-4. If not found, assign a random unused port between 10001-59999
-5. Configure Traefik dynamic config with the assigned port
+Each deployed app needs:
+1. `.env` file with `PORT` (or auto-assigned)
+2. `install.sh` script (runs on deploy and update)
+3. Entry point: `app.py`, `package.json` with start script, or `Procfile`
 
-**Supported Application Types:**
+**Optional `.env` settings:**
+- `MEMORY_LIMIT=512M`, `CPU_QUOTA=100%` - Resource limits
+- `RATE_LIMIT_AVG=100`, `RATE_LIMIT_BURST=50` - Rate limiting
+- `HEALTH_CHECK_PATH=/health` - Health check endpoint
 
-*Python Apps:*
-- Detect `requirements.txt` → create `.venv` in repo dir → `pip install -r requirements.txt`
-- Run command priority: `app.py`, single `.py` file, or single executable in `bin/` folder
-- Use `python3` explicitly for all Python commands
+### .env File Management
 
-*Node.js Apps:*
-- Detect `package.json` → `npm install`
-- Run command using `npm start` (reads from `package.json` → `scripts.start`)
+**Storage:** Physical `.env` files are stored in `~/.config/appmotel/<app>/.env` (not in the repo). This enables:
+- **Persistent configuration** across app reinstalls/updates
+- **Backup/restore workflow**: When removing an app, `.env` is backed up to `.env.backup`
+- **Restore prompt**: When re-adding an app with an existing backup, user is asked whether to restore it
 
-*Multiple Process Apps (Procfile support):*
-- Apps requiring multiple processes (e.g., web server + worker) are supported through Procfile
-- Each process gets its own service: `appmotel-<app-name>-<process-name>`
-- Procfile format:
-  ```
-  web: python app.py
-  worker: python worker.py
-  ```
-- The `web` process receives the main port, other processes get incrementing ports
-
-**Resource Limits:**
-Apps can configure resource limits in their `.env` file:
-- `MEMORY_LIMIT=512M` - Maximum memory (default: 512M)
-- `CPU_QUOTA=100%` - CPU quota percentage (default: 100%)
-
-**Rate Limiting:**
-Traefik rate limiting is enabled by default:
-- `RATE_LIMIT_AVG=100` - Average requests per second (default: 100)
-- `RATE_LIMIT_BURST=50` - Burst requests allowed (default: 50)
-- `DISABLE_RATE_LIMIT=true` - Disable rate limiting for this app
-
-**Health Checks:**
-Traefik health checks are configured automatically:
-- `HEALTH_CHECK_PATH=/health` - Health check endpoint (default: /health)
-- Health checks run every 30 seconds with 5 second timeout
-
-**SSL/TLS:**
-All apps automatically get HTTPS through Traefik's Let's Encrypt integration.
-
-**System Dependencies:**
-If an app's `install.sh` requires system packages (e.g., `apt install`), the script should print what is required. System packages must be installed manually by the administrator.
-
-**App Execution:**
-- All apps run as the `appmotel` user (no per-app user isolation)
-- Managed as systemd user services: `appmotel-<app-name>`
-- Services located in `/home/appmotel/.config/systemd/user/`
-- Managed with `systemctl --user` commands (no sudo required for app services)
-- The app's `.env` file is automatically sourced into the systemd service environment
-- Logs accessible via `journalctl --user -u appmotel-<app-name>`
-
-**Error Handling:**
-- If `install.sh` fails during `appmo add`, the operation fails and rolls back
-- If `install.sh` fails during an update (triggered by GitHub runner), keep the old version running
-- Traefik configuration is automatically generated/updated when apps are added or removed
-
-**Automatic Updates:**
-When the GitHub runner detects a new commit:
-1. Pull the latest code
-2. Run `install.sh` in the app's repo directory
-3. Restart the systemd service
+**Workflow:**
+1. `appmo add myapp ...` → Creates `.env` from template or backup
+2. `appmo env myapp` → Edit `.env` in $EDITOR (physical in config dir)
+3. `appmo remove myapp` → Backs up `.env` to `.env.backup`
+4. `appmo add myapp ...` again → Prompts to restore previous `.env` or start fresh
 
 ### Traefik Configuration
 
-**User:** `appmotel`
-**Binary Location:** `~/.local/bin/traefik`
-**Static Config:** `~/.config/traefik/traefik.yaml` (auto-discovered via XDG_CONFIG_HOME)
-**Dynamic Config Directory:** `~/.config/traefik/dynamic/` (monitored for routers/services)
-**ACME Storage:** `~/.local/share/traefik/acme.json` (mode 600)
+**Locations:**
+- Binary: `~/.local/bin/traefik`
+- Static config: `~/.config/traefik/traefik.yaml`
+- Dynamic configs: `~/.config/traefik/dynamic/` (auto-watched)
+- ACME storage: `~/.local/share/traefik/acme.json` (mode 600)
 
-**Systemd Service:** `/etc/systemd/system/traefik-appmotel.service`
-- System-level service (requires root to create/modify)
-- Runs Traefik process as user `appmotel`
-- Uses `AmbientCapabilities=CAP_NET_BIND_SERVICE` to bind ports 80/443
-- Environment variables: `XDG_CONFIG_HOME=/home/appmotel/.config` and `XDG_DATA_HOME=/home/appmotel/.local/share`
-- No `--configFile` argument needed (uses XDG auto-discovery)
+**Entry Points:** Port 80 (web, redirects to HTTPS) and 443 (websecure)
 
-**Service Management:**
-The `appmotel` user can manage Traefik via sudoers configuration at `/etc/sudoers.d/appmotel`:
-```bash
-sudo systemctl restart traefik-appmotel
-sudo systemctl status traefik-appmotel
-```
+**CRITICAL Traefik v3 Notes:**
+1. TLS certificate stores MUST be in dynamic configuration, not static
+2. Router TLS sections must use `tls: {}` (empty object), NOT `tls:` (null)
+3. Certificate access uses `ssl-cert` group with mode 640 for private keys
 
-**Entry Points:**
-- `web`: Port 80 (auto-redirects to HTTPS)
-- `websecure`: Port 443
-
-**Dynamic Configuration:**
-Add YAML files to `~/.config/traefik/dynamic/` for application routing. Traefik watches this directory and auto-reloads changes.
-
-**CRITICAL TLS Configuration Notes (Traefik v3):**
-1. **TLS certificate stores MUST be in dynamic configuration, NOT static configuration**
-   - Create a separate file (e.g., `tls-config.yaml`) in the dynamic directory
-   - Example:
-     ```yaml
-     tls:
-       stores:
-         default:
-           defaultCertificate:
-             certFile: /etc/letsencrypt/live/domain.edu/fullchain.pem
-             keyFile: /etc/letsencrypt/live/domain.edu/privkey.pem
-     ```
-2. **Router TLS sections must use `tls: {}` (empty object), NOT `tls:` (null/empty)**
-   - Correct: `tls: {}`
-   - Incorrect: `tls:` or `tls: null`
-   - The empty object syntax properly enables TLS termination
-3. **Certificate Access**: The `appmotel` user must have secure read access to certificate files
-   - Uses `ssl-cert` group (Debian/Ubuntu convention)
-   - Private keys: mode 640 (NOT world-readable!)
-   - Directories: mode 750
-   - On Debian/Ubuntu: `apt-get install ssl-cert` provides the group
-   - On RHEL/CentOS: Group must be created manually with `groupadd ssl-cert`
+See `.claude/skills/traefik.md` for detailed configuration examples.
 
 ## Environment Configuration
 
-Configuration is managed via `.env` file located at `/home/appmotel/.config/appmotel/.env`:
+**Location:** `/home/appmotel/.config/appmotel/.env` (shared between root and user installations)
 
-**Location:** `/home/appmotel/.config/appmotel/.env`
-
-This fixed location allows both root and user installations to access the same configuration. The file is created automatically from `.env.default` (downloaded from GitHub if needed) during the first installation.
-
-**Configuration Variables:**
-- `USE_LETSENCRYPT`: "yes" or "no"
-- `LETSENCRYPT_EMAIL`: Email for Let's Encrypt notifications
-- `LETSENCRYPT_MODE`: "http" (HTTP-01 challenge) or "dns" (DNS-01 via Route53)
-- `BASE_DOMAIN`: Base domain for applications
-- `AWS_ACCESS_KEY_ID`: AWS access key (only for DNS-01 mode, not needed if using IAM instance role)
-- `AWS_SECRET_ACCESS_KEY`: AWS secret key (only for DNS-01 mode, not needed if using IAM instance role)
-- `AWS_HOSTED_ZONE_ID`: Route53 hosted zone ID (only for DNS-01 mode)
-- `AWS_REGION`: AWS region for Route53 API calls (only for DNS-01 mode)
-
-**Note:** The `.env` file is shared between system-level (root) and user-level (appmotel) installations.
-
-**IAM Instance Role (EC2 Deployments):**
-When running on EC2, AWS credentials can be provided via IAM instance role instead of access keys:
-- More secure (no long-lived credentials to manage)
-- Credentials automatically rotate via instance metadata
-- Uses managed policy `AmazonRoute53FullAccess` for DNS-01 challenge
-- No need to set `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` in `.env`
-- Follows AWS security best practices
+**Key Variables:**
+- `BASE_DOMAIN` - Base domain for apps (e.g., `apps.example.edu`)
+- `USE_LETSENCRYPT` - "yes" or "no"
+- `LETSENCRYPT_EMAIL` - Email for Let's Encrypt
+- `LETSENCRYPT_MODE` - "http" (HTTP-01) or "dns" (DNS-01 via Route53)
+- `AWS_HOSTED_ZONE_ID`, `AWS_REGION` - For DNS-01 mode (credentials via IAM role preferred)
 
 ## Systemd Architecture
 
-Appmotel uses a mixed systemd model:
+**Three-Tier Permission Model:**
 
-**System-Level Service (requires root):**
-- `traefik-appmotel.service` - Located in `/etc/systemd/system/`
-- Managed with `systemctl` (requires sudo for appmotel user)
-- Runs Traefik process as `appmotel` user but binds to privileged ports (80/443)
-- Uses `AmbientCapabilities=CAP_NET_BIND_SERVICE`
+| Tier | User | Capabilities |
+|------|------|--------------|
+| 1 | `apps` (operator) | Full control over appmotel user via sudoers |
+| 2 | `appmotel` (service) | User services + LIMITED sudo for Traefik only |
+| 3 | Root | Only Traefik service management |
 
-**User-Level Services (no root required):**
-- Application services: `appmotel-<app-name>.service`
-- Located in `/home/appmotel/.config/systemd/user/`
-- Managed with `systemctl --user` by the `appmotel` user
-- No sudo required for app service management
-- All apps run as `appmotel` user on high ports (>1024)
+**Service Types:**
+- **System service:** `traefik-appmotel.service` (binds 80/443, requires `sudo systemctl`)
+- **User services:** `appmotel-<app>.service` (high ports, uses `systemctl --user`)
 
-**Sudoers Configuration:**
-Located in `/etc/sudoers.d/appmotel`:
+**Correct Command Format:**
 ```bash
-# Allow operator user to switch to appmotel interactively
-apps ALL=(ALL) NOPASSWD: /bin/su - appmotel
-
-# Allow operator user to run any command as appmotel (for automation)
-apps ALL=(appmotel) NOPASSWD: ALL
-
-# Allow appmotel to manage ONLY the Traefik system service
-appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/systemctl stop traefik-appmotel, /bin/systemctl start traefik-appmotel, /bin/systemctl status traefik-appmotel
-```
-
-**Execution Model (Three-Tier Delegation):**
-1. **Operator user (apps)** → Has full control over appmotel user
-2. **Service user (appmotel)** → Has LIMITED sudo for Traefik systemctl commands only
-3. **Root** → Strictly limited to Traefik service management
-
-**Managing Traefik Service (correct command format):**
-```bash
-# From operator user, execute as appmotel, then use sudo
-sudo -u appmotel sudo systemctl start traefik-appmotel
+# Traefik (from operator user)
 sudo -u appmotel sudo systemctl restart traefik-appmotel
-sudo -u appmotel sudo systemctl status traefik-appmotel
-```
 
-**Note:** App services do NOT need root - they use `systemctl --user`. Traefik config changes are auto-reloaded (no restart needed).
+# App services (no sudo needed)
+sudo -u appmotel systemctl --user restart appmotel-myapp
+```
 
 See `DEV-SETUP.md` for complete execution model documentation.
 
 ## Development Environment
 
-**Target Deployment User:** `appmotel` (home directory: `/home/appmotel`)
-**Development User:** `apps` (current user)
+**Users:**
+- `apps` (operator) - Development user with full control over appmotel via sudoers, authenticated to GitHub
+- `appmotel` (service) - Target deployment user, limited sudo for Traefik only
 
-**Access Model:**
-- The `apps` user has full control over the `appmotel` user via sudoers
-- The `apps` user does NOT have general sudo/root access
-- The `appmotel` user has limited sudo for Traefik service management only
-- System-level operations (Traefik systemd service, sudoers) are pre-configured by system administrator
-- App deployment and management does not require root access (except Traefik service restarts)
-
-**GitHub Access:** The `apps` user is fully authenticated to GitHub and can run `gh` CLI commands for repository operations, issues, pull requests, and releases.
-
-### Testing and Re-deployment
-
-Before testing a fresh deployment:
-1. Switch to `appmotel` user: `sudo su - appmotel`
-2. Clean the entire home directory if needed: `rm -rf /home/appmotel/*` and `rm -rf /home/appmotel/.[^.]*` (preserves `.` and `..`)
-3. Return to `apps` user: `exit`
-4. Run deployment scripts from the repository
-
-This allows testing clean installations and ensures deployment scripts handle first-time setup correctly.
+**Clean Install Testing:**
+```bash
+sudo -u appmotel bash reset-home.sh --force  # Reset home directory
+sudo bash install.sh                          # System-level (creates user, services, sudoers)
+sudo su - appmotel && bash install.sh         # User-level (Traefik, appmo, configs)
+```
 
 ## Installation
 
-The `install.sh` script intelligently handles both system and user-level installation:
+The `install.sh` script handles both root and user-level installation:
 
-### Installation Process
+1. **As root:** Creates appmotel user, Traefik systemd service, sudoers config, enables linger
+2. **As appmotel:** Downloads Traefik, generates configs, installs appmo CLI, sets up autopull timer
 
-**Step 1: System-Level Setup (run as root):**
 ```bash
+# Step 1: System setup
 sudo bash install.sh
-```
 
-This performs:
-1. Creates the `appmotel` user
-2. Creates `/etc/systemd/system/traefik-appmotel.service`
-3. Configures `/etc/sudoers.d/appmotel`
-4. Enables systemd linger for appmotel user
-
-After completion, it instructs you to switch to the appmotel user and run the installation.
-
-**Step 2: User-Level Setup (run as appmotel user):**
-
-Switch to the appmotel user and run the installation:
-
-```bash
+# Step 2: User setup (follow prompts, or run manually)
 sudo su - appmotel
-curl -fsSL "https://raw.githubusercontent.com/dirkpetersen/appmotel/main/install.sh?$(date +%s)" | bash
-```
-
-Or if you have the repository locally:
-
-```bash
-sudo su - appmotel
-cd /path/to/appmotel
 bash install.sh
 ```
 
-The script performs:
-1. Downloads Traefik binary to `/home/appmotel/.local/bin/`
-2. Creates required directory structure
-3. Generates Traefik configuration files (including Let's Encrypt setup based on `.env`)
-4. Installs the `appmo` CLI tool to `/home/appmotel/.local/bin/`
-5. Adds `~/.local/bin` to PATH in `.bashrc`
-6. Sets up autopull service for automatic updates
+## AWS Deployment
 
-The installation script is idempotent and handles both fresh installations and updates.
+`install-aws.sh` provides automated EC2 deployment with Route53 DNS integration:
 
-## AWS Deployment (Automated)
-
-For automated EC2 deployment with full Route53 DNS integration:
-
-**Script:** `install-aws.sh`
-
-**Usage:**
 ```bash
-bash install-aws.sh [instance-type] [region]
+bash install-aws.sh [instance-type] [region]  # Default: t4g.micro us-west-2
 ```
 
-**What It Does:**
-1. **EC2 Instance Setup:**
-   - Launches EC2 instance (default: t4g.micro ARM-based in us-west-2)
-   - Automatically finds latest Amazon Linux 2023 AMI
-   - Creates security group with ports 22, 80, 443 open
-   - Creates SSH key pair (`~/.ssh/appmotel-key.pem`)
+- Creates EC2 instance with IAM role for Route53 (no AWS keys needed)
+- Auto-detects hosted zone, creates wildcard DNS records
+- Configures DNS-01 challenge for wildcard certificates
+- Connection: `ssh -i ~/.ssh/appmotel-key.pem ec2-user@<ip>`
 
-2. **IAM Role Configuration (Credential-less):**
-   - Creates IAM role `appmotel-route53-role` with Route53 permissions
-   - Attaches role to EC2 instance at launch
-   - Uses `AmazonRoute53FullAccess` managed policy
-   - Instance uses temporary credentials via metadata service
-   - NO need for AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY
-   - More secure - credentials can't leak and auto-rotate
+## Testing
 
-3. **Automatic DNS-01 Configuration:**
-   - Auto-detects first Route53 hosted zone in account
-   - Creates DNS records automatically:
-     * A record: `appmotel.<domain>` → server IP
-     * Wildcard: `*.<domain>` → server IP (all apps auto-route)
-   - Configures `.env` with:
-     * `BASE_DOMAIN=<detected-domain>`
-     * `USE_LETSENCRYPT=yes`
-     * `LETSENCRYPT_MODE=dns`
-     * `AWS_HOSTED_ZONE_ID=<detected-zone-id>`
-     * `AWS_REGION=<zone-region>`
-   - Restarts Traefik to apply configuration
+See `TESTING.md` for complete test procedures.
 
-4. **Appmotel Installation:**
-   - Runs `install.sh` as root (system-level setup)
-   - Runs `install.sh` as appmotel user (user-level setup)
-   - Starts all services automatically
-
-**Benefits:**
-- ✓ Fully automated deployment from zero to production-ready
-- ✓ Wildcard certificates automatically (*.yourdomain.com)
-- ✓ Works even if port 80 is blocked by ISP/firewall
-- ✓ Single certificate for all apps
-- ✓ Zero manual DNS configuration if Route53 hosted zone exists
-- ✓ Zero credential management (uses IAM role)
-- ✓ More secure than HTTP-01 challenge + access keys
-
-**Prerequisites:**
-- AWS CLI configured (`aws configure`)
-- Route53 hosted zone (optional, for automatic DNS setup)
-- Required tools: `aws`, `jq`, `ssh`, `ssh-keygen`
-
-**Connection After Deployment:**
+**Quick Validation:**
 ```bash
-ssh -i ~/.ssh/appmotel-key.pem ec2-user@<instance-ip>
+bash -n script.sh                                    # Syntax check
+sudo -u appmotel appmo status                        # Check all apps
+sudo -u appmotel sudo systemctl status traefik-appmotel  # Traefik status
+sudo -u appmotel journalctl --user -u appmotel-autopull  # Autopull logs
 ```
 
-**Graceful Fallback:**
-If no Route53 hosted zones found, installation continues without DNS setup and shows manual configuration instructions.
-
-## Development Workflow
-
-**Documentation Location:** All requirements and coding instructions are in the `reqs/` folder.
-
-**Key Files:**
-- `reqs/README.md`: Application requirements and installation overview
-- `reqs/howto-bash.md`: Detailed Bash coding guidelines (golden master template)
-- `reqs/traefik-config.md`: Complete Traefik installation and configuration guide
-
-## Testing and Validation
-
-When writing Bash scripts:
-1. Always test with `bash -n script.sh` (syntax check) before execution
-2. Ensure scripts are idempotent (can be run multiple times safely)
-3. Test with strict mode enabled
-4. Verify proper error handling with `set -o errexit` and `set -o pipefail`
-
-### Common Testing Commands
-
-**Clean Installation Testing:**
+**Test App Deployment:**
 ```bash
-# Reset appmotel home directory (as apps user)
-sudo -u appmotel bash reset-home.sh --force
-
-# Run fresh installation
-bash install.sh
-```
-
-**Service Testing:**
-```bash
-# Check Traefik status
-sudo -u appmotel sudo systemctl status traefik-appmotel
-
-# Check autopull timer
-sudo -u appmotel systemctl --user status appmotel-autopull.timer
-
-# View Traefik logs
-sudo journalctl -u traefik-appmotel -f
-
-# View app logs
-sudo -u appmotel appmo logs <app-name>
-```
-
-**App Deployment Testing:**
-```bash
-# Deploy test apps from examples/
 sudo -u appmotel appmo add flask-test https://github.com/dirkpetersen/appmotel main examples/flask-hello
-sudo -u appmotel appmo add express-test https://github.com/dirkpetersen/appmotel main examples/express-hello
-
-# Check status
-sudo -u appmotel appmo status
-
-# Test updates
-sudo -u appmotel appmo update flask-test
-
-# Test backup/restore
-sudo -u appmotel appmo backup flask-test
-sudo -u appmotel appmo restore flask-test
-```
-
-**DNS and Certificate Testing:**
-```bash
-# Test DNS resolution
-dig myapp.apps.yourdomain.edu
-
-# Test HTTP to HTTPS redirect
-curl -v http://myapp.apps.yourdomain.edu
-
-# Test HTTPS connectivity
-curl -v https://myapp.apps.yourdomain.edu
-
-# Verify certificate
-openssl s_client -connect myapp.apps.yourdomain.edu:443 -servername myapp.apps.yourdomain.edu </dev/null 2>&1 | grep "subject="
+sudo -u appmotel appmo status flask-test
+sudo -u appmotel appmo logs flask-test
 ```

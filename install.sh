@@ -487,15 +487,18 @@ ensure_cert_readable() {
 
 # -----------------------------------------------------------------------------
 # Function: generate_traefik_config
-# Description: Generates Traefik static configuration
+# Description: Generates Traefik static and dynamic configuration
+# Note: In Traefik v3, TLS stores MUST be in dynamic configuration, not static
 # -----------------------------------------------------------------------------
 generate_traefik_config() {
   log_msg "INFO" "Generating Traefik configuration"
 
-  local config_file="${APPMOTEL_HOME}/.config/traefik/traefik.yaml"
+  local static_config_file="${APPMOTEL_HOME}/.config/traefik/traefik.yaml"
+  local dynamic_config_dir="${APPMOTEL_HOME}/.config/traefik/dynamic"
+  local tls_config_file="${dynamic_config_dir}/tls-config.yaml"
 
-  # Build certificate configuration
-  local cert_config=""
+  # Build certificate configuration for ACME (goes in static config)
+  local acme_config=""
 
   # First, check for existing wildcard certificate
   local existing_cert
@@ -504,17 +507,22 @@ generate_traefik_config() {
   if [[ -n "${existing_cert}" ]]; then
     log_msg "INFO" "Found existing wildcard certificate for: ${existing_cert}"
     ensure_cert_readable "${existing_cert}"
-    cert_config="tls:
+    # CRITICAL: TLS stores must be in DYNAMIC config for Traefik v3
+    cat > "${tls_config_file}" <<EOF
+# TLS Configuration (MUST be in dynamic config for Traefik v3)
+tls:
   stores:
     default:
       defaultCertificate:
         certFile: /etc/letsencrypt/live/${existing_cert}/fullchain.pem
-        keyFile: /etc/letsencrypt/live/${existing_cert}/privkey.pem"
+        keyFile: /etc/letsencrypt/live/${existing_cert}/privkey.pem
+EOF
+    log_msg "INFO" "TLS configuration written to ${tls_config_file}"
   elif [[ "${USE_LETSENCRYPT:-no}" == "yes" ]]; then
-    # Use ACME for new certificates
+    # Use ACME for new certificates (ACME config stays in static config)
     if [[ "${LETSENCRYPT_MODE:-http}" == "dns" ]]; then
       # DNS-01 challenge with Route53
-      cert_config="certificatesResolvers:
+      acme_config="certificatesResolvers:
   myresolver:
     acme:
       email: \"${LETSENCRYPT_EMAIL}\"
@@ -524,7 +532,7 @@ generate_traefik_config() {
         delayBeforeCheck: 0"
     else
       # HTTP-01 challenge
-      cert_config="certificatesResolvers:
+      acme_config="certificatesResolvers:
   myresolver:
     acme:
       email: \"${LETSENCRYPT_EMAIL}\"
@@ -534,8 +542,8 @@ generate_traefik_config() {
     fi
   fi
 
-  # Write configuration
-  cat > "${config_file}" <<EOF
+  # Write static configuration
+  cat > "${static_config_file}" <<EOF
 # STATIC CONFIGURATION
 
 entryPoints:
@@ -554,13 +562,13 @@ providers:
     directory: "${APPMOTEL_HOME}/.config/traefik/dynamic"
     watch: true
 
-${cert_config}
+${acme_config}
 
 api:
   dashboard: true
 EOF
 
-  log_msg "INFO" "Traefik configuration written to ${config_file}"
+  log_msg "INFO" "Traefik static configuration written to ${static_config_file}"
 }
 
 # -----------------------------------------------------------------------------

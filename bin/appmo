@@ -12,8 +12,9 @@ IFS=$'\n\t'
 
 # Constants
 readonly APPMOTEL_HOME="/home/appmotel"
-readonly APPMOTEL_ENV_FILE="${APPMOTEL_HOME}/.config/appmotel/.env"
-readonly APPS_CONFIG_DIR="${APPMOTEL_HOME}/.config/appmotel/apps"
+readonly APPMOTEL_CONFIG_DIR="${APPMOTEL_HOME}/.config/appmotel"
+readonly APPMOTEL_ENV_FILE="${APPMOTEL_CONFIG_DIR}/.env"
+readonly APPS_CONFIG_DIR="${APPMOTEL_CONFIG_DIR}"
 readonly APPS_DATA_DIR="${APPMOTEL_HOME}/.local/share/appmotel"
 readonly TRAEFIK_DYNAMIC_DIR="${APPMOTEL_HOME}/.config/traefik/dynamic"
 readonly SYSTEMD_USER_DIR="${APPMOTEL_HOME}/.config/systemd/user"
@@ -81,6 +82,7 @@ Commands:
   update <app-name>                      Manually update an app
   autopull                               Check all apps for updates and deploy
   logs <app-name> [lines]                View app logs
+  env <app-name>                         Edit app's .env file in default editor
   exec <app-name> <command>              Run command in app's environment
   backup <app-name>                      Create a backup of an app
   restore <app-name> [backup-id]         Restore an app from backup
@@ -91,6 +93,7 @@ Examples:
   appmo status myapp
   appmo autopull
   appmo logs myapp 50
+  appmo env myapp
   appmo backup myapp
   appmo restore myapp 2024-01-15-120000
 EOF
@@ -119,11 +122,12 @@ validate_app_name() {
 
 # -----------------------------------------------------------------------------
 # Function: app_exists
-# Description: Checks if an app exists
+# Description: Checks if an app exists (must have metadata.conf to be considered deployed)
+# Note: A directory with only .env.backup from a removed app doesn't count
 # -----------------------------------------------------------------------------
 app_exists() {
   local app_name="$1"
-  [[ -d "${APPS_CONFIG_DIR}/${app_name}" ]]
+  [[ -f "${APPS_CONFIG_DIR}/${app_name}/metadata.conf" ]]
 }
 
 # -----------------------------------------------------------------------------
@@ -221,6 +225,7 @@ restore_backup() {
   local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
   setup_python_env "${repo_dir}"
   setup_nodejs_env "${repo_dir}"
+  setup_go_env "${repo_dir}"
 
   # Start service
   systemctl --user start "appmotel-${app_name}"
@@ -338,13 +343,20 @@ find_free_port() {
 # -----------------------------------------------------------------------------
 # Function: get_port_from_env
 # Description: Extracts port from app's .env file
+# Checks both config dir (preferred) and repo dir for .env
 # -----------------------------------------------------------------------------
 get_port_from_env() {
   local app_name="$1"
-  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
-  local env_file="${repo_dir}/.env"
+  local config_env="${APPS_CONFIG_DIR}/${app_name}/.env"
+  local repo_env="${APPS_DATA_DIR}/${app_name}/repo/.env"
 
-  if [[ ! -f "${env_file}" ]]; then
+  # Prefer config dir .env, fall back to repo .env
+  local env_file=""
+  if [[ -f "${config_env}" ]] && [[ ! -L "${config_env}" ]]; then
+    env_file="${config_env}"
+  elif [[ -f "${repo_env}" ]]; then
+    env_file="${repo_env}"
+  else
     return 1
   fi
 
@@ -395,6 +407,66 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
+# Function: setup_app_env_file
+# Description: Creates physical .env in config dir and symlinks repo/.env to it
+# Looks for template: .env.default, env.default, .env.example, env.example
+# -----------------------------------------------------------------------------
+setup_app_env_file() {
+  local app_name="$1"
+  local port="$2"
+
+  local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+  local config_env="${config_dir}/.env"
+  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+  local repo_env="${repo_dir}/.env"
+
+  mkdir -p "${config_dir}"
+
+  # If config .env already exists (from backup restore), skip creation
+  if [[ -f "${config_env}" ]] && [[ ! -L "${config_env}" ]]; then
+    log_msg "INFO" "Using existing .env from config: ${config_env}"
+  else
+    # Remove any existing symlink in config dir
+    rm -f "${config_env}"
+
+    # Look for template files in repo
+    local template_file=""
+    for tmpl in ".env.default" "env.default" ".env.example" "env.example"; do
+      if [[ -f "${repo_dir}/${tmpl}" ]]; then
+        template_file="${repo_dir}/${tmpl}"
+        break
+      fi
+    done
+
+    if [[ -n "${template_file}" ]]; then
+      # Copy template to config dir
+      cp "${template_file}" "${config_env}"
+      log_msg "INFO" "Created .env from template: $(basename "${template_file}")"
+    elif [[ -f "${repo_env}" ]] && [[ ! -L "${repo_env}" ]]; then
+      # If repo has a real .env file, move it to config
+      mv "${repo_env}" "${config_env}"
+      log_msg "INFO" "Moved existing .env to config directory"
+    else
+      # Create empty .env with just PORT
+      echo "PORT=${port}" > "${config_env}"
+      log_msg "INFO" "Created new .env with PORT=${port}"
+    fi
+  fi
+
+  # Ensure PORT is set in .env
+  if ! grep -q "^PORT=" "${config_env}" 2>/dev/null; then
+    echo "PORT=${port}" >> "${config_env}"
+  fi
+
+  # Remove any existing .env in repo (file or symlink)
+  rm -f "${repo_env}"
+
+  # Create symlink from repo/.env -> config/.env
+  ln -s "${config_env}" "${repo_env}"
+  log_msg "INFO" "Created symlink: ${repo_env} -> ${config_env}"
+}
+
+# -----------------------------------------------------------------------------
 # Function: load_app_metadata
 # Description: Loads app metadata from config directory
 # -----------------------------------------------------------------------------
@@ -412,12 +484,34 @@ load_app_metadata() {
 # -----------------------------------------------------------------------------
 # Function: detect_app_type
 # Description: Detects application type and returns start command
+# Priority: Go (if go.mod exists) > Python > Node.js > Binary
 # -----------------------------------------------------------------------------
 detect_app_type() {
   local repo_dir="$1"
   local -n cmd_ref=$2
 
-  if [[ -f "${repo_dir}/requirements.txt" ]]; then
+  # Check Go first (highest priority when go.mod exists)
+  if [[ -f "${repo_dir}/go.mod" ]]; then
+    # Go app - binary should be in bin/ after setup_go_env runs
+    if [[ -d "${repo_dir}/bin" ]] && [[ $(find "${repo_dir}/bin" -type f -executable | wc -l) -ge 1 ]]; then
+      local bin_file
+      # Prefer binary matching module name
+      local module_name
+      module_name=$(grep "^module " "${repo_dir}/go.mod" | awk '{print $2}' | xargs basename)
+      if [[ -x "${repo_dir}/bin/${module_name}" ]]; then
+        cmd_ref="bin/${module_name}"
+      else
+        bin_file=$(find "${repo_dir}/bin" -type f -executable | head -1)
+        cmd_ref="bin/$(basename "${bin_file}")"
+      fi
+      return 0
+    fi
+    # Binary not built yet, will be built by setup_go_env
+    local module_name
+    module_name=$(grep "^module " "${repo_dir}/go.mod" | awk '{print $2}' | xargs basename)
+    cmd_ref="bin/${module_name}"
+    return 0
+  elif [[ -f "${repo_dir}/requirements.txt" ]]; then
     # Python app
     if [[ -f "${repo_dir}/app.py" ]]; then
       cmd_ref="python3 app.py"
@@ -753,6 +847,74 @@ setup_nodejs_env() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: setup_go_env
+# Description: Sets up Go environment and builds the application
+# -----------------------------------------------------------------------------
+setup_go_env() {
+  local repo_dir="$1"
+
+  if [[ ! -f "${repo_dir}/go.mod" ]]; then
+    return 0
+  fi
+
+  # Check if go is installed
+  if ! command -v go &>/dev/null; then
+    die "Go is not installed. Please install Go to deploy Go applications.
+    Ubuntu/Debian: sudo apt-get install golang-go
+    RHEL/CentOS:   sudo dnf install golang"
+  fi
+
+  log_msg "INFO" "Building Go application"
+
+  cd "${repo_dir}"
+
+  # Download dependencies
+  log_msg "INFO" "Downloading Go dependencies"
+  go mod download
+
+  # Build the application
+  # Try to find the module name from go.mod for the binary name
+  local module_name
+  module_name=$(grep "^module " go.mod | awk '{print $2}' | xargs basename)
+
+  # Build into bin directory
+  mkdir -p "${repo_dir}/bin"
+
+  # Check for cmd/ directory structure (common Go project layout)
+  if [[ -d "${repo_dir}/cmd" ]]; then
+    # Build all commands in cmd/ directory
+    local cmd_count=0
+    for cmd_dir in "${repo_dir}/cmd"/*; do
+      if [[ -d "${cmd_dir}" ]] && [[ -f "${cmd_dir}/main.go" ]]; then
+        local cmd_name
+        cmd_name=$(basename "${cmd_dir}")
+        log_msg "INFO" "Compiling Go binary: ${cmd_name}"
+        if go build -o "${repo_dir}/bin/${cmd_name}" "${cmd_dir}"; then
+          chmod +x "${repo_dir}/bin/${cmd_name}"
+          log_msg "INFO" "Built: bin/${cmd_name}"
+          cmd_count=$((cmd_count + 1))
+        else
+          log_msg "WARN" "Failed to build ${cmd_name}"
+        fi
+      fi
+    done
+    if [[ ${cmd_count} -eq 0 ]]; then
+      die "No Go commands found in cmd/ directory"
+    fi
+    log_msg "INFO" "Go application built successfully (${cmd_count} binaries)"
+  else
+    # Try to build from root directory
+    log_msg "INFO" "Compiling Go binary: ${module_name}"
+    if go build -o "${repo_dir}/bin/${module_name}" .; then
+      chmod +x "${repo_dir}/bin/${module_name}"
+      log_msg "INFO" "Go application built successfully: bin/${module_name}"
+    else
+      die "Failed to build Go application"
+    fi
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_add
 # Description: Adds a new app
 # -----------------------------------------------------------------------------
@@ -786,23 +948,36 @@ cmd_add() {
     die "Failed to clone repository"
   fi
 
-  # Determine port
+  # Check for existing .env backup and offer to restore
+  local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+  local env_backup="${config_dir}/.env.backup"
+  if [[ -f "${env_backup}" ]]; then
+    printf "Found previous .env backup for '${app_name}'. Restore it? [Y/n] "
+    read -r restore_answer
+    case "${restore_answer}" in
+      [nN]|[nN][oO])
+        log_msg "INFO" "Starting with fresh .env"
+        rm -f "${env_backup}"
+        ;;
+      *)
+        log_msg "INFO" "Restoring .env from backup"
+        mkdir -p "${config_dir}"
+        mv "${env_backup}" "${config_dir}/.env"
+        ;;
+    esac
+  fi
+
+  # Determine port (check repo .env first, then config .env, then assign new)
   local port
   if port=$(get_port_from_env "${app_name}"); then
     log_msg "INFO" "Using port from .env: ${port}"
   else
     port=$(find_free_port)
     log_msg "INFO" "Assigned port: ${port}"
-
-    # Add PORT to .env if it exists
-    if [[ -f "${repo_dir}/.env" ]]; then
-      if ! grep -q "^PORT=" "${repo_dir}/.env"; then
-        echo "PORT=${port}" >> "${repo_dir}/.env"
-      fi
-    else
-      echo "PORT=${port}" > "${repo_dir}/.env"
-    fi
   fi
+
+  # Setup .env file (physical in config dir, symlink in repo)
+  setup_app_env_file "${app_name}" "${port}"
 
   # Check if port is in use
   if ss -tuln | grep -q ":${port} "; then
@@ -819,6 +994,11 @@ cmd_add() {
   setup_nodejs_env "${repo_dir}" || {
     rm -rf "${app_data_dir}"
     die "Failed to setup Node.js environment"
+  }
+
+  setup_go_env "${repo_dir}" || {
+    rm -rf "${app_data_dir}"
+    die "Failed to build Go application"
   }
 
   # Run install script
@@ -915,7 +1095,8 @@ cmd_add() {
 
 # -----------------------------------------------------------------------------
 # Function: cmd_remove
-# Description: Removes an app
+# Description: Removes an app (also aliased as 'rm')
+# Backs up .env file before removal for potential restore on re-add
 # -----------------------------------------------------------------------------
 cmd_remove() {
   if [[ $# -lt 1 ]]; then
@@ -928,12 +1109,35 @@ cmd_remove() {
 
   log_msg "INFO" "Removing app: ${app_name}"
 
+  # Backup .env file before removal
+  local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+  local env_file="${config_dir}/.env"
+  local env_backup="${config_dir}/.env.backup"
+
+  if [[ -f "${env_file}" ]] && [[ ! -L "${env_file}" ]]; then
+    # Create config dir if needed (for storing backup)
+    mkdir -p "${config_dir}"
+    cp "${env_file}" "${env_backup}"
+    log_msg "INFO" "Backed up .env to ${env_backup}"
+  fi
+
   # Stop and disable service
   if systemctl --user is-active --quiet "appmotel-${app_name}"; then
     systemctl --user stop "appmotel-${app_name}"
   fi
 
   systemctl --user disable "appmotel-${app_name}" 2>/dev/null || true
+
+  # Also check for Procfile-based services
+  for service_file in "${SYSTEMD_USER_DIR}"/appmotel-"${app_name}"-*.service; do
+    if [[ -f "${service_file}" ]]; then
+      local service_name
+      service_name=$(basename "${service_file}" .service)
+      systemctl --user stop "${service_name}" 2>/dev/null || true
+      systemctl --user disable "${service_name}" 2>/dev/null || true
+      rm -f "${service_file}"
+    fi
+  done
 
   # Remove systemd service
   rm -f "${SYSTEMD_USER_DIR}/appmotel-${app_name}.service"
@@ -945,8 +1149,20 @@ cmd_remove() {
   # Remove app data
   rm -rf "${APPS_DATA_DIR}/${app_name}"
 
-  # Remove app config
-  rm -rf "${APPS_CONFIG_DIR}/${app_name}"
+  # Remove app config (but preserve .env.backup)
+  # Move .env.backup to temp, remove dir, recreate with just backup
+  if [[ -f "${env_backup}" ]]; then
+    local temp_backup
+    temp_backup=$(mktemp)
+    cp "${env_backup}" "${temp_backup}"
+    rm -rf "${config_dir}"
+    mkdir -p "${config_dir}"
+    mv "${temp_backup}" "${env_backup}"
+    log_msg "INFO" ".env backup preserved at ${env_backup}"
+    log_msg "INFO" "Re-add app with same name to restore .env"
+  else
+    rm -rf "${config_dir}"
+  fi
 
   log_msg "INFO" "App '${app_name}' removed successfully"
 }
@@ -974,7 +1190,14 @@ cmd_list() {
 
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
+  local found_apps=0
   for app in "${apps[@]}"; do
+    # Skip directories that only have .env.backup (removed apps)
+    if ! app_exists "${app}"; then
+      continue
+    fi
+    found_apps=$((found_apps + 1))
+
     local status="stopped"
     if systemctl --user is-active --quiet "appmotel-${app}"; then
       status="running"
@@ -984,6 +1207,10 @@ cmd_list() {
 
     printf "%-20s %-10s %-40s\n" "${app}" "${status}" "${url}"
   done
+
+  if [[ ${found_apps} -eq 0 ]]; then
+    echo "No apps configured"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -1120,6 +1347,7 @@ cmd_update() {
     # Setup environments
     setup_python_env "${repo_dir}"
     setup_nodejs_env "${repo_dir}"
+    setup_go_env "${repo_dir}"
 
     # Run install script
     if ! run_install_script "${repo_dir}"; then
@@ -1192,6 +1420,72 @@ cmd_exec() {
   fi
 
   "$@"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_env
+# Description: Opens the app's .env file in the default editor
+# The physical .env lives in config dir, repo has symlink to it
+# -----------------------------------------------------------------------------
+cmd_env() {
+  if [[ $# -lt 1 ]]; then
+    die "Usage: appmo env <app-name>"
+  fi
+
+  local app_name="$1"
+  require_app_exists "${app_name}"
+
+  # Physical .env is in config directory
+  local env_file="${APPS_CONFIG_DIR}/${app_name}/.env"
+  local repo_env="${APPS_DATA_DIR}/${app_name}/repo/.env"
+
+  if [[ ! -f "${env_file}" ]]; then
+    # Create .env file if it doesn't exist
+    mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
+    touch "${env_file}"
+    log_msg "INFO" "Created new .env file: ${env_file}"
+  fi
+
+  # Ensure symlink exists in repo
+  if [[ ! -L "${repo_env}" ]]; then
+    rm -f "${repo_env}"
+    ln -s "${env_file}" "${repo_env}"
+  fi
+
+  # Capture file hash before editing to detect changes
+  local hash_before=""
+  if [[ -f "${env_file}" ]]; then
+    hash_before=$(md5sum "${env_file}" 2>/dev/null | awk '{print $1}')
+  fi
+
+  # Use EDITOR or VISUAL, fall back to vi
+  local editor="${EDITOR:-${VISUAL:-vi}}"
+
+  log_msg "INFO" "Opening ${env_file} with ${editor}"
+  "${editor}" "${env_file}"
+
+  # Check if file was modified
+  local hash_after=""
+  if [[ -f "${env_file}" ]]; then
+    hash_after=$(md5sum "${env_file}" 2>/dev/null | awk '{print $1}')
+  fi
+
+  if [[ "${hash_before}" != "${hash_after}" ]]; then
+    log_msg "INFO" "Environment file changed"
+    # Ask user if they want to restart
+    printf "Restart app to apply changes? [Y/n] "
+    read -r answer
+    case "${answer}" in
+      [nN]|[nN][oO])
+        log_msg "INFO" "Skipping restart. Run 'appmo restart ${app_name}' to apply changes later."
+        ;;
+      *)
+        cmd_restart "${app_name}"
+        ;;
+    esac
+  else
+    log_msg "INFO" "No changes detected"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -1306,6 +1600,12 @@ cmd_autopull() {
 
     local app_name
     app_name=$(basename "${app_dir}")
+
+    # Skip directories that only have .env.backup (removed apps)
+    if ! app_exists "${app_name}"; then
+      continue
+    fi
+
     app_count=$((app_count + 1))
 
     # Check app for updates
@@ -1383,7 +1683,7 @@ main() {
 
   case "${command}" in
     add) cmd_add "$@" ;;
-    remove) cmd_remove "$@" ;;
+    remove|rm) cmd_remove "$@" ;;
     list) cmd_list "$@" ;;
     status) cmd_status "$@" ;;
     start) cmd_start "$@" ;;
@@ -1392,6 +1692,7 @@ main() {
     update) cmd_update "$@" ;;
     autopull) cmd_autopull "$@" ;;
     logs) cmd_logs "$@" ;;
+    env) cmd_env "$@" ;;
     exec) cmd_exec "$@" ;;
     backup) cmd_backup "$@" ;;
     restore) cmd_restore "$@" ;;

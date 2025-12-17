@@ -9,13 +9,13 @@ _appmo_completions() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-  # Main commands
-  local commands="add remove list status start stop restart update autopull logs exec backup restore backups help"
+  # Main commands (rm is hidden alias for remove)
+  local commands="add remove rm list status start stop restart update autopull logs env exec backup restore backups help"
 
-  # Get list of apps for completion
+  # Get list of apps for completion (exclude .env file, only list directories)
   local apps=""
-  if [[ -d "/home/appmotel/.config/appmotel/apps" ]]; then
-    apps=$(ls /home/appmotel/.config/appmotel/apps 2>/dev/null | tr '\n' ' ')
+  if [[ -d "/home/appmotel/.config/appmotel" ]]; then
+    apps=$(find /home/appmotel/.config/appmotel -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | tr '\n' ' ')
   fi
 
   case "${COMP_CWORD}" in
@@ -29,7 +29,7 @@ _appmo_completions() {
         add)
           # No completion for add (needs app-name, github-url, branch)
           ;;
-        remove|status|start|stop|restart|update|logs|exec|backup|restore|backups)
+        remove|rm|status|start|stop|restart|update|logs|env|exec|backup|restore|backups)
           # Complete with app names
           COMPREPLY=($(compgen -W "${apps}" -- "${cur}"))
           ;;
