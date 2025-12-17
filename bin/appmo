@@ -106,6 +106,7 @@ Commands:
   stop <app-name>                        Stop an app
   restart <app-name>                     Restart an app
   update <app-name>                      Manually update an app
+  check                                  Check for available updates (no deploy)
   autopull                               Check all apps for updates and deploy
   logs <app-name> [lines]                View app logs
   env <app-name>                         Edit app's .env file in default editor
@@ -1725,6 +1726,91 @@ cmd_backups() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: cmd_check
+# Description: Check for available updates without deploying
+# -----------------------------------------------------------------------------
+cmd_check() {
+  # Check if apps directory exists
+  if [[ ! -d "${APPS_CONFIG_DIR}" ]]; then
+    echo "No apps configured yet"
+    return 0
+  fi
+
+  local updates_available=0
+  local app_count=0
+
+  printf "%-15s %-12s %-10s %s\n" "APP" "STATUS" "LOCAL" "REMOTE"
+  printf "%-15s %-12s %-10s %s\n" "---" "------" "-----" "------"
+
+  for app_dir in "${APPS_CONFIG_DIR}"/*; do
+    if [[ ! -d "${app_dir}" ]]; then
+      continue
+    fi
+
+    local app_name
+    app_name=$(basename "${app_dir}")
+
+    # Skip directories that only have .env.backup (removed apps)
+    if ! app_exists "${app_name}"; then
+      continue
+    fi
+
+    app_count=$((app_count + 1))
+
+    local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+
+    if [[ ! -d "${repo_dir}" ]]; then
+      printf "%-15s %-12s %-10s %s\n" "${app_name}" "NO REPO" "-" "-"
+      continue
+    fi
+
+    cd "${repo_dir}"
+
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+      printf "%-15s %-12s %-10s %s\n" "${app_name}" "NOT GIT" "-" "-"
+      continue
+    fi
+
+    # Fetch latest changes (quietly)
+    if ! git fetch origin 2>/dev/null; then
+      printf "%-15s %-12s %-10s %s\n" "${app_name}" "FETCH ERR" "-" "-"
+      continue
+    fi
+
+    local local_head
+    local remote_head
+    local_head=$(git rev-parse HEAD)
+
+    local tracking_branch
+    tracking_branch=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "")
+
+    if [[ -z "${tracking_branch}" ]]; then
+      printf "%-15s %-12s %-10s %s\n" "${app_name}" "NO TRACK" "${local_head:0:8}" "-"
+      continue
+    fi
+
+    remote_head=$(git rev-parse "${tracking_branch}")
+
+    if [[ "${local_head}" != "${remote_head}" ]]; then
+      printf "%-15s %-12s %-10s %s\n" "${app_name}" "UPDATE" "${local_head:0:8}" "${remote_head:0:8}"
+      updates_available=$((updates_available + 1))
+    else
+      printf "%-15s %-12s %-10s %s\n" "${app_name}" "up-to-date" "${local_head:0:8}" "-"
+    fi
+  done
+
+  echo ""
+  if [[ ${app_count} -eq 0 ]]; then
+    echo "No apps found"
+  elif [[ ${updates_available} -eq 0 ]]; then
+    echo "All ${app_count} app(s) are up to date"
+  else
+    echo "${updates_available} of ${app_count} app(s) have updates available"
+    echo "Run 'appmo update <app>' or 'appmo autopull' to deploy"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_autopull
 # Description: Automatically checks all apps for updates and deploys them
 # This is designed to run periodically via systemd timer
@@ -1863,6 +1949,7 @@ main() {
     stop) cmd_stop "$@" ;;
     restart) cmd_restart "$@" ;;
     update) cmd_update "$@" ;;
+    check) cmd_check "$@" ;;
     autopull) cmd_autopull "$@" ;;
     logs) cmd_logs "$@" ;;
     env) cmd_env "$@" ;;
