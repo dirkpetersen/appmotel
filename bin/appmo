@@ -457,8 +457,16 @@ setup_app_env_file() {
     fi
   fi
 
-  # Ensure PORT is set in .env
-  if ! grep -q "^PORT=" "${config_env}" 2>/dev/null; then
+  # Ensure PORT is set in .env and override any low ports (< 10001)
+  # Apps should not dictate their own ports - the PaaS assigns them
+  if grep -q "^PORT=" "${config_env}" 2>/dev/null; then
+    local existing_port
+    existing_port=$(grep "^PORT=" "${config_env}" | cut -d'=' -f2 | tr -d ' ')
+    if [[ "${existing_port}" =~ ^[0-9]+$ ]] && [[ "${existing_port}" -lt 10001 ]]; then
+      log_msg "WARN" "Overriding low port ${existing_port} with assigned port ${port}"
+      sed -i "s/^PORT=.*/PORT=${port}/" "${config_env}"
+    fi
+  else
     echo "PORT=${port}" >> "${config_env}"
   fi
 
@@ -1031,8 +1039,18 @@ cmd_add() {
   local port
   local port_from_env=""
   if port_from_env=$(get_port_from_env "${app_name}"); then
+    # Check if port is too low (< 10001) - override with high port
+    if [[ "${port_from_env}" -lt 10001 ]]; then
+      log_msg "WARN" "Port ${port_from_env} from .env is too low, assigning high port"
+      port=$(find_free_port)
+      log_msg "INFO" "Assigned new port: ${port}"
+      # Update the .env file with new port if it exists
+      local config_env="${APPS_CONFIG_DIR}/${app_name}/.env"
+      if [[ -f "${config_env}" ]]; then
+        sed -i "s/^PORT=.*/PORT=${port}/" "${config_env}"
+      fi
     # Check if the port from .env is still free
-    if ss -tuln | grep -q ":${port_from_env} "; then
+    elif ss -tuln | grep -q ":${port_from_env} "; then
       log_msg "WARN" "Port ${port_from_env} from .env is already in use"
       port=$(find_free_port)
       log_msg "INFO" "Assigned new port: ${port}"
@@ -1443,6 +1461,30 @@ cmd_update() {
   fi
 
   if [[ "${update_failed}" == "false" ]]; then
+    # Check if .env.default has a low port and override it
+    # Apps should not dictate their own ports - the PaaS assigns them
+    local config_env="${APPS_CONFIG_DIR}/${app_name}/.env"
+    local env_default="${repo_dir}/.env.default"
+
+    if [[ -f "${env_default}" ]] && grep -q "^PORT=" "${env_default}" 2>/dev/null; then
+      local default_port
+      default_port=$(grep "^PORT=" "${env_default}" | cut -d'=' -f2 | tr -d ' ')
+      if [[ "${default_port}" =~ ^[0-9]+$ ]] && [[ "${default_port}" -lt 10001 ]]; then
+        # Get current port from config .env or assign new one
+        local assigned_port="${PORT}"
+        if [[ -z "${assigned_port}" ]] || [[ "${assigned_port}" -lt 10001 ]]; then
+          assigned_port=$(find_free_port)
+        fi
+        log_msg "WARN" "App's .env.default has low port ${default_port}, overriding with ${assigned_port}"
+        sed -i "s/^PORT=.*/PORT=${assigned_port}/" "${config_env}"
+        PORT="${assigned_port}"
+
+        # Update Traefik config with new port
+        local base_domain="${BASE_DOMAIN:-apps.example.com}"
+        create_traefik_config "${app_name}" "${assigned_port}" "${base_domain}" "${repo_dir}"
+      fi
+    fi
+
     # Setup environments
     setup_python_env "${repo_dir}"
     setup_nodejs_env "${repo_dir}"
