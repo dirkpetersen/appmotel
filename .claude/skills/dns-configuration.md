@@ -175,16 +175,65 @@ dig +short myapp.apps.yourdomain.edu
 
 ---
 
+### Option 4: On-Premises with Route53 DNS-01 (TBD)
+
+> **Status:** Planned feature - not yet implemented
+
+**Priority:** 🔮 Future - ideal for on-premises behind firewalls
+
+**When to use:**
+- Your server is on-premises or in a non-AWS datacenter
+- Port 80 is blocked by firewall or not exposed to the internet
+- Your domain is hosted in AWS Route53
+- You want automatic wildcard SSL certificates without HTTP-01 challenge
+
+**Why this matters:**
+
+Let's Encrypt certificate validation methods:
+- **HTTP-01:** Requires port 80 open to internet → **Not possible behind firewalls**
+- **DNS-01:** Validates via DNS TXT records → **Works anywhere with outbound HTTPS**
+
+With Route53 DNS-01 support, Traefik can obtain and renew wildcard certificates entirely behind a firewall, with only outbound HTTPS access required.
+
+**Planned Setup:**
+```bash
+# ~/.config/appmotel/.env
+BASE_DOMAIN="apps.yourdomain.edu"
+USE_LETSENCRYPT="yes"
+LETSENCRYPT_EMAIL="admin@yourdomain.edu"
+LETSENCRYPT_MODE="dns"              # DNS-01 challenge
+AWS_HOSTED_ZONE_ID="Z1234567890"    # Route53 hosted zone
+AWS_REGION="us-east-1"
+AWS_ACCESS_KEY_ID="AKIA..."         # Or use instance profile
+AWS_SECRET_ACCESS_KEY="..."
+```
+
+**Key Benefits:**
+- ✅ Works behind firewalls (no inbound port 80)
+- ✅ Automatic wildcard certificates (`*.apps.yourdomain.edu`)
+- ✅ Certificate renewal without service interruption
+- ✅ On-premises servers can leverage cloud DNS
+
+**Network Requirements (outbound only):**
+- `acme-v02.api.letsencrypt.org:443` - Let's Encrypt API
+- `route53.amazonaws.com:443` - Route53 API
+- `sts.amazonaws.com:443` - AWS authentication
+
+**Current Workaround:**
+Manually configure Traefik's `traefik.yaml` with Route53 DNS-01 resolver. See [Traefik DNS-01 docs](https://doc.traefik.io/traefik/https/acme/#dnschallenge).
+
+---
+
 ## Decision Matrix
 
-| Factor | Option 1 (Route53) | Option 2 (Wildcard) | Option 3 (Individual) |
-|--------|-------------------|---------------------|----------------------|
-| **Automatic for new apps** | ✅ Yes | ✅ Yes | ❌ No |
-| **Setup complexity** | 🟢 Low (scripted) | 🟢 Low | 🟡 Medium |
-| **Maintenance required** | 🟢 None | 🟢 None | 🔴 Per app |
-| **DNS provider requirements** | AWS Route53 | Wildcard support | None |
-| **SSL certificates** | ✅ Wildcard auto | 🟡 Per-domain | 🟡 Per-domain |
-| **Best for** | AWS deployments | Most non-AWS | Small/stable |
+| Factor | Option 1 (Route53 AWS) | Option 2 (Wildcard) | Option 3 (Individual) | Option 4 (On-Prem+R53) |
+|--------|------------------------|---------------------|----------------------|------------------------|
+| **Automatic for new apps** | ✅ Yes | ✅ Yes | ❌ No | ✅ Yes |
+| **Setup complexity** | 🟢 Low (scripted) | 🟢 Low | 🟡 Medium | 🟡 Medium (TBD) |
+| **Maintenance required** | 🟢 None | 🟢 None | 🔴 Per app | 🟢 None |
+| **Port 80 required** | ❌ No (DNS-01) | ✅ Yes (HTTP-01) | ✅ Yes (HTTP-01) | ❌ No (DNS-01) |
+| **SSL certificates** | ✅ Wildcard auto | 🟡 Per-domain | 🟡 Per-domain | ✅ Wildcard auto |
+| **Best for** | AWS EC2 | Non-AWS cloud | Small/stable | On-premises |
 
 ## Configuration Workflow
 

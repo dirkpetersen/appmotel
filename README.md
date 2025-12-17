@@ -307,6 +307,79 @@ myapp.apps.yourdomain.edu.  IN  CNAME  server.yourdomain.edu.
 - ⚠️ More maintenance overhead
 - ⚠️ DNS propagation delay for new apps
 
+#### Option 4: On-Premises with Route53 DNS-01 (TBD)
+
+> **Status:** Planned feature - not yet implemented
+
+**When to use:**
+- Your server is on-premises or in a non-AWS datacenter
+- Port 80 is blocked by firewall or not exposed to the internet
+- Your domain is hosted in AWS Route53
+- You want automatic wildcard SSL certificates without HTTP-01 challenge
+
+**Why this matters:**
+
+Let's Encrypt offers two main challenge types for certificate validation:
+- **HTTP-01:** Requires port 80 open to the internet (not always possible on-premises)
+- **DNS-01:** Validates via DNS TXT records (works behind firewalls, supports wildcards)
+
+With Route53 DNS-01 support, Traefik can:
+1. Automatically create DNS TXT records in Route53 for certificate validation
+2. Obtain and renew wildcard certificates (`*.apps.yourdomain.edu`)
+3. Work entirely behind a firewall with no inbound port 80 required
+4. Only requires outbound HTTPS access to Let's Encrypt and Route53 APIs
+
+**Planned Setup:**
+
+```bash
+# Install appmotel on your on-premises server
+sudo bash install.sh
+sudo su - appmotel
+bash install.sh
+
+# Configure Route53 DNS-01 in ~/.config/appmotel/.env
+BASE_DOMAIN="apps.yourdomain.edu"
+USE_LETSENCRYPT="yes"
+LETSENCRYPT_EMAIL="admin@yourdomain.edu"
+LETSENCRYPT_MODE="dns"              # Use DNS-01 challenge
+AWS_HOSTED_ZONE_ID="Z1234567890"    # Your Route53 hosted zone ID
+AWS_REGION="us-east-1"
+
+# AWS credentials (if not using instance profile)
+AWS_ACCESS_KEY_ID="AKIA..."
+AWS_SECRET_ACCESS_KEY="..."
+```
+
+**Planned Advantages:**
+- ✅ Works behind firewalls (no inbound port 80 needed)
+- ✅ Automatic wildcard certificates for all apps
+- ✅ Certificate renewal without service interruption
+- ✅ On-premises servers can use cloud DNS
+- ✅ Single certificate covers all `*.apps.yourdomain.edu` subdomains
+
+**Requirements:**
+- AWS account with Route53 hosted zone
+- IAM credentials with Route53 permissions (or EC2 instance role if on AWS)
+- Outbound HTTPS access to Let's Encrypt and AWS APIs
+- Wildcard A record in Route53 pointing to your server's public IP
+
+**Network Requirements:**
+```
+Outbound only (no inbound ports required):
+├── HTTPS (443) → acme-v02.api.letsencrypt.org (Let's Encrypt API)
+├── HTTPS (443) → route53.amazonaws.com (Route53 API)
+└── HTTPS (443) → sts.amazonaws.com (AWS STS for auth)
+```
+
+**Current Workaround:**
+
+Until this feature is implemented, you can manually configure Traefik for DNS-01:
+1. Set up AWS credentials on your server
+2. Manually edit `~/.config/traefik/traefik.yaml` to use Route53 DNS-01 resolver
+3. See [Traefik DNS-01 documentation](https://doc.traefik.io/traefik/https/acme/#dnschallenge)
+
+---
+
 ### DNS Configuration Workflow
 
 When you add a new app, Appmotel automatically displays DNS configuration guidance if the app URL is not yet accessible:
