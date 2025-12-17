@@ -163,6 +163,28 @@ load_env() {
   source "${env_file}"
   set +o allexport
 
+  # Auto-detect timezone from IP geolocation if TZ is not set
+  if ! grep -q "^TZ=" "${env_file}" 2>/dev/null; then
+    local detected_tz=""
+    # Try ip-api.com first (free, no API key needed)
+    detected_tz=$(curl -fsSL --max-time 5 "http://ip-api.com/line/?fields=timezone" 2>/dev/null)
+    if [[ -z "${detected_tz}" ]] || [[ "${detected_tz}" == "fail" ]]; then
+      # Fallback to ipinfo.io
+      detected_tz=$(curl -fsSL --max-time 5 "https://ipinfo.io/timezone" 2>/dev/null)
+    fi
+    if [[ -n "${detected_tz}" ]] && [[ "${detected_tz}" =~ ^[A-Za-z_]+/[A-Za-z_]+$ ]]; then
+      echo "" >> "${env_file}"
+      echo "# Timezone (auto-detected from IP geolocation)" >> "${env_file}"
+      echo "TZ=\"${detected_tz}\"" >> "${env_file}"
+      log_msg "INFO" "Auto-detected timezone: ${detected_tz}"
+    else
+      log_msg "WARN" "Could not auto-detect timezone, using UTC"
+      echo "" >> "${env_file}"
+      echo "# Timezone (set manually or leave as UTC)" >> "${env_file}"
+      echo "TZ=\"UTC\"" >> "${env_file}"
+    fi
+  fi
+
   log_msg "WARN" "Please edit ${env_file} with your settings"
   log_msg "INFO" "Configuration file created at ${env_file}"
 }

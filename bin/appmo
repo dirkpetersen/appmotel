@@ -64,6 +64,32 @@ die() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: format_timestamp
+# Description: Converts UTC timestamp to configured timezone for display
+# Input: UTC timestamp in ISO 8601 format (e.g., 2025-12-17T19:58:08Z)
+# Output: Human-readable timestamp in configured timezone
+# -----------------------------------------------------------------------------
+format_timestamp() {
+  local utc_timestamp="$1"
+  local tz="${TZ:-UTC}"
+
+  if [[ -z "${utc_timestamp}" ]]; then
+    echo "N/A"
+    return
+  fi
+
+  # Use date command with TZ environment variable to convert
+  # GNU date can parse ISO 8601 format directly
+  local formatted
+  if formatted=$(TZ="${tz}" date -d "${utc_timestamp}" "+%Y-%m-%d %H:%M:%S %Z" 2>/dev/null); then
+    echo "${formatted}"
+  else
+    # Fallback: return original timestamp if conversion fails
+    echo "${utc_timestamp}"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: usage
 # Description: Prints usage information
 # -----------------------------------------------------------------------------
@@ -1353,7 +1379,7 @@ cmd_status() {
   echo "URL: https://${app_name}.${base_domain}"
   echo "GitHub: ${GITHUB_URL} (${BRANCH})"
   echo "Port: ${PORT}"
-  echo "Last Deployment: ${LAST_DEPLOYMENT}"
+  echo "Last Deployment: $(format_timestamp "${LAST_DEPLOYMENT}")"
   echo ""
 
   # Check systemd status
