@@ -967,10 +967,24 @@ cmd_add() {
     esac
   fi
 
-  # Determine port (check repo .env first, then config .env, then assign new)
+  # Determine port (check config .env first, then repo .env, then assign new)
   local port
-  if port=$(get_port_from_env "${app_name}"); then
-    log_msg "INFO" "Using port from .env: ${port}"
+  local port_from_env=""
+  if port_from_env=$(get_port_from_env "${app_name}"); then
+    # Check if the port from .env is still free
+    if ss -tuln | grep -q ":${port_from_env} "; then
+      log_msg "WARN" "Port ${port_from_env} from .env is already in use"
+      port=$(find_free_port)
+      log_msg "INFO" "Assigned new port: ${port}"
+      # Update the .env file with new port if it exists
+      local config_env="${APPS_CONFIG_DIR}/${app_name}/.env"
+      if [[ -f "${config_env}" ]]; then
+        sed -i "s/^PORT=.*/PORT=${port}/" "${config_env}"
+      fi
+    else
+      port="${port_from_env}"
+      log_msg "INFO" "Using port from .env: ${port}"
+    fi
   else
     port=$(find_free_port)
     log_msg "INFO" "Assigned port: ${port}"
@@ -978,12 +992,6 @@ cmd_add() {
 
   # Setup .env file (physical in config dir, symlink in repo)
   setup_app_env_file "${app_name}" "${port}"
-
-  # Check if port is in use
-  if ss -tuln | grep -q ":${port} "; then
-    rm -rf "${app_data_dir}"
-    die "Port ${port} is already in use"
-  fi
 
   # Setup environments
   setup_python_env "${repo_dir}" || {
