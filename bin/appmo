@@ -977,11 +977,35 @@ cmd_add() {
 
   mkdir -p "${app_data_dir}"
 
-  # Clone repository
-  log_msg "INFO" "Cloning repository: ${github_url}"
-  if ! git clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
-    rm -rf "${app_data_dir}"
-    die "Failed to clone repository"
+  # Clone or update repository
+  if [[ -d "${repo_dir}/.git" ]]; then
+    # Repo exists, pull latest changes
+    log_msg "INFO" "Repository exists, pulling latest: ${github_url}"
+    cd "${repo_dir}"
+    if ! git fetch origin && git checkout "${branch}" && git pull origin "${branch}"; then
+      log_msg "WARN" "Git pull failed, removing and re-cloning"
+      rm -rf "${repo_dir}"
+      if ! git clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
+        rm -rf "${app_data_dir}"
+        die "Failed to clone repository"
+      fi
+    fi
+  elif [[ -d "${repo_dir}" ]]; then
+    # Directory exists but not a git repo, remove and clone
+    log_msg "WARN" "Directory exists but not a git repo, removing"
+    rm -rf "${repo_dir}"
+    log_msg "INFO" "Cloning repository: ${github_url}"
+    if ! git clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
+      rm -rf "${app_data_dir}"
+      die "Failed to clone repository"
+    fi
+  else
+    # Fresh clone
+    log_msg "INFO" "Cloning repository: ${github_url}"
+    if ! git clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
+      rm -rf "${app_data_dir}"
+      die "Failed to clone repository"
+    fi
   fi
 
   # Check for existing .env backup and offer to restore
