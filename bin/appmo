@@ -548,6 +548,40 @@ find_env_template_up() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: find_file_up
+# Description: Search for a file starting from a directory and going up
+# Arguments: filename, start_dir, stop_dir (don't search above this)
+# Returns: Path to found file or empty string
+# -----------------------------------------------------------------------------
+find_file_up() {
+  local filename="$1"
+  local start_dir="$2"
+  local stop_dir="$3"
+
+  local current_dir="${start_dir}"
+
+  while [[ "${current_dir}" == "${stop_dir}"* ]]; do
+    if [[ -f "${current_dir}/${filename}" ]]; then
+      echo "${current_dir}"
+      return 0
+    fi
+
+    # Move up one directory
+    local parent_dir
+    parent_dir=$(dirname "${current_dir}")
+
+    # Stop if we've reached the stop_dir or can't go higher
+    if [[ "${parent_dir}" == "${current_dir}" ]] || [[ "${current_dir}" == "${stop_dir}" ]]; then
+      break
+    fi
+
+    current_dir="${parent_dir}"
+  done
+
+  return 1
+}
+
+# -----------------------------------------------------------------------------
 # Function: validate_branch_name
 # Description: Validates git branch name
 # -----------------------------------------------------------------------------
@@ -1170,8 +1204,9 @@ detect_app_type() {
     module_name=$(grep "^module " "${repo_dir}/go.mod" | awk '{print $2}' | xargs basename)
     cmd_ref="bin/${module_name}"
     return 0
-  elif [[ -f "${repo_dir}/requirements.txt" ]]; then
-    # Python app - try multiple detection strategies
+  else
+    # Python app detection - check for .py files
+    # (requirements.txt may be in parent directory for subfolder deployments)
     local py_file=""
 
     # 1. Check for app.py (most common)
@@ -1202,20 +1237,18 @@ detect_app_type() {
     if [[ -n "${py_file}" ]]; then
       cmd_ref="python3 ${py_file}"
       return 0
-    elif [[ -d "${repo_dir}/bin" ]] && [[ $(find "${repo_dir}/bin" -type f -executable | wc -l) -eq 1 ]]; then
-      local bin_file
-      bin_file=$(find "${repo_dir}/bin" -type f -executable | head -1)
-      cmd_ref="$(basename "${bin_file}")"
-      return 0
-    else
-      return 1
     fi
-  elif [[ -f "${repo_dir}/package.json" ]]; then
+  fi
+
+  # Check for Node.js app
+  if [[ -f "${repo_dir}/package.json" ]]; then
     # Node.js app
     cmd_ref="npm start"
     return 0
-  elif [[ -d "${repo_dir}/bin" ]] && [[ $(find "${repo_dir}/bin" -type f -executable | wc -l) -eq 1 ]]; then
-    # Single executable in bin
+  fi
+
+  # Check for single executable in bin
+  if [[ -d "${repo_dir}/bin" ]] && [[ $(find "${repo_dir}/bin" -type f -executable | wc -l) -eq 1 ]]; then
     local bin_file
     bin_file=$(find "${repo_dir}/bin" -type f -executable | head -1)
     cmd_ref="bin/$(basename "${bin_file}")"
@@ -1335,15 +1368,34 @@ create_systemd_service() {
 
   log_msg "INFO" "Detected start command: ${start_cmd}"
 
+  # For Python apps, find venv (may be in parent directory for subfolder deployments)
+  local venv_dir=""
+  local search_dir="${repo_dir}"
+  local app_data_dir
+  app_data_dir=$(dirname "$(dirname "${repo_dir}")")  # Go up from repo/subfolder to app_data
+
+  while [[ -n "${search_dir}" ]] && [[ "${search_dir}" == "${app_data_dir}"* ]]; do
+    if [[ -d "${search_dir}/.venv" ]]; then
+      venv_dir="${search_dir}/.venv"
+      break
+    fi
+    local parent_dir
+    parent_dir=$(dirname "${search_dir}")
+    if [[ "${parent_dir}" == "${search_dir}" ]]; then
+      break
+    fi
+    search_dir="${parent_dir}"
+  done
+
   # For Python apps, use the venv python directly
   # Only apply if start_cmd actually uses python3 (not for Go/Node apps with requirements.txt)
-  if [[ "${start_cmd}" == *"python3"* ]] && [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
+  if [[ "${start_cmd}" == *"python3"* ]] && [[ -n "${venv_dir}" ]] && [[ -f "${venv_dir}/bin/python3" ]]; then
     # Replace python3 with full path to venv python
-    start_cmd="${start_cmd/python3/${repo_dir}\/.venv\/bin\/python3}"
+    start_cmd="${start_cmd/python3/${venv_dir}\/bin\/python3}"
     log_msg "INFO" "Using virtual environment Python: ${start_cmd}"
-  elif [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
+  elif [[ -n "${venv_dir}" ]] && [[ -f "${venv_dir}/bin/python3" ]]; then
     # Python venv exists - PATH will be set in service file
-    log_msg "INFO" "Virtual environment detected - PATH will include venv"
+    log_msg "INFO" "Virtual environment detected at: ${venv_dir}"
   fi
 
   # Build environment file directive
@@ -1376,8 +1428,8 @@ create_systemd_service() {
 
   # For Python apps with venv, add PATH to include venv bin
   local path_directive=""
-  if [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
-    path_directive="Environment=\"PATH=${repo_dir}/.venv/bin:/usr/local/bin:/usr/bin:/bin\""
+  if [[ -n "${venv_dir}" ]] && [[ -f "${venv_dir}/bin/python3" ]]; then
+    path_directive="Environment=\"PATH=${venv_dir}/bin:/usr/local/bin:/usr/bin:/bin\""
   fi
 
   cat > "${service_file}" <<EOF
@@ -1971,32 +2023,55 @@ cmd_add() {
     services_to_deploy=("${detected_components[@]}")
   else
     # Single-component app - detect type and setup app directory
+    # For subfolder deployments, search up for dependency files
     local app_type="unknown"
+    local deps_dir="${app_dir}"  # Directory containing dependency files
+
     if [[ -f "${app_dir}/go.mod" ]]; then
       app_type="go"
     elif [[ -f "${app_dir}/requirements.txt" ]] || [[ -f "${app_dir}/pyproject.toml" ]]; then
       app_type="python"
     elif [[ -f "${app_dir}/package.json" ]]; then
       app_type="nodejs"
+    elif [[ -n "${subdir}" ]]; then
+      # Subfolder deployment: search up for dependency files
+      local found_dir
+      if found_dir=$(find_file_up "requirements.txt" "${app_dir}" "${repo_dir}"); then
+        app_type="python"
+        deps_dir="${found_dir}"
+        log_msg "INFO" "Found requirements.txt in parent: ${found_dir}"
+      elif found_dir=$(find_file_up "pyproject.toml" "${app_dir}" "${repo_dir}"); then
+        app_type="python"
+        deps_dir="${found_dir}"
+        log_msg "INFO" "Found pyproject.toml in parent: ${found_dir}"
+      elif found_dir=$(find_file_up "package.json" "${app_dir}" "${repo_dir}"); then
+        app_type="nodejs"
+        deps_dir="${found_dir}"
+        log_msg "INFO" "Found package.json in parent: ${found_dir}"
+      elif found_dir=$(find_file_up "go.mod" "${app_dir}" "${repo_dir}"); then
+        app_type="go"
+        deps_dir="${found_dir}"
+        log_msg "INFO" "Found go.mod in parent: ${found_dir}"
+      fi
     fi
 
     log_msg "INFO" "Detected app type: ${app_type}"
 
     case "${app_type}" in
       go)
-        setup_go_env "${app_dir}" || {
+        setup_go_env "${deps_dir}" || {
           safe_rm_rf "${app_data_dir}" "Go build failed"
           die "Failed to build Go application"
         }
         ;;
       python)
-        setup_python_env "${app_dir}" || {
+        setup_python_env "${deps_dir}" || {
           safe_rm_rf "${app_data_dir}" "Python setup failed"
           die "Failed to setup Python environment"
         }
         ;;
       nodejs)
-        setup_nodejs_env "${app_dir}" || {
+        setup_nodejs_env "${deps_dir}" || {
           safe_rm_rf "${app_data_dir}" "Node.js setup failed"
           die "Failed to setup Node.js environment"
         }
@@ -2633,9 +2708,24 @@ cmd_update() {
       done
     else
       # Single-component: setup app directory
-      setup_python_env "${app_dir}"
-      setup_nodejs_env "${app_dir}"
-      setup_go_env "${app_dir}"
+      # For subfolder deployments, search up for dependency files
+      local deps_dir="${app_dir}"
+      if [[ -n "${SUBDIR:-}" ]]; then
+        local found_dir
+        if found_dir=$(find_file_up "requirements.txt" "${app_dir}" "${repo_dir}"); then
+          deps_dir="${found_dir}"
+        elif found_dir=$(find_file_up "pyproject.toml" "${app_dir}" "${repo_dir}"); then
+          deps_dir="${found_dir}"
+        elif found_dir=$(find_file_up "package.json" "${app_dir}" "${repo_dir}"); then
+          deps_dir="${found_dir}"
+        elif found_dir=$(find_file_up "go.mod" "${app_dir}" "${repo_dir}"); then
+          deps_dir="${found_dir}"
+        fi
+      fi
+
+      setup_python_env "${deps_dir}"
+      setup_nodejs_env "${deps_dir}"
+      setup_go_env "${deps_dir}"
 
       # Run install script
       if ! run_install_script "${app_dir}"; then
