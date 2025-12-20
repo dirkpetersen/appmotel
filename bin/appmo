@@ -10,6 +10,32 @@ set -o nounset
 set -o pipefail
 IFS=$'\n\t'
 
+# Temp file tracking for cleanup
+declare -a TEMP_FILES=()
+
+# -----------------------------------------------------------------------------
+# Function: cleanup_temp_files
+# Description: Remove all tracked temp files on exit
+# -----------------------------------------------------------------------------
+cleanup_temp_files() {
+  for tmp_file in "${TEMP_FILES[@]:-}"; do
+    [[ -n "${tmp_file}" ]] && rm -f "${tmp_file}" 2>/dev/null || true
+  done
+}
+trap cleanup_temp_files EXIT
+
+# -----------------------------------------------------------------------------
+# Function: create_temp_file
+# Description: Create a temp file and register it for cleanup
+# -----------------------------------------------------------------------------
+create_temp_file() {
+  local prefix="${1:-appmo}"
+  local tmp_file
+  tmp_file=$(mktemp "/tmp/${prefix}_$$.XXXXXX")
+  TEMP_FILES+=("${tmp_file}")
+  echo "${tmp_file}"
+}
+
 # Constants
 readonly APPMOTEL_HOME="/home/appmotel"
 readonly APPMOTEL_CONFIG_DIR="${APPMOTEL_HOME}/.config/appmotel"
@@ -61,6 +87,266 @@ log_msg() {
 die() {
   log_msg "ERROR" "$1"
   exit 1
+}
+
+# -----------------------------------------------------------------------------
+# Function: safe_cd
+# Description: Change directory with error context
+# -----------------------------------------------------------------------------
+safe_cd() {
+  local target="$1"
+  local context="${2:-}"
+
+  if [[ ! -d "${target}" ]]; then
+    if [[ -n "${context}" ]]; then
+      die "Cannot change to directory '${target}': directory does not exist (${context})"
+    else
+      die "Cannot change to directory '${target}': directory does not exist"
+    fi
+  fi
+
+  cd "${target}" || die "Failed to change to directory '${target}'"
+}
+
+# -----------------------------------------------------------------------------
+# Function: systemctl_stop
+# Description: Stop a systemd service, logging warnings on unexpected errors
+# -----------------------------------------------------------------------------
+systemctl_stop() {
+  local service_name="$1"
+  local is_user="${2:-true}"  # true for --user services, false for system services
+
+  local output
+  local exit_code
+
+  if [[ "${is_user}" == "true" ]]; then
+    output=$(systemctl --user stop "${service_name}" 2>&1) && exit_code=0 || exit_code=$?
+  else
+    output=$(sudo /bin/systemctl stop "${service_name}" 2>&1) && exit_code=0 || exit_code=$?
+  fi
+
+  # Exit code 5 means service not loaded (already stopped/doesn't exist) - this is OK
+  if [[ ${exit_code} -ne 0 ]] && [[ ${exit_code} -ne 5 ]]; then
+    log_msg "WARN" "Failed to stop ${service_name} (exit ${exit_code}): ${output}"
+  fi
+
+  return 0  # Always return success - stop failures shouldn't halt operations
+}
+
+# -----------------------------------------------------------------------------
+# Function: git_with_timeout
+# Description: Run git commands with a timeout to prevent hanging
+# -----------------------------------------------------------------------------
+git_with_timeout() {
+  local timeout_secs="${GIT_TIMEOUT:-120}"  # Default 2 minutes
+  timeout "${timeout_secs}" git "$@"
+}
+
+# -----------------------------------------------------------------------------
+# Function: check_disk_space
+# Description: Check if sufficient disk space is available
+# Arguments: path, required_mb
+# -----------------------------------------------------------------------------
+check_disk_space() {
+  local path="$1"
+  local required_mb="${2:-100}"  # Default 100MB minimum
+
+  # Get available space in MB
+  local available_mb
+  available_mb=$(df -m "${path}" 2>/dev/null | awk 'NR==2 {print $4}')
+
+  if [[ -z "${available_mb}" ]]; then
+    log_msg "WARN" "Could not check disk space for ${path}"
+    return 0  # Continue anyway
+  fi
+
+  if [[ ${available_mb} -lt ${required_mb} ]]; then
+    die "Insufficient disk space: ${available_mb}MB available, ${required_mb}MB required at ${path}"
+  fi
+
+  return 0
+}
+
+# -----------------------------------------------------------------------------
+# Function: safe_rm_rf
+# Description: Safely remove a directory with validation checks
+# Prevents accidental deletion of critical directories
+# -----------------------------------------------------------------------------
+safe_rm_rf() {
+  local target="$1"
+  local context="${2:-unknown operation}"
+
+  # Validate target is not empty
+  if [[ -z "${target}" ]]; then
+    die "safe_rm_rf: empty path provided during ${context}"
+  fi
+
+  # Resolve to absolute path
+  local abs_target
+  abs_target=$(realpath -m "${target}" 2>/dev/null || echo "${target}")
+
+  # Validate path is within allowed directories
+  local allowed_prefixes=(
+    "${APPS_DATA_DIR}"
+    "${APPS_CONFIG_DIR}"
+    "${BACKUPS_DIR}"
+    "${SYSTEMD_USER_DIR}"
+    "${TRAEFIK_DYNAMIC_DIR}"
+  )
+
+  local path_allowed=false
+  for prefix in "${allowed_prefixes[@]}"; do
+    if [[ "${abs_target}" == "${prefix}"/* ]]; then
+      path_allowed=true
+      break
+    fi
+  done
+
+  if [[ "${path_allowed}" != "true" ]]; then
+    die "safe_rm_rf: refusing to remove '${abs_target}' - not in allowed directories (${context})"
+  fi
+
+  # Additional safety: prevent removal of root-level appmotel directories
+  if [[ "${abs_target}" == "${APPS_DATA_DIR}" ]] || \
+     [[ "${abs_target}" == "${APPS_CONFIG_DIR}" ]] || \
+     [[ "${abs_target}" == "${BACKUPS_DIR}" ]] || \
+     [[ "${abs_target}" == "${APPMOTEL_HOME}" ]] || \
+     [[ "${abs_target}" == "/" ]]; then
+    die "safe_rm_rf: refusing to remove critical directory '${abs_target}' (${context})"
+  fi
+
+  # Path is valid, proceed with removal
+  rm -rf "${target}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: safe_source_env
+# Description: Safely source an .env file, only allowing KEY=VALUE lines
+# Rejects lines with command substitution, semicolons, or other dangerous chars
+# -----------------------------------------------------------------------------
+safe_source_env() {
+  local env_file="$1"
+  local strict="${2:-false}"  # If true, fail on invalid lines
+
+  if [[ ! -f "${env_file}" ]]; then
+    return 1
+  fi
+
+  local line_num=0
+  local saved_ifs="${IFS}"
+  IFS=$' \t\n'
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line_num=$((line_num + 1))
+
+    # Skip empty lines and comments
+    [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+
+    # Strip leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+
+    # Validate: must be KEY=VALUE format
+    # KEY: alphanumeric and underscore only, must start with letter or underscore
+    # VALUE: can be quoted or unquoted, no command substitution or dangerous chars
+    if [[ "${line}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*= ]]; then
+      local key="${line%%=*}"
+      local value="${line#*=}"
+
+      # Check for dangerous patterns in value
+      # Reject: $(...), `...`, ;, &&, ||, |, >, <, \n in value
+      if [[ "${value}" =~ \$\( ]] || \
+         [[ "${value}" =~ \` ]] || \
+         [[ "${value}" =~ \; ]] || \
+         [[ "${value}" =~ \&\& ]] || \
+         [[ "${value}" =~ \|\| ]] || \
+         [[ "${value}" =~ \| ]] && [[ ! "${value}" =~ ^[\"\'][^\"\']*[\"\']$ ]]; then
+        if [[ "${strict}" == "true" ]]; then
+          IFS="${saved_ifs}"
+          die "Invalid .env file '${env_file}': dangerous pattern at line ${line_num}"
+        fi
+        log_msg "WARN" "Skipping suspicious line ${line_num} in ${env_file}"
+        continue
+      fi
+
+      # Remove surrounding quotes if present
+      if [[ "${value}" =~ ^\"(.*)\"$ ]] || [[ "${value}" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      fi
+
+      # Export the variable
+      export "${key}=${value}"
+    else
+      if [[ "${strict}" == "true" ]]; then
+        IFS="${saved_ifs}"
+        die "Invalid .env file '${env_file}': malformed line ${line_num}"
+      fi
+      log_msg "WARN" "Skipping invalid line ${line_num} in ${env_file}"
+    fi
+  done < "${env_file}"
+
+  IFS="${saved_ifs}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: safe_source_metadata
+# Description: Safely source a metadata.conf file with strict validation
+# Only allows specific known keys used by appmotel
+# -----------------------------------------------------------------------------
+safe_source_metadata() {
+  local metadata_file="$1"
+
+  if [[ ! -f "${metadata_file}" ]]; then
+    return 1
+  fi
+
+  # Known valid metadata keys
+  local -a valid_keys=("APP_NAME" "GITHUB_URL" "BRANCH" "PORT" "LAST_DEPLOYMENT" "SERVICES" "SUBDIR")
+
+  local line_num=0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line_num=$((line_num + 1))
+
+    # Skip empty lines and comments
+    [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+
+    # Strip whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+
+    if [[ "${line}" =~ ^([a-zA-Z_][a-zA-Z0-9_]*)=(.*)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local value="${BASH_REMATCH[2]}"
+
+      # Only allow known keys
+      local key_valid=false
+      for valid_key in "${valid_keys[@]}"; do
+        if [[ "${key}" == "${valid_key}" ]]; then
+          key_valid=true
+          break
+        fi
+      done
+
+      if [[ "${key_valid}" != "true" ]]; then
+        die "Invalid metadata file '${metadata_file}': unknown key '${key}' at line ${line_num}"
+      fi
+
+      # Check for dangerous patterns
+      if [[ "${value}" =~ \$\( ]] || [[ "${value}" =~ \` ]] || [[ "${value}" =~ \; ]]; then
+        die "Invalid metadata file '${metadata_file}': dangerous pattern at line ${line_num}"
+      fi
+
+      # Remove surrounding quotes
+      if [[ "${value}" =~ ^\"(.*)\"$ ]] || [[ "${value}" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      fi
+
+      # Set variable in current scope
+      declare -g "${key}=${value}"
+    else
+      die "Invalid metadata file '${metadata_file}': malformed line ${line_num}"
+    fi
+  done < "${metadata_file}"
 }
 
 # -----------------------------------------------------------------------------
@@ -148,6 +434,66 @@ validate_app_name() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: validate_github_url
+# Description: Validates GitHub URL format
+# -----------------------------------------------------------------------------
+validate_github_url() {
+  local url="$1"
+
+  if [[ -z "${url}" ]]; then
+    die "GitHub URL cannot be empty"
+  fi
+
+  # Check for path traversal attempts
+  if [[ "${url}" =~ \.\. ]]; then
+    die "Invalid GitHub URL: path traversal not allowed"
+  fi
+
+  # Accept full URLs or user/repo shorthand
+  if [[ "${url}" =~ ^https?:// ]] || [[ "${url}" =~ ^git@ ]]; then
+    # Full URL - basic validation
+    if [[ ! "${url}" =~ ^(https?://|git@)[a-zA-Z0-9._-]+[:/][a-zA-Z0-9._/-]+$ ]]; then
+      die "Invalid GitHub URL format: ${url}"
+    fi
+  elif [[ "${url}" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
+    # user/repo shorthand - this is valid
+    :
+  else
+    die "Invalid GitHub URL format. Use https://github.com/user/repo or user/repo"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: validate_branch_name
+# Description: Validates git branch name
+# -----------------------------------------------------------------------------
+validate_branch_name() {
+  local branch="$1"
+
+  if [[ -z "${branch}" ]]; then
+    die "Branch name cannot be empty"
+  fi
+
+  # Check for path traversal and dangerous characters
+  if [[ "${branch}" =~ \.\. ]] || \
+     [[ "${branch}" =~ [[:space:]] ]] || \
+     [[ "${branch}" =~ [\;\|\&\$\`] ]]; then
+    die "Invalid branch name: contains dangerous characters"
+  fi
+
+  # Git branch names have specific rules
+  # https://git-scm.com/docs/git-check-ref-format
+  if [[ ! "${branch}" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+    die "Invalid branch name: must contain only alphanumeric, dot, underscore, hyphen, or slash"
+  fi
+
+  # Cannot start or end with slash or dot
+  if [[ "${branch}" =~ ^[./] ]] || [[ "${branch}" =~ [./]$ ]]; then
+    die "Invalid branch name: cannot start or end with slash or dot"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: app_exists
 # Description: Checks if an app exists (must have metadata.conf to be considered deployed)
 # Note: A directory with only .env.backup from a removed app doesn't count
@@ -177,91 +523,180 @@ create_backup() {
   local backup_id
   backup_id=$(date +%Y-%m-%d-%H%M%S)
   local backup_dir="${BACKUPS_DIR}/${app_name}/${backup_id}"
+  local backup_warnings=false
+
+  # Check disk space before creating backup (require at least 200MB)
+  check_disk_space "${BACKUPS_DIR}" 200
 
   mkdir -p "${backup_dir}"
 
   # Backup config
   if [[ -d "${APPS_CONFIG_DIR}/${app_name}" ]]; then
-    cp -r "${APPS_CONFIG_DIR}/${app_name}" "${backup_dir}/config"
+    if ! cp -r "${APPS_CONFIG_DIR}/${app_name}" "${backup_dir}/config"; then
+      log_msg "WARN" "Failed to backup config directory"
+      backup_warnings=true
+    fi
   fi
 
   # Backup repo (excluding .venv and node_modules to save space)
   if [[ -d "${APPS_DATA_DIR}/${app_name}/repo" ]]; then
-    tar --exclude='.venv' --exclude='node_modules' --exclude='.git' \
-      -czf "${backup_dir}/repo.tar.gz" \
-      -C "${APPS_DATA_DIR}/${app_name}" repo 2>/dev/null || true
+    if ! tar --exclude='.venv' --exclude='node_modules' --exclude='.git' \
+        -czf "${backup_dir}/repo.tar.gz" \
+        -C "${APPS_DATA_DIR}/${app_name}" repo 2>/dev/null; then
+      log_msg "WARN" "Failed to backup repo (tar failed - disk full?)"
+      backup_warnings=true
+    fi
   fi
 
-  # Backup systemd service file
-  if [[ -f "${SYSTEMD_USER_DIR}/appmotel-${app_name}.service" ]]; then
-    cp "${SYSTEMD_USER_DIR}/appmotel-${app_name}.service" "${backup_dir}/"
-  fi
+  # Backup all systemd service files for this app (including multi-component)
+  for service_file in "${SYSTEMD_USER_DIR}"/appmotel-${app_name}*.service; do
+    if [[ -f "${service_file}" ]]; then
+      if ! cp "${service_file}" "${backup_dir}/"; then
+        log_msg "WARN" "Failed to backup service file: $(basename "${service_file}")"
+        backup_warnings=true
+      fi
+    fi
+  done
 
   # Backup Traefik config
   if [[ -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml" ]]; then
-    cp "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml" "${backup_dir}/"
+    if ! cp "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml" "${backup_dir}/"; then
+      log_msg "WARN" "Failed to backup Traefik config"
+      backup_warnings=true
+    fi
   fi
 
   echo "${backup_id}"
-  log_msg "INFO" "Backup created: ${backup_id}"
+  if [[ "${backup_warnings}" == "true" ]]; then
+    log_msg "WARN" "Backup created with warnings: ${backup_id}"
+  else
+    log_msg "INFO" "Backup created: ${backup_id}"
+  fi
 }
 
 # -----------------------------------------------------------------------------
 # Function: restore_backup
 # Description: Restores an app from a backup
+# Returns: 0 on success, 1 on failure
 # -----------------------------------------------------------------------------
 restore_backup() {
   local app_name="$1"
   local backup_id="$2"
   local backup_dir="${BACKUPS_DIR}/${app_name}/${backup_id}"
+  local restore_failed=false
 
   if [[ ! -d "${backup_dir}" ]]; then
-    die "Backup '${backup_id}' not found for app '${app_name}'"
+    log_msg "ERROR" "Backup '${backup_id}' not found for app '${app_name}'"
+    return 1
   fi
 
   log_msg "INFO" "Restoring from backup: ${backup_id}"
 
-  # Stop service if running
-  systemctl --user stop "appmotel-${app_name}" 2>/dev/null || true
+  # Stop all services if running
+  local -a services
+  if get_all_services "${app_name}" services 2>/dev/null; then
+    for service in "${services[@]}"; do
+      local service_name
+      if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+        service_name="appmotel-${app_name}"
+      else
+        service_name="appmotel-${app_name}-${service}"
+      fi
+      systemctl_stop "${service_name}"
+    done
+  else
+    systemctl_stop "appmotel-${app_name}"
+  fi
 
   # Restore config
   if [[ -d "${backup_dir}/config" ]]; then
-    rm -rf "${APPS_CONFIG_DIR}/${app_name}"
-    cp -r "${backup_dir}/config" "${APPS_CONFIG_DIR}/${app_name}"
+    safe_rm_rf "${APPS_CONFIG_DIR}/${app_name}" "restore_backup config"
+    if ! cp -r "${backup_dir}/config" "${APPS_CONFIG_DIR}/${app_name}"; then
+      log_msg "ERROR" "Failed to restore config directory"
+      restore_failed=true
+    fi
   fi
 
   # Restore repo
   if [[ -f "${backup_dir}/repo.tar.gz" ]]; then
-    rm -rf "${APPS_DATA_DIR}/${app_name}/repo"
+    safe_rm_rf "${APPS_DATA_DIR}/${app_name}/repo" "restore_backup repo"
     mkdir -p "${APPS_DATA_DIR}/${app_name}"
-    tar -xzf "${backup_dir}/repo.tar.gz" -C "${APPS_DATA_DIR}/${app_name}"
+    if ! tar -xzf "${backup_dir}/repo.tar.gz" -C "${APPS_DATA_DIR}/${app_name}"; then
+      log_msg "ERROR" "Failed to restore repo from backup archive"
+      restore_failed=true
+    fi
   fi
 
-  # Restore systemd service
-  if [[ -f "${backup_dir}/appmotel-${app_name}.service" ]]; then
-    cp "${backup_dir}/appmotel-${app_name}.service" "${SYSTEMD_USER_DIR}/"
-    systemctl --user daemon-reload
-  fi
+  # Restore systemd service(s)
+  for service_file in "${backup_dir}"/appmotel-${app_name}*.service; do
+    if [[ -f "${service_file}" ]]; then
+      if ! cp "${service_file}" "${SYSTEMD_USER_DIR}/"; then
+        log_msg "ERROR" "Failed to restore systemd service: $(basename "${service_file}")"
+        restore_failed=true
+      fi
+    fi
+  done
+  systemctl --user daemon-reload
 
   # Restore Traefik config
   if [[ -f "${backup_dir}/${app_name}.yaml" ]]; then
-    cp "${backup_dir}/${app_name}.yaml" "${TRAEFIK_DYNAMIC_DIR}/"
+    if ! cp "${backup_dir}/${app_name}.yaml" "${TRAEFIK_DYNAMIC_DIR}/"; then
+      log_msg "ERROR" "Failed to restore Traefik config"
+      restore_failed=true
+    fi
   fi
 
-  # Reinstall dependencies based on app type
-  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
-  if [[ -f "${repo_dir}/go.mod" ]]; then
-    setup_go_env "${repo_dir}"
-  elif [[ -f "${repo_dir}/requirements.txt" ]]; then
-    setup_python_env "${repo_dir}"
-  elif [[ -f "${repo_dir}/package.json" ]]; then
-    setup_nodejs_env "${repo_dir}"
+  # Only reinstall dependencies if repo restore succeeded
+  if [[ "${restore_failed}" == "false" ]]; then
+    local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+    if [[ -f "${repo_dir}/go.mod" ]]; then
+      if ! setup_go_env "${repo_dir}"; then
+        log_msg "ERROR" "Failed to reinstall Go dependencies"
+        restore_failed=true
+      fi
+    elif [[ -f "${repo_dir}/requirements.txt" ]] || [[ -f "${repo_dir}/pyproject.toml" ]]; then
+      if ! setup_python_env "${repo_dir}"; then
+        log_msg "ERROR" "Failed to reinstall Python dependencies"
+        restore_failed=true
+      fi
+    elif [[ -f "${repo_dir}/package.json" ]]; then
+      if ! setup_nodejs_env "${repo_dir}"; then
+        log_msg "ERROR" "Failed to reinstall Node.js dependencies"
+        restore_failed=true
+      fi
+    fi
   fi
 
-  # Start service
-  systemctl --user start "appmotel-${app_name}"
+  # Start service(s)
+  if [[ "${restore_failed}" == "false" ]]; then
+    if get_all_services "${app_name}" services 2>/dev/null; then
+      for service in "${services[@]}"; do
+        local service_name
+        if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+          service_name="appmotel-${app_name}"
+        else
+          service_name="appmotel-${app_name}-${service}"
+        fi
+        if ! systemctl --user start "${service_name}"; then
+          log_msg "ERROR" "Failed to start service: ${service_name}"
+          restore_failed=true
+        fi
+      done
+    else
+      if ! systemctl --user start "appmotel-${app_name}"; then
+        log_msg "ERROR" "Failed to start service: appmotel-${app_name}"
+        restore_failed=true
+      fi
+    fi
+  fi
+
+  if [[ "${restore_failed}" == "true" ]]; then
+    log_msg "ERROR" "Restore completed with errors - app may be in inconsistent state"
+    return 1
+  fi
 
   log_msg "INFO" "Restore completed successfully"
+  return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -357,9 +792,23 @@ find_free_port() {
   local max_attempts=100
   local attempt=0
 
+  # Get all ports already allocated to appmotel apps to avoid self-collision
+  local allocated_ports=""
+  if [[ -d "${APPS_CONFIG_DIR}" ]]; then
+    allocated_ports=$(grep -h "^PORT=" "${APPS_CONFIG_DIR}"/*/metadata.conf 2>/dev/null | cut -d'=' -f2 || true)
+  fi
+
   while [[ ${attempt} -lt ${max_attempts} ]]; do
+    # Generate random port in range
     port=$((MIN_PORT + RANDOM % (MAX_PORT - MIN_PORT)))
 
+    # Check if port is already allocated to another app
+    if echo "${allocated_ports}" | grep -qw "${port}" 2>/dev/null; then
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    # Check if port is currently in use by any process
     if ! ss -tuln | grep -q ":${port} "; then
       echo "${port}"
       return 0
@@ -536,8 +985,15 @@ setup_app_env_file() {
   # Remove any existing .env in repo (file or symlink)
   rm -f "${repo_env}"
 
+  # Verify config .env exists before creating symlink
+  if [[ ! -f "${config_env}" ]]; then
+    die "Failed to create symlink: config .env does not exist at ${config_env}"
+  fi
+
   # Create symlink from repo/.env -> config/.env
-  ln -s "${config_env}" "${repo_env}"
+  if ! ln -s "${config_env}" "${repo_env}"; then
+    die "Failed to create .env symlink: ${repo_env} -> ${config_env}"
+  fi
   log_msg "INFO" "Created symlink: ${repo_env} -> ${config_env}"
 }
 
@@ -550,10 +1006,10 @@ load_app_metadata() {
   local metadata_file="${APPS_CONFIG_DIR}/${app_name}/metadata.conf"
 
   if [[ ! -f "${metadata_file}" ]]; then
-    die "App metadata not found"
+    die "App metadata not found for '${app_name}'"
   fi
 
-  source "${metadata_file}"
+  safe_source_metadata "${metadata_file}"
 }
 
 # -----------------------------------------------------------------------------
@@ -707,7 +1163,7 @@ get_all_services() {
 
   # Load SERVICES field from metadata (space-separated component names)
   local services_str
-  services_str=$(grep "^SERVICES=" "${metadata_file}" 2>/dev/null | cut -d'=' -f2 | tr -d '"')
+  services_str=$(grep "^SERVICES=" "${metadata_file}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || true)
 
   if [[ -n "${services_str}" ]]; then
     # Convert space-separated to array (temporarily use default IFS for splitting)
@@ -1010,7 +1466,7 @@ run_install_script() {
 
   log_msg "INFO" "Running install.sh"
 
-  cd "${repo_dir}"
+  safe_cd "${repo_dir}" "running install.sh"
 
   if bash "${install_script}"; then
     log_msg "INFO" "Installation completed successfully"
@@ -1034,7 +1490,7 @@ setup_python_env() {
 
   log_msg "INFO" "Setting up Python virtual environment"
 
-  cd "${repo_dir}"
+  safe_cd "${repo_dir}" "setting up Python environment"
 
   if [[ ! -d ".venv" ]]; then
     python3 -m venv .venv
@@ -1060,7 +1516,7 @@ setup_nodejs_env() {
 
   log_msg "INFO" "Installing Node.js dependencies"
 
-  cd "${repo_dir}"
+  safe_cd "${repo_dir}" "setting up Node.js environment"
   npm install
 
   # Check if this is a Next.js app with static export
@@ -1085,7 +1541,8 @@ setup_nodejs_env() {
       # Update package.json start script to use serve
       if command -v jq &> /dev/null; then
         # Use jq if available (more robust)
-        local tmp_file="/tmp/package_json_$$.tmp"
+        local tmp_file
+        tmp_file=$(create_temp_file "package_json")
         jq '.scripts.start = "serve -l ${PORT:-3000} out"' "${repo_dir}/package.json" > "${tmp_file}"
         mv "${tmp_file}" "${repo_dir}/package.json"
       else
@@ -1110,7 +1567,8 @@ setup_nodejs_env() {
 
       # Add/update start script that serves the dist folder
       if command -v jq &> /dev/null; then
-        local tmp_file="/tmp/package_json_$$.tmp"
+        local tmp_file
+        tmp_file=$(create_temp_file "package_json")
         jq '.scripts.start = "serve -l ${PORT:-3000} dist"' "${repo_dir}/package.json" > "${tmp_file}"
         mv "${tmp_file}" "${repo_dir}/package.json"
       else
@@ -1144,7 +1602,7 @@ setup_go_env() {
 
   log_msg "INFO" "Building Go application"
 
-  cd "${repo_dir}"
+  safe_cd "${repo_dir}" "building Go application"
 
   # Download dependencies
   log_msg "INFO" "Downloading Go dependencies"
@@ -1205,19 +1663,25 @@ cmd_add() {
   local github_url="$2"
   local branch="${3:-main}"
 
+  # Validate inputs before processing
+  validate_app_name "${app_name}"
+  validate_github_url "${github_url}"
+  validate_branch_name "${branch}"
+
   # Auto-expand short GitHub URLs (e.g., "user/repo" -> "https://github.com/user/repo")
   if [[ ! "${github_url}" =~ ^(https?://|git@) ]] && [[ "${github_url}" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
     github_url="https://github.com/${github_url}"
     log_msg "INFO" "Expanded to: ${github_url}"
   fi
 
-  validate_app_name "${app_name}"
-
   if app_exists "${app_name}"; then
     die "App '${app_name}' already exists"
   fi
 
   log_msg "INFO" "Adding app: ${app_name}"
+
+  # Check disk space before cloning (require at least 500MB)
+  check_disk_space "${APPS_DATA_DIR}" 500
 
   # Create directories
   local app_data_dir="${APPS_DATA_DIR}/${app_name}"
@@ -1229,30 +1693,46 @@ cmd_add() {
   if [[ -d "${repo_dir}/.git" ]]; then
     # Repo exists, pull latest changes
     log_msg "INFO" "Repository exists, pulling latest: ${github_url}"
-    cd "${repo_dir}"
-    if ! git fetch origin && git checkout "${branch}" && git pull origin "${branch}"; then
-      log_msg "WARN" "Git pull failed, removing and re-cloning"
-      rm -rf "${repo_dir}"
-      if ! git clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
-        rm -rf "${app_data_dir}"
-        die "Failed to clone repository"
+    safe_cd "${repo_dir}" "updating git repository"
+    local git_update_failed=false
+
+    # Try to update existing repo with proper error recovery
+    if ! git_with_timeout fetch origin 2>&1; then
+      log_msg "WARN" "Git fetch failed"
+      git_update_failed=true
+    elif ! git checkout "${branch}" 2>&1; then
+      log_msg "WARN" "Git checkout failed for branch '${branch}'"
+      git_update_failed=true
+    elif ! git reset --hard "origin/${branch}" 2>&1; then
+      # Use reset --hard instead of pull to avoid merge conflicts
+      log_msg "WARN" "Git reset failed"
+      git_update_failed=true
+    fi
+
+    if [[ "${git_update_failed}" == "true" ]]; then
+      log_msg "WARN" "Git update failed, removing and re-cloning"
+      safe_cd "${APPS_DATA_DIR}" "before deleting repo"  # Move out of repo dir before deleting
+      safe_rm_rf "${repo_dir}" "cmd_add re-clone"
+      if ! git_with_timeout clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
+        safe_rm_rf "${app_data_dir}" "cmd_add clone failed"
+        die "Failed to clone repository: ${github_url}"
       fi
     fi
   elif [[ -d "${repo_dir}" ]]; then
     # Directory exists but not a git repo, remove and clone
     log_msg "WARN" "Directory exists but not a git repo, removing"
-    rm -rf "${repo_dir}"
+    safe_rm_rf "${repo_dir}" "cmd_add non-git dir"
     log_msg "INFO" "Cloning repository: ${github_url}"
-    if ! git clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
-      rm -rf "${app_data_dir}"
-      die "Failed to clone repository"
+    if ! git_with_timeout clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
+      safe_rm_rf "${app_data_dir}" "cmd_add clone failed"
+      die "Failed to clone repository: ${github_url}"
     fi
   else
     # Fresh clone
     log_msg "INFO" "Cloning repository: ${github_url}"
-    if ! git clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
-      rm -rf "${app_data_dir}"
-      die "Failed to clone repository"
+    if ! git_with_timeout clone --branch "${branch}" "${github_url}" "${repo_dir}"; then
+      safe_rm_rf "${app_data_dir}" "cmd_add clone failed"
+      die "Failed to clone repository: ${github_url}"
     fi
   fi
 
@@ -1337,19 +1817,19 @@ cmd_add() {
     case "${app_type}" in
       go)
         setup_go_env "${repo_dir}" || {
-          rm -rf "${app_data_dir}"
+          safe_rm_rf "${app_data_dir}" "Go build failed"
           die "Failed to build Go application"
         }
         ;;
       python)
         setup_python_env "${repo_dir}" || {
-          rm -rf "${app_data_dir}"
+          safe_rm_rf "${app_data_dir}" "Python setup failed"
           die "Failed to setup Python environment"
         }
         ;;
       nodejs)
         setup_nodejs_env "${repo_dir}" || {
-          rm -rf "${app_data_dir}"
+          safe_rm_rf "${app_data_dir}" "Node.js setup failed"
           die "Failed to setup Node.js environment"
         }
         ;;
@@ -1360,7 +1840,7 @@ cmd_add() {
 
     # Run install script for single app
     if ! run_install_script "${repo_dir}"; then
-      rm -rf "${app_data_dir}"
+      safe_rm_rf "${app_data_dir}" "install script failed"
       die "Installation failed, rolling back"
     fi
 
@@ -1374,6 +1854,10 @@ cmd_add() {
   if [[ ${#services_to_deploy[@]} -gt 0 ]]; then
     # Multi-component deployment
     log_msg "INFO" "Setting up ${#services_to_deploy[@]} components..."
+
+    # Track services to start (backend first, then frontend)
+    local -a backend_services=()
+    local frontend_service=""
 
     for component in "${services_to_deploy[@]}"; do
       # Resolve component directory (check root level first, then src/)
@@ -1395,17 +1879,17 @@ cmd_add() {
       # Detect and setup component type
       if [[ -f "${component_dir}/go.mod" ]]; then
         setup_go_env "${component_dir}" || {
-          rm -rf "${app_data_dir}"
+          safe_rm_rf "${app_data_dir}" "Go component build failed: ${component}"
           die "Failed to build Go component: ${component}"
         }
       elif [[ -f "${component_dir}/requirements.txt" ]] || [[ -f "${component_dir}/pyproject.toml" ]]; then
         setup_python_env "${component_dir}" || {
-          rm -rf "${app_data_dir}"
+          safe_rm_rf "${app_data_dir}" "Python component setup failed: ${component}"
           die "Failed to setup Python component: ${component}"
         }
       elif [[ -f "${component_dir}/package.json" ]]; then
         setup_nodejs_env "${component_dir}" || {
-          rm -rf "${app_data_dir}"
+          safe_rm_rf "${app_data_dir}" "Node.js component setup failed: ${component}"
           die "Failed to setup Node.js component: ${component}"
         }
       fi
@@ -1413,9 +1897,9 @@ cmd_add() {
       # Run install script if exists in component
       if [[ -f "${component_dir}/install.sh" ]]; then
         log_msg "INFO" "Running install script for ${component}"
-        cd "${component_dir}"
+        safe_cd "${component_dir}" "running install script for ${component}"
         if ! bash install.sh; then
-          rm -rf "${app_data_dir}"
+          safe_rm_rf "${app_data_dir}" "component install failed: ${component}"
           die "Installation failed for component: ${component}"
         fi
       fi
@@ -1425,13 +1909,26 @@ cmd_add() {
       local service_suffix=""
       if [[ "${component}" != "frontend" ]]; then
         service_suffix="-${component}"
+        backend_services+=("appmotel-${app_name}${service_suffix}")
+      else
+        frontend_service="appmotel-${app_name}"
       fi
       create_systemd_service "${app_name}" "${component_dir}" "${component_port}" "${component}"
 
-      # Enable and start service
+      # Enable service (don't start yet - we'll start in correct order)
       systemctl --user enable "appmotel-${app_name}${service_suffix}"
-      systemctl --user start "appmotel-${app_name}${service_suffix}"
     done
+
+    # Start services in correct order: backend first, then frontend
+    log_msg "INFO" "Starting services (backend first, then frontend)..."
+    for svc in "${backend_services[@]}"; do
+      log_msg "INFO" "Starting ${svc}..."
+      systemctl --user start "${svc}"
+    done
+    if [[ -n "${frontend_service}" ]]; then
+      log_msg "INFO" "Starting ${frontend_service}..."
+      systemctl --user start "${frontend_service}"
+    fi
 
     # Create Traefik config only for frontend (public port)
     create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
@@ -1456,6 +1953,11 @@ cmd_add() {
           if [[ "${proc_name}" != "web" ]]; then
             ((proc_count++))
             proc_port=$((port + proc_count))
+
+            # Ensure port doesn't exceed maximum allowed port
+            if [[ ${proc_port} -gt ${MAX_PORT} ]]; then
+              die "Port overflow: Procfile has too many processes. Port ${proc_port} exceeds maximum ${MAX_PORT}"
+            fi
           fi
 
           log_msg "INFO" "Creating service for process: ${proc_name} (port ${proc_port})"
@@ -1510,10 +2012,12 @@ cmd_add() {
   local attempt=1
   local app_accessible=false
 
+  local curl_output
+  curl_output=$(create_temp_file "appmo_check")
+
   while [[ ${attempt} -le ${max_attempts} ]]; do
-    http_code=$(curl -s -o /tmp/appmo_check_$$.html -w '%{http_code}' --connect-timeout 2 --max-time 3 -k "${app_url}" 2>/dev/null || echo "000")
-    response_body=$(cat /tmp/appmo_check_$$.html 2>/dev/null || echo "")
-    rm -f /tmp/appmo_check_$$.html
+    http_code=$(curl -s -o "${curl_output}" -w '%{http_code}' --connect-timeout 2 --max-time 3 -k "${app_url}" 2>/dev/null || echo "000")
+    response_body=$(cat "${curl_output}" 2>/dev/null || echo "")
 
     # Check for successful HTTP status (2xx or 3xx) and no "Bad Gateway" in response
     if [[ "${http_code}" =~ ^[23] ]] && ! grep -qi "bad gateway" <<< "${response_body}"; then
@@ -1594,9 +2098,7 @@ cmd_remove() {
     fi
 
     # Stop and disable service
-    if systemctl --user is-active --quiet "${service_name}" 2>/dev/null; then
-      systemctl --user stop "${service_name}" 2>/dev/null || true
-    fi
+    systemctl_stop "${service_name}"
     systemctl --user disable "${service_name}" 2>/dev/null || true
 
     # Remove service file
@@ -1608,21 +2110,21 @@ cmd_remove() {
   rm -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
 
   # Remove app data
-  rm -rf "${APPS_DATA_DIR}/${app_name}"
+  safe_rm_rf "${APPS_DATA_DIR}/${app_name}" "cmd_remove app data"
 
   # Remove app config (but preserve .env.backup)
   # Move .env.backup to temp, remove dir, recreate with just backup
   if [[ -f "${env_backup}" ]]; then
     local temp_backup
-    temp_backup=$(mktemp)
+    temp_backup=$(create_temp_file "env_backup")
     cp "${env_backup}" "${temp_backup}"
-    rm -rf "${config_dir}"
+    safe_rm_rf "${config_dir}" "cmd_remove config (preserving backup)"
     mkdir -p "${config_dir}"
     mv "${temp_backup}" "${env_backup}"
     log_msg "INFO" ".env backup preserved at ${env_backup}"
     log_msg "INFO" "Re-add app with same name to restore .env"
   else
-    rm -rf "${config_dir}"
+    safe_rm_rf "${config_dir}" "cmd_remove config"
   fi
 
   log_msg "INFO" "App '${app_name}' removed successfully"
@@ -1639,7 +2141,14 @@ cmd_list() {
   fi
 
   local -a apps
-  mapfile -t apps < <(find "${APPS_CONFIG_DIR}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+  # Use -print0 and mapfile -d '' for safe handling of special characters
+  mapfile -t -d '' apps < <(find "${APPS_CONFIG_DIR}" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+  # Extract basenames
+  local -a app_names=()
+  for app_path in "${apps[@]:-}"; do
+    [[ -n "${app_path}" ]] && app_names+=("$(basename "${app_path}")")
+  done
+  apps=("${app_names[@]:-}")
 
   if [[ ${#apps[@]} -eq 0 ]]; then
     echo "No apps configured"
@@ -1692,8 +2201,8 @@ cmd_status() {
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
   if [[ $# -eq 0 ]]; then
-    # Show status for all apps
-    cmd_list
+    # Show Traefik service status
+    sudo /bin/systemctl status traefik-appmotel || true
     return
   fi
 
@@ -1876,8 +2385,8 @@ cmd_update() {
   local update_failed=false
 
   # Pull latest changes
-  cd "${repo_dir}"
-  if ! git pull origin "${BRANCH}"; then
+  safe_cd "${repo_dir}" "pulling latest changes"
+  if ! git_with_timeout pull origin "${BRANCH}"; then
     log_msg "ERROR" "Failed to pull latest changes"
     update_failed=true
   fi
@@ -1934,7 +2443,7 @@ cmd_update() {
 
         # Run component install script
         if [[ -f "${component_dir}/install.sh" ]]; then
-          cd "${component_dir}"
+          safe_cd "${component_dir}" "running install.sh for ${component}"
           if ! bash install.sh; then
             log_msg "ERROR" "Install script failed for ${component}"
             update_failed=true
@@ -1957,8 +2466,12 @@ cmd_update() {
 
   if [[ "${update_failed}" == "true" ]]; then
     log_msg "WARN" "Update failed, rolling back to backup ${backup_id}..."
-    restore_backup "${app_name}" "${backup_id}"
-    log_msg "INFO" "Rollback completed. App restored to previous version."
+    if restore_backup "${app_name}" "${backup_id}"; then
+      log_msg "INFO" "Rollback completed. App restored to previous version."
+    else
+      log_msg "ERROR" "Rollback failed! App may be in inconsistent state."
+      log_msg "ERROR" "Manual intervention required. Backup available at: ${BACKUPS_DIR}/${app_name}/${backup_id}"
+    fi
     return 1
   fi
 
@@ -2037,16 +2550,20 @@ cmd_exec() {
   local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
   local env_file="${repo_dir}/.env"
 
-  cd "${repo_dir}"
-
-  if [[ -f "${env_file}" ]]; then
-    set -o allexport
-    source "${env_file}"
-    set +o allexport
+  if [[ ! -d "${repo_dir}" ]]; then
+    die "App repository directory not found: ${repo_dir}"
   fi
 
-  # Activate Python venv if it exists
-  if [[ -d "${repo_dir}/.venv" ]]; then
+  safe_cd "${repo_dir}" "executing command in app environment"
+
+  # Use safe_source_env to prevent command injection from malicious .env files
+  if [[ -f "${env_file}" ]]; then
+    safe_source_env "${env_file}"
+  fi
+
+  # Activate Python venv if it exists (venv activate scripts are trusted)
+  if [[ -f "${repo_dir}/.venv/bin/activate" ]]; then
+    # shellcheck source=/dev/null
     source "${repo_dir}/.venv/bin/activate"
   fi
 
@@ -2164,7 +2681,9 @@ cmd_restore() {
     log_msg "INFO" "Using most recent backup: ${backup_id}"
   fi
 
-  restore_backup "${app_name}" "${backup_id}"
+  if ! restore_backup "${app_name}" "${backup_id}"; then
+    die "Restore failed - check logs for details"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -2233,7 +2752,7 @@ cmd_check() {
       continue
     fi
 
-    cd "${repo_dir}"
+    cd "${repo_dir}" || { printf "%-15s %-12s %-10s %s\n" "${app_name}" "CD ERR" "-" "-"; continue; }
 
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
       printf "%-15s %-12s %-10s %s\n" "${app_name}" "NOT GIT" "-" "-"
@@ -2241,7 +2760,7 @@ cmd_check() {
     fi
 
     # Fetch latest changes (quietly)
-    if ! git fetch origin 2>/dev/null; then
+    if ! git_with_timeout fetch origin 2>/dev/null; then
       printf "%-15s %-12s %-10s %s\n" "${app_name}" "FETCH ERR" "-" "-"
       continue
     fi
@@ -2287,27 +2806,25 @@ cmd_check() {
 cmd_autopull() {
   local lockfile="${APPS_DATA_DIR}/.autopull.lock"
 
-  # Acquire lock to prevent concurrent runs
+  # Ensure lock directory exists
   local lockdir
   lockdir=$(dirname "${lockfile}")
   mkdir -p "${lockdir}"
 
-  if [[ -f "${lockfile}" ]]; then
-    local pid
-    pid=$(cat "${lockfile}")
+  # Use flock for atomic locking to prevent race conditions
+  # Open lockfile on file descriptor 9
+  exec 9>"${lockfile}"
 
-    # Check if process is still running
-    if kill -0 "${pid}" 2>/dev/null; then
-      log_msg "INFO" "Another autopull instance is running (PID: ${pid}), exiting"
-      exit 0
-    else
-      log_msg "WARN" "Removing stale lock file"
-      rm -f "${lockfile}"
-    fi
+  if ! flock --nonblock 9; then
+    log_msg "INFO" "Another autopull instance is running, exiting"
+    exit 0
   fi
 
-  echo $$ > "${lockfile}"
-  trap "rm -f ${lockfile}" EXIT
+  # Write PID to lockfile for debugging (lock is held by flock, not PID file)
+  echo $$ >&9
+
+  # Trap will release lock automatically when fd 9 is closed on exit
+  trap 'exec 9>&-' EXIT
 
   log_msg "INFO" "Starting autopull check"
 
@@ -2344,7 +2861,7 @@ cmd_autopull() {
       continue
     fi
 
-    cd "${repo_dir}"
+    cd "${repo_dir}" || { log_msg "WARN" "${app_name}: Cannot change to repository directory"; continue; }
 
     # Ensure we're in a git repository
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
@@ -2353,7 +2870,7 @@ cmd_autopull() {
     fi
 
     # Fetch latest changes (quietly)
-    if ! git fetch origin 2>/dev/null; then
+    if ! git_with_timeout fetch origin 2>/dev/null; then
       log_msg "ERROR" "${app_name}: Failed to fetch from origin"
       continue
     fi

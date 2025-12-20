@@ -746,15 +746,21 @@ enable_traefik_service() {
   systemctl enable traefik-appmotel
   systemctl restart traefik-appmotel
 
-  sleep 2
+  # Poll for service to become active instead of hard-coded sleep
+  local max_attempts=10
+  local attempt=1
+  while [[ ${attempt} -le ${max_attempts} ]]; do
+    if systemctl is-active --quiet traefik-appmotel; then
+      log_msg "INFO" "Traefik service is running"
+      return 0
+    fi
+    sleep 1
+    ((attempt++))
+  done
 
-  if systemctl is-active --quiet traefik-appmotel; then
-    log_msg "INFO" "Traefik service is running"
-  else
-    log_msg "ERROR" "Traefik service failed to start"
-    systemctl status traefik-appmotel --no-pager || true
-    return 1
-  fi
+  log_msg "ERROR" "Traefik service failed to start within ${max_attempts} seconds"
+  systemctl status traefik-appmotel --no-pager || true
+  return 1
 }
 
 # =============================================================================
