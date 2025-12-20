@@ -401,8 +401,15 @@ Commands:
   restore <app-name> [backup-id]         Restore an app from backup
   backups <app-name>                     List available backups for an app
 
+URL Formats:
+  user/repo                              Short form (expands to GitHub)
+  https://github.com/user/repo           Standard GitHub URL
+  https://github.com/user/repo/tree/branch/path/to/folder
+                                         Deploy from a subfolder
+
 Examples:
   appmo add myapp https://github.com/user/repo main
+  appmo add myapp https://github.com/user/repo/tree/main/apps/myapp
   appmo status myapp
   appmo autopull
   appmo logs myapp 50
@@ -461,6 +468,83 @@ validate_github_url() {
   else
     die "Invalid GitHub URL format. Use https://github.com/user/repo or user/repo"
   fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: parse_github_url
+# Description: Parses GitHub URL to extract repo URL, branch, and subfolder
+# Input:  https://github.com/user/repo/tree/branch/path/to/folder
+# Output: Sets global variables: PARSED_REPO_URL, PARSED_BRANCH, PARSED_SUBDIR
+# -----------------------------------------------------------------------------
+parse_github_url() {
+  local url="$1"
+
+  # Reset output variables
+  PARSED_REPO_URL=""
+  PARSED_BRANCH=""
+  PARSED_SUBDIR=""
+
+  # Check if URL contains /tree/ pattern (GitHub subfolder URL)
+  if [[ "${url}" =~ ^(https://github\.com/[^/]+/[^/]+)/tree/([^/]+)/(.+)$ ]]; then
+    # Full URL with subfolder: https://github.com/user/repo/tree/branch/path/to/folder
+    PARSED_REPO_URL="${BASH_REMATCH[1]}"
+    PARSED_BRANCH="${BASH_REMATCH[2]}"
+    PARSED_SUBDIR="${BASH_REMATCH[3]}"
+    # Remove trailing slash if present
+    PARSED_SUBDIR="${PARSED_SUBDIR%/}"
+  elif [[ "${url}" =~ ^(https://github\.com/[^/]+/[^/]+)/tree/([^/]+)/?$ ]]; then
+    # URL with branch but no subfolder: https://github.com/user/repo/tree/branch
+    PARSED_REPO_URL="${BASH_REMATCH[1]}"
+    PARSED_BRANCH="${BASH_REMATCH[2]}"
+  elif [[ "${url}" =~ ^(https://github\.com/[^/]+/[^/]+)/?$ ]]; then
+    # Standard URL: https://github.com/user/repo
+    PARSED_REPO_URL="${BASH_REMATCH[1]}"
+  elif [[ "${url}" =~ ^(git@github\.com:[^/]+/[^/]+)(\.git)?$ ]]; then
+    # SSH URL: git@github.com:user/repo.git
+    PARSED_REPO_URL="${BASH_REMATCH[1]}"
+  elif [[ "${url}" =~ ^([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$ ]]; then
+    # Shorthand: user/repo
+    PARSED_REPO_URL="https://github.com/${BASH_REMATCH[1]}"
+  else
+    # Unrecognized format - let validate_github_url handle it
+    PARSED_REPO_URL="${url}"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: find_env_template_up
+# Description: Search for .env template files starting from a directory and going up
+# Arguments: start_dir, stop_dir (don't search above this)
+# Returns: Path to found template or empty string
+# -----------------------------------------------------------------------------
+find_env_template_up() {
+  local start_dir="$1"
+  local stop_dir="$2"
+
+  local current_dir="${start_dir}"
+  local templates=(".env.default" "env.default" ".env.example" "env.example" ".env.local" ".env")
+
+  while [[ "${current_dir}" == "${stop_dir}"* ]]; do
+    for tmpl in "${templates[@]}"; do
+      if [[ -f "${current_dir}/${tmpl}" ]]; then
+        echo "${current_dir}/${tmpl}"
+        return 0
+      fi
+    done
+
+    # Move up one directory
+    local parent_dir
+    parent_dir=$(dirname "${current_dir}")
+
+    # Stop if we've reached the stop_dir or can't go higher
+    if [[ "${parent_dir}" == "${current_dir}" ]] || [[ "${current_dir}" == "${stop_dir}" ]]; then
+      break
+    fi
+
+    current_dir="${parent_dir}"
+  done
+
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -900,6 +984,7 @@ save_app_metadata() {
   local branch="$3"
   local port="$4"
   local services="${5:-}"  # Optional services string (space-separated component names)
+  local subdir="${6:-}"    # Optional subfolder path within repo
 
   local config_dir="${APPS_CONFIG_DIR}/${app_name}"
   mkdir -p "${config_dir}"
@@ -919,22 +1004,36 @@ EOF
     echo "SERVICES=\"${services}\"" >> "${metadata_file}"
   fi
 
+  # Add SUBDIR field if provided (for subfolder deployments)
+  if [[ -n "${subdir}" ]]; then
+    echo "SUBDIR=\"${subdir}\"" >> "${metadata_file}"
+  fi
+
   log_msg "INFO" "App metadata saved"
 }
 
 # -----------------------------------------------------------------------------
 # Function: setup_app_env_file
 # Description: Creates physical .env in config dir and symlinks repo/.env to it
-# Looks for template: .env.default, env.default, .env.example, env.example
+# Looks for template: .env.default, env.default, .env.example, env.example, .env.local
+# For subfolder deployments, searches up directory tree for templates
 # -----------------------------------------------------------------------------
 setup_app_env_file() {
   local app_name="$1"
   local port="$2"
+  local subdir="${3:-}"  # Optional subfolder path
 
   local config_dir="${APPS_CONFIG_DIR}/${app_name}"
   local config_env="${config_dir}/.env"
   local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
   local repo_env="${repo_dir}/.env"
+
+  # Determine the app working directory (subfolder or repo root)
+  local app_dir="${repo_dir}"
+  if [[ -n "${subdir}" ]]; then
+    app_dir="${repo_dir}/${subdir}"
+  fi
+  local app_env="${app_dir}/.env"
 
   mkdir -p "${config_dir}"
 
@@ -945,23 +1044,36 @@ setup_app_env_file() {
     # Remove any existing symlink in config dir
     rm -f "${config_env}"
 
-    # Look for template files in repo
+    # Look for template files - search up directory tree for subfolders
     local template_file=""
-    for tmpl in ".env.default" "env.default" ".env.example" "env.example"; do
-      if [[ -f "${repo_dir}/${tmpl}" ]]; then
-        template_file="${repo_dir}/${tmpl}"
-        break
+    if [[ -n "${subdir}" ]]; then
+      # For subfolder deployments, search up from subfolder to repo root
+      template_file=$(find_env_template_up "${app_dir}" "${repo_dir}") || true
+      if [[ -n "${template_file}" ]]; then
+        log_msg "INFO" "Found template at: ${template_file}"
       fi
-    done
+    else
+      # Standard search in repo root
+      for tmpl in ".env.default" "env.default" ".env.example" "env.example" ".env.local"; do
+        if [[ -f "${repo_dir}/${tmpl}" ]]; then
+          template_file="${repo_dir}/${tmpl}"
+          break
+        fi
+      done
+    fi
 
     if [[ -n "${template_file}" ]]; then
       # Copy template to config dir
       cp "${template_file}" "${config_env}"
       log_msg "INFO" "Created .env from template: $(basename "${template_file}")"
-    elif [[ -f "${repo_env}" ]] && [[ ! -L "${repo_env}" ]]; then
-      # If repo has a real .env file, move it to config
-      mv "${repo_env}" "${config_env}"
+    elif [[ -f "${app_env}" ]] && [[ ! -L "${app_env}" ]]; then
+      # If app dir has a real .env file, move it to config
+      mv "${app_env}" "${config_env}"
       log_msg "INFO" "Moved existing .env to config directory"
+    elif [[ -f "${repo_env}" ]] && [[ ! -L "${repo_env}" ]]; then
+      # Fall back to repo root .env if exists
+      mv "${repo_env}" "${config_env}"
+      log_msg "INFO" "Moved existing .env from repo root to config directory"
     else
       # Create empty .env with just PORT
       echo "PORT=${port}" > "${config_env}"
@@ -982,19 +1094,28 @@ setup_app_env_file() {
     echo "PORT=${port}" >> "${config_env}"
   fi
 
-  # Remove any existing .env in repo (file or symlink)
-  rm -f "${repo_env}"
-
-  # Verify config .env exists before creating symlink
+  # Verify config .env exists before creating symlinks
   if [[ ! -f "${config_env}" ]]; then
     die "Failed to create symlink: config .env does not exist at ${config_env}"
   fi
+
+  # Remove any existing .env in repo root (file or symlink)
+  rm -f "${repo_env}"
 
   # Create symlink from repo/.env -> config/.env
   if ! ln -s "${config_env}" "${repo_env}"; then
     die "Failed to create .env symlink: ${repo_env} -> ${config_env}"
   fi
   log_msg "INFO" "Created symlink: ${repo_env} -> ${config_env}"
+
+  # For subfolder deployments, also create symlink in the subfolder
+  if [[ -n "${subdir}" ]] && [[ "${app_env}" != "${repo_env}" ]]; then
+    rm -f "${app_env}"
+    if ! ln -s "${config_env}" "${app_env}"; then
+      die "Failed to create .env symlink: ${app_env} -> ${config_env}"
+    fi
+    log_msg "INFO" "Created subfolder symlink: ${app_env} -> ${config_env}"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -1653,6 +1774,7 @@ setup_go_env() {
 # -----------------------------------------------------------------------------
 # Function: cmd_add
 # Description: Adds a new app
+# Supports subfolder URLs: https://github.com/user/repo/tree/branch/path/to/folder
 # -----------------------------------------------------------------------------
 cmd_add() {
   if [[ $# -lt 2 ]]; then
@@ -1661,10 +1783,43 @@ cmd_add() {
 
   local app_name="$1"
   local github_url="$2"
-  local branch="${3:-main}"
+  local branch="${3:-}"
+  local subdir=""
 
-  # Validate inputs before processing
+  # Validate app name first
   validate_app_name "${app_name}"
+
+  # Parse the URL to extract repo, branch, and subfolder
+  parse_github_url "${github_url}"
+
+  # Use parsed values
+  local clone_url="${PARSED_REPO_URL}"
+  local url_branch="${PARSED_BRANCH}"
+  local url_subdir="${PARSED_SUBDIR}"
+
+  # Handle branch resolution
+  if [[ -n "${url_branch}" ]] && [[ -n "${branch}" ]]; then
+    # Both URL contains branch AND user passed branch argument - error
+    die "Conflicting branch specification: URL contains branch '${url_branch}' but you also specified '${branch}'. Remove the branch argument or use a simpler URL format."
+  elif [[ -n "${url_branch}" ]]; then
+    # Use branch from URL
+    branch="${url_branch}"
+    log_msg "INFO" "Using branch from URL: ${branch}"
+  elif [[ -z "${branch}" ]]; then
+    # No branch specified anywhere - default to main
+    branch="main"
+  fi
+
+  # Use subfolder from URL if present
+  if [[ -n "${url_subdir}" ]]; then
+    subdir="${url_subdir}"
+    log_msg "INFO" "Deploying from subfolder: ${subdir}"
+  fi
+
+  # Update github_url to the clean repo URL for cloning
+  github_url="${clone_url}"
+
+  # Validate the clean URL and branch
   validate_github_url "${github_url}"
   validate_branch_name "${branch}"
 
@@ -1736,6 +1891,18 @@ cmd_add() {
     fi
   fi
 
+  # Determine the app working directory (subfolder or repo root)
+  local app_dir="${repo_dir}"
+  if [[ -n "${subdir}" ]]; then
+    app_dir="${repo_dir}/${subdir}"
+    # Verify subfolder exists
+    if [[ ! -d "${app_dir}" ]]; then
+      safe_rm_rf "${app_data_dir}" "subfolder not found"
+      die "Subfolder '${subdir}' not found in repository. Available directories: $(ls -d "${repo_dir}"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ' || echo 'none')"
+    fi
+    log_msg "INFO" "Using subfolder: ${app_dir}"
+  fi
+
   # Check for existing .env backup and offer to restore
   local config_dir="${APPS_CONFIG_DIR}/${app_name}"
   local env_backup="${config_dir}/.env.backup"
@@ -1788,12 +1955,13 @@ cmd_add() {
     log_msg "INFO" "Assigned port: ${port}"
   fi
 
-  # Setup .env file (physical in config dir, symlink in repo)
-  setup_app_env_file "${app_name}" "${port}"
+  # Setup .env file (physical in config dir, symlink in repo and subfolder)
+  setup_app_env_file "${app_name}" "${port}" "${subdir}"
 
   # Detect multi-component structure (frontend, backend, api, etc.)
+  # For subfolder deployments, detect components within the subfolder
   local -a detected_components
-  detect_components "${repo_dir}" detected_components
+  detect_components "${app_dir}" detected_components
 
   local services_to_deploy=()
 
@@ -1802,13 +1970,13 @@ cmd_add() {
     log_msg "INFO" "Detected multi-component app: ${detected_components[*]}"
     services_to_deploy=("${detected_components[@]}")
   else
-    # Single-component app - detect type and setup root repo
+    # Single-component app - detect type and setup app directory
     local app_type="unknown"
-    if [[ -f "${repo_dir}/go.mod" ]]; then
+    if [[ -f "${app_dir}/go.mod" ]]; then
       app_type="go"
-    elif [[ -f "${repo_dir}/requirements.txt" ]] || [[ -f "${repo_dir}/pyproject.toml" ]]; then
+    elif [[ -f "${app_dir}/requirements.txt" ]] || [[ -f "${app_dir}/pyproject.toml" ]]; then
       app_type="python"
-    elif [[ -f "${repo_dir}/package.json" ]]; then
+    elif [[ -f "${app_dir}/package.json" ]]; then
       app_type="nodejs"
     fi
 
@@ -1816,19 +1984,19 @@ cmd_add() {
 
     case "${app_type}" in
       go)
-        setup_go_env "${repo_dir}" || {
+        setup_go_env "${app_dir}" || {
           safe_rm_rf "${app_data_dir}" "Go build failed"
           die "Failed to build Go application"
         }
         ;;
       python)
-        setup_python_env "${repo_dir}" || {
+        setup_python_env "${app_dir}" || {
           safe_rm_rf "${app_data_dir}" "Python setup failed"
           die "Failed to setup Python environment"
         }
         ;;
       nodejs)
-        setup_nodejs_env "${repo_dir}" || {
+        setup_nodejs_env "${app_dir}" || {
           safe_rm_rf "${app_data_dir}" "Node.js setup failed"
           die "Failed to setup Node.js environment"
         }
@@ -1839,7 +2007,7 @@ cmd_add() {
     esac
 
     # Run install script for single app
-    if ! run_install_script "${repo_dir}"; then
+    if ! run_install_script "${app_dir}"; then
       safe_rm_rf "${app_data_dir}" "install script failed"
       die "Installation failed, rolling back"
     fi
@@ -1861,9 +2029,10 @@ cmd_add() {
 
     for component in "${services_to_deploy[@]}"; do
       # Resolve component directory (check root level first, then src/)
-      local component_dir="${repo_dir}/${component}"
+      # For subfolder deployments, components are relative to app_dir
+      local component_dir="${app_dir}/${component}"
       if [[ ! -d "${component_dir}" ]]; then
-        component_dir="${repo_dir}/src/${component}"
+        component_dir="${app_dir}/src/${component}"
       fi
 
       local component_port="${port}"
@@ -1931,14 +2100,14 @@ cmd_add() {
     fi
 
     # Create Traefik config only for frontend (public port)
-    create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+    create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}"
 
-    # Save metadata with services list
+    # Save metadata with services list and subdir
     services_str=$(echo "${services_to_deploy[@]}" | tr ' ' '\n' | sort | tr '\n' ' ' | xargs)
-    save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}" "${services_str}"
+    save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}" "${services_str}" "${subdir}"
   else
     # Single-component deployment - check for Procfile or standard single service
-    local procfile="${repo_dir}/Procfile"
+    local procfile="${app_dir}/Procfile"
     if [[ -f "${procfile}" ]]; then
       log_msg "INFO" "Procfile detected, setting up multi-process app"
 
@@ -1961,7 +2130,7 @@ cmd_add() {
           fi
 
           log_msg "INFO" "Creating service for process: ${proc_name} (port ${proc_port})"
-          create_systemd_service_procfile "${app_name}" "${proc_name}" "${repo_dir}" "${proc_port}" "${proc_cmd}"
+          create_systemd_service_procfile "${app_name}" "${proc_name}" "${app_dir}" "${proc_port}" "${proc_cmd}"
 
           # Enable and start service
           systemctl --user enable "appmotel-${app_name}-${proc_name}"
@@ -1970,21 +2139,21 @@ cmd_add() {
       done < <(parse_procfile "${procfile}")
 
       # Create Traefik config (only routes to web process on main port)
-      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}"
     else
       # Single process app
-      create_systemd_service "${app_name}" "${repo_dir}" "${port}"
+      create_systemd_service "${app_name}" "${app_dir}" "${port}"
 
-      # Create Traefik config with repo_dir for settings
-      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+      # Create Traefik config with app_dir for settings
+      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}"
 
       # Start service
       systemctl --user enable "appmotel-${app_name}"
       systemctl --user start "appmotel-${app_name}"
     fi
 
-    # Save metadata (no SERVICES field for single-component)
-    save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}"
+    # Save metadata (no SERVICES field for single-component, but include subdir)
+    save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}" "" "${subdir}"
   fi
 
   local app_url="https://${app_name}.${base_domain}"
@@ -2155,8 +2324,8 @@ cmd_list() {
     return
   fi
 
-  printf "%-15s %-10s %-30s %s\n" "APP NAME" "STATUS" "REPO" "URL"
-  printf "%-15s %-10s %-30s %s\n" "--------" "------" "----" "---"
+  printf "%-15s %-10s %-35s %s\n" "APP NAME" "STATUS" "REPO" "URL"
+  printf "%-15s %-10s %-35s %s\n" "--------" "------" "----" "---"
 
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
@@ -2185,7 +2354,7 @@ cmd_list() {
       repo=$(echo "${github_url}" | sed -E 's|^https?://github\.com/||; s|^git@github\.com:||; s|\.git$||')
     fi
 
-    printf "%-15s %-10s %-30s %s\n" "${app}" "${status}" "${repo}" "${url}"
+    printf "%-15s %-10s %-35s %s\n" "${app}" "${status}" "${repo}" "${url}"
   done
 
   if [[ ${found_apps} -eq 0 ]]; then
@@ -2230,7 +2399,11 @@ cmd_status() {
 
   echo "App: ${app_name}"
   echo "URL: https://${app_name}.${base_domain}"
-  echo "GitHub: ${GITHUB_URL} (${BRANCH})"
+  if [[ -n "${SUBDIR:-}" ]]; then
+    echo "GitHub: ${GITHUB_URL} (${BRANCH}) [subfolder: ${SUBDIR}]"
+  else
+    echo "GitHub: ${GITHUB_URL} (${BRANCH})"
+  fi
   echo "Port: ${PORT}"
   echo "Last Deployment: $(format_timestamp "${LAST_DEPLOYMENT}")"
   echo ""
@@ -2374,6 +2547,13 @@ cmd_update() {
 
   local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
 
+  # Determine app working directory (subfolder or repo root)
+  local app_dir="${repo_dir}"
+  if [[ -n "${SUBDIR:-}" ]]; then
+    app_dir="${repo_dir}/${SUBDIR}"
+    log_msg "INFO" "Using subfolder: ${SUBDIR}"
+  fi
+
   log_msg "INFO" "Updating app: ${app_name}"
 
   # Create backup before update
@@ -2395,7 +2575,7 @@ cmd_update() {
     # Check if .env.default has a low port and override it
     # Apps should not dictate their own ports - the PaaS assigns them
     local config_env="${APPS_CONFIG_DIR}/${app_name}/.env"
-    local env_default="${repo_dir}/.env.default"
+    local env_default="${app_dir}/.env.default"
 
     if [[ -f "${env_default}" ]] && grep -q "^PORT=" "${env_default}" 2>/dev/null; then
       local default_port
@@ -2412,7 +2592,7 @@ cmd_update() {
 
         # Update Traefik config with new port
         local base_domain="${BASE_DOMAIN:-apps.example.com}"
-        create_traefik_config "${app_name}" "${assigned_port}" "${base_domain}" "${repo_dir}"
+        create_traefik_config "${app_name}" "${assigned_port}" "${base_domain}" "${app_dir}"
       fi
     fi
 
@@ -2426,9 +2606,10 @@ cmd_update() {
       log_msg "INFO" "Updating ${#services[@]} components..."
       for component in "${services[@]}"; do
         # Resolve component directory (check root level first, then src/)
-        local component_dir="${repo_dir}/${component}"
+        # For subfolder deployments, components are relative to app_dir
+        local component_dir="${app_dir}/${component}"
         if [[ ! -d "${component_dir}" ]]; then
-          component_dir="${repo_dir}/src/${component}"
+          component_dir="${app_dir}/src/${component}"
         fi
         log_msg "INFO" "Updating component: ${component} at ${component_dir}"
 
@@ -2451,13 +2632,13 @@ cmd_update() {
         fi
       done
     else
-      # Single-component: setup root repo
-      setup_python_env "${repo_dir}"
-      setup_nodejs_env "${repo_dir}"
-      setup_go_env "${repo_dir}"
+      # Single-component: setup app directory
+      setup_python_env "${app_dir}"
+      setup_nodejs_env "${app_dir}"
+      setup_go_env "${app_dir}"
 
       # Run install script
-      if ! run_install_script "${repo_dir}"; then
+      if ! run_install_script "${app_dir}"; then
         log_msg "ERROR" "Install script failed"
         update_failed=true
       fi
@@ -2481,8 +2662,8 @@ cmd_update() {
     services_str=$(echo "${services[@]}" | tr ' ' '\n' | sort | tr '\n' ' ' | xargs)
   fi
 
-  # Update metadata timestamp
-  save_app_metadata "${app_name}" "${GITHUB_URL}" "${BRANCH}" "${PORT}" "${services_str}"
+  # Update metadata timestamp (preserve SUBDIR if set)
+  save_app_metadata "${app_name}" "${GITHUB_URL}" "${BRANCH}" "${PORT}" "${services_str}" "${SUBDIR:-}"
 
   # Restart all services
   log_msg "INFO" "Restarting services..."

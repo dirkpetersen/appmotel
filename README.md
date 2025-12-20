@@ -20,6 +20,7 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 
 ### 🚀 Core Features
 - **One-Command Deploy**: `appmo add myapp https://github.com/user/repo main`
+- **Subfolder Deploy**: Deploy from repository subfolders using GitHub tree URLs
 - **Multi-Component Apps**: Auto-detects and deploys frontend + backend as unified app
 - **Automatic HTTPS**: Let's Encrypt integration via Traefik with wildcard certificate support
 - **Zero-Downtime Updates**: Automatic backup and rollback on failure
@@ -61,7 +62,7 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 Run this once to create the `appmotel` user, configure systemd services, and set up permissions:
 
 ```bash
-sudo bash install.sh
+curl -fsSL "https://raw.githubusercontent.com/dirkpetersen/appmotel/main/install.sh?$(date +%s)" | sudo bash
 ```
 
 **Step 2: User-level setup (as appmotel user)**
@@ -73,21 +74,18 @@ sudo su - appmotel
 curl -fsSL "https://raw.githubusercontent.com/dirkpetersen/appmotel/main/install.sh?$(date +%s)" | bash
 ```
 
-Or if you have the repository locally:
-
-```bash
-sudo su - appmotel
-cd /path/to/appmotel
-bash install.sh
-```
-
 This installs everything under `/home/appmotel` and starts the necessary services.
+
+> **Alternative:** If you have the repository cloned locally, you can run `sudo bash install.sh` (Step 1) and `bash install.sh` (Step 2) from the repo directory instead.
 
 ### Deploy Your First App
 
 ```bash
 # Add and deploy an app
 sudo -u appmotel appmo add myapp https://github.com/username/myrepo main
+
+# Or deploy from a subfolder (GitHub tree URL)
+sudo -u appmotel appmo add myapp https://github.com/username/myrepo/tree/main/apps/myapp
 
 # Check status
 sudo -u appmotel appmo status myapp
@@ -105,6 +103,7 @@ sudo -u appmotel appmo logs myapp
 ```bash
 # Application Management
 appmo add <app-name> <url|user/repo> [branch] # Deploy a new app
+appmo add <app-name> <github-tree-url>        # Deploy from subfolder
 appmo remove <app-name>                       # Remove an app
 appmo list                                    # List all apps
 appmo status [app-name]                       # Show app status
