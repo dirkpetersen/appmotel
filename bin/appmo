@@ -99,8 +99,8 @@ Usage: appmo <command> [arguments]
 
 Commands:
   add <app-name> <url|user/repo> [branch]  Add and deploy a new app (default: main)
-  remove <app-name>                      Remove an app
-  list                                   List all configured apps
+  remove <app-name>                      Remove an app (alias: rm)
+  list                                   List all configured apps (alias: ls)
   status [app-name]                      Show app status
   start <app-name>                       Start an app
   stop <app-name>                        Stop an app
@@ -450,6 +450,7 @@ save_app_metadata() {
   local github_url="$2"
   local branch="$3"
   local port="$4"
+  local services="${5:-}"  # Optional services string (space-separated component names)
 
   local config_dir="${APPS_CONFIG_DIR}/${app_name}"
   mkdir -p "${config_dir}"
@@ -463,6 +464,11 @@ BRANCH="${branch}"
 PORT="${port}"
 LAST_DEPLOYMENT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 EOF
+
+  # Add SERVICES field if provided (for multi-component apps)
+  if [[ -n "${services}" ]]; then
+    echo "SERVICES=\"${services}\"" >> "${metadata_file}"
+  fi
 
   log_msg "INFO" "App metadata saved"
 }
@@ -559,7 +565,14 @@ detect_app_type() {
   local repo_dir="$1"
   local -n cmd_ref=$2
 
+  # Check for start.sh script first (component-specific startup)
+  if [[ -f "${repo_dir}/start.sh" ]]; then
+    cmd_ref="bash start.sh"
+    return 0
+  fi
+
   # Check Go first (highest priority when go.mod exists)
+  # Priority: start.sh > Go > Python > Node.js > Binary
   if [[ -f "${repo_dir}/go.mod" ]]; then
     # Go app - binary should be in bin/ after setup_go_env runs
     if [[ -d "${repo_dir}/bin" ]] && [[ $(find "${repo_dir}/bin" -type f -executable | wc -l) -ge 1 ]]; then
@@ -635,16 +648,98 @@ detect_app_type() {
   return 1
 }
 
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Function: detect_components
+# Description: Detects multi-component app structure (frontend, backend, etc)
+# Returns: Modifies array passed by name reference
+# Known components: frontend, backend, api, worker, db, cache
+# =============================================================================
+detect_components() {
+  local repo_dir="$1"
+  local -n components_ref=$2  # Output array
+
+  local known_components=("frontend" "backend" "api" "worker" "db" "cache")
+  local detected=()
+
+  # Check each known component directory
+  for component in "${known_components[@]}"; do
+    local component_path="${repo_dir}/${component}"
+
+    # Check if component directory exists and has app markers
+    if [[ -d "${component_path}" ]]; then
+      if [[ -f "${component_path}/package.json" ]] || \
+         [[ -f "${component_path}/requirements.txt" ]] || \
+         [[ -f "${component_path}/pyproject.toml" ]] || \
+         [[ -f "${component_path}/go.mod" ]]; then
+        detected+=("${component}")
+      fi
+    fi
+  done
+
+  # Return detected components
+  components_ref=("${detected[@]}")
+}
+
+# =============================================================================
+# Function: get_all_services
+# Description: Returns all services for an app from metadata SERVICES field
+# Returns: Modifies array passed by name reference
+# Fallback: If SERVICES not set, assumes single app for backward compatibility
+# =============================================================================
+get_all_services() {
+  local app_name="$1"
+  local -n services_ref=$2  # Output array
+
+  local metadata_file="${APPS_CONFIG_DIR}/${app_name}/metadata.conf"
+
+  if [[ ! -f "${metadata_file}" ]]; then
+    services_ref=()
+    return 1
+  fi
+
+  # Load SERVICES field from metadata (space-separated component names)
+  local services_str
+  services_str=$(grep "^SERVICES=" "${metadata_file}" 2>/dev/null | cut -d'=' -f2 | tr -d '"')
+
+  if [[ -n "${services_str}" ]]; then
+    # Convert space-separated to array (temporarily use default IFS for splitting)
+    local saved_ifs="${IFS}"
+    IFS=' '
+    read -ra services_ref <<< "${services_str}"
+    IFS="${saved_ifs}"
+  else
+    # Fallback for single-component apps (backward compatibility)
+    # Apps without SERVICES field use the app name as single service
+    services_ref=("${app_name}")
+  fi
+}
+
+# =============================================================================
 # Function: create_systemd_service
-# Description: Creates systemd service for app
-# -----------------------------------------------------------------------------
+# Description: Creates systemd service for app or app component
+# Parameters:
+#   $1: app_name
+#   $2: repo_dir (or component_dir if component specified)
+#   $3: [optional] component_name (e.g., "frontend", "backend")
+#   $4: [optional] component_port (internal port for backends, uses PORT from env for frontend)
+# Examples:
+#   create_systemd_service myapp /path/to/repo                    # Single app
+#   create_systemd_service compliance /path/to/compliance/frontend # Frontend component
+#   create_systemd_service compliance /path/to/compliance/backend 8001  # Backend component
+# =============================================================================
 create_systemd_service() {
   local app_name="$1"
   local repo_dir="$2"
   local port="$3"
+  local component_name="${4:-}"  # Optional component name (e.g., "frontend", "backend")
 
-  local service_file="${SYSTEMD_USER_DIR}/appmotel-${app_name}.service"
+  # Service file naming: appmotel-{app_name}[-{component_name}].service
+  # Frontend gets no suffix (appmotel-<app>.service), others get suffix
+  local service_name="appmotel-${app_name}"
+  if [[ -n "${component_name}" ]] && [[ "${component_name}" != "frontend" ]]; then
+    service_name="${service_name}-${component_name}"
+  fi
+  local service_file="${SYSTEMD_USER_DIR}/${service_name}.service"
   local env_file="${repo_dir}/.env"
 
   # Detect app type and get start command
@@ -661,6 +756,9 @@ create_systemd_service() {
     # Replace python3 with full path to venv python
     start_cmd="${start_cmd/python3/${repo_dir}\/.venv\/bin\/python3}"
     log_msg "INFO" "Using virtual environment Python: ${start_cmd}"
+  elif [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
+    # Python venv exists - PATH will be set in service file
+    log_msg "INFO" "Virtual environment detected - PATH will include venv"
   fi
 
   # Build environment file directive
@@ -685,15 +783,28 @@ create_systemd_service() {
     fi
   fi
 
+  # Build description with optional component
+  local description="Appmotel Application: ${app_name}"
+  if [[ -n "${component_name}" ]]; then
+    description="${description} (${component_name})"
+  fi
+
+  # For Python apps with venv, add PATH to include venv bin
+  local path_directive=""
+  if [[ -f "${repo_dir}/.venv/bin/python3" ]]; then
+    path_directive="Environment=\"PATH=${repo_dir}/.venv/bin:/usr/local/bin:/usr/bin:/bin\""
+  fi
+
   cat > "${service_file}" <<EOF
 [Unit]
-Description=Appmotel Application: ${app_name}
+Description=${description}
 After=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${repo_dir}
 ${env_directive}
+${path_directive}
 Environment="PORT=${port}"
 Environment="HOME=${APPMOTEL_HOME}"
 Environment="USER=appmotel"
@@ -716,7 +827,7 @@ EOF
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 
   systemctl --user daemon-reload
-  log_msg "INFO" "Systemd user service created: appmotel-${app_name}"
+  log_msg "INFO" "Systemd user service created: ${service_name}"
 }
 
 # -----------------------------------------------------------------------------
@@ -944,6 +1055,64 @@ setup_nodejs_env() {
   cd "${repo_dir}"
   npm install
 
+  # Check if this is a Next.js app with static export
+  local nextjs_config=""
+  if [[ -f "${repo_dir}/next.config.js" ]]; then
+    nextjs_config="${repo_dir}/next.config.js"
+  elif [[ -f "${repo_dir}/next.config.mjs" ]]; then
+    nextjs_config="${repo_dir}/next.config.mjs"
+  fi
+
+  if [[ -n "${nextjs_config}" ]]; then
+    # Check if output: 'export' is configured
+    if grep -q "output.*['\"]export['\"]" "${nextjs_config}" 2>/dev/null; then
+      log_msg "INFO" "Detected Next.js static export - building application"
+
+      # Build the static export
+      npm run build
+
+      # Install serve for static hosting
+      npm install serve
+
+      # Update package.json start script to use serve
+      if command -v jq &> /dev/null; then
+        # Use jq if available (more robust)
+        local tmp_file="/tmp/package_json_$$.tmp"
+        jq '.scripts.start = "serve -l ${PORT:-3000} out"' "${repo_dir}/package.json" > "${tmp_file}"
+        mv "${tmp_file}" "${repo_dir}/package.json"
+      else
+        # Fallback to npm pkg set
+        npm pkg set scripts.start="serve -l \${PORT:-3000} out"
+      fi
+
+      log_msg "INFO" "Next.js static export built successfully"
+    fi
+  fi
+
+  # Check if this is a Vite app that needs building
+  if [[ -f "${repo_dir}/vite.config.ts" ]] || [[ -f "${repo_dir}/vite.config.js" ]]; then
+    if grep -q '"build".*vite build' "${repo_dir}/package.json"; then
+      log_msg "INFO" "Detected Vite app - building for production"
+
+      # Build the app
+      npm run build
+
+      # Install serve for static hosting
+      npm install serve
+
+      # Add/update start script that serves the dist folder
+      if command -v jq &> /dev/null; then
+        local tmp_file="/tmp/package_json_$$.tmp"
+        jq '.scripts.start = "serve -l ${PORT:-3000} dist"' "${repo_dir}/package.json" > "${tmp_file}"
+        mv "${tmp_file}" "${repo_dir}/package.json"
+      else
+        npm pkg set scripts.start="serve -l \${PORT:-3000} dist"
+      fi
+
+      log_msg "INFO" "Vite app built successfully"
+    fi
+  fi
+
   log_msg "INFO" "Node.js dependencies installed"
 }
 
@@ -1134,97 +1303,174 @@ cmd_add() {
   # Setup .env file (physical in config dir, symlink in repo)
   setup_app_env_file "${app_name}" "${port}"
 
-  # Detect primary app type and setup accordingly
-  # Priority: Go > Python > Node.js (only run setup for detected type)
-  local app_type="unknown"
-  if [[ -f "${repo_dir}/go.mod" ]]; then
-    app_type="go"
-  elif [[ -f "${repo_dir}/requirements.txt" ]]; then
-    app_type="python"
-  elif [[ -f "${repo_dir}/package.json" ]]; then
-    app_type="nodejs"
-  fi
+  # Detect multi-component structure (frontend, backend, api, etc.)
+  local -a detected_components
+  detect_components "${repo_dir}" detected_components
 
-  log_msg "INFO" "Detected app type: ${app_type}"
+  local services_to_deploy=()
 
-  case "${app_type}" in
-    go)
-      setup_go_env "${repo_dir}" || {
-        rm -rf "${app_data_dir}"
-        die "Failed to build Go application"
-      }
-      ;;
-    python)
-      setup_python_env "${repo_dir}" || {
-        rm -rf "${app_data_dir}"
-        die "Failed to setup Python environment"
-      }
-      ;;
-    nodejs)
-      setup_nodejs_env "${repo_dir}" || {
-        rm -rf "${app_data_dir}"
-        die "Failed to setup Node.js environment"
-      }
-      ;;
-    *)
-      log_msg "WARN" "Unknown app type, skipping environment setup"
-      ;;
-  esac
+  if [[ ${#detected_components[@]} -gt 1 ]]; then
+    # Multi-component app detected
+    log_msg "INFO" "Detected multi-component app: ${detected_components[*]}"
+    services_to_deploy=("${detected_components[@]}")
+  else
+    # Single-component app - detect type and setup root repo
+    local app_type="unknown"
+    if [[ -f "${repo_dir}/go.mod" ]]; then
+      app_type="go"
+    elif [[ -f "${repo_dir}/requirements.txt" ]] || [[ -f "${repo_dir}/pyproject.toml" ]]; then
+      app_type="python"
+    elif [[ -f "${repo_dir}/package.json" ]]; then
+      app_type="nodejs"
+    fi
 
-  # Run install script
-  if ! run_install_script "${repo_dir}"; then
-    rm -rf "${app_data_dir}"
-    die "Installation failed, rolling back"
+    log_msg "INFO" "Detected app type: ${app_type}"
+
+    case "${app_type}" in
+      go)
+        setup_go_env "${repo_dir}" || {
+          rm -rf "${app_data_dir}"
+          die "Failed to build Go application"
+        }
+        ;;
+      python)
+        setup_python_env "${repo_dir}" || {
+          rm -rf "${app_data_dir}"
+          die "Failed to setup Python environment"
+        }
+        ;;
+      nodejs)
+        setup_nodejs_env "${repo_dir}" || {
+          rm -rf "${app_data_dir}"
+          die "Failed to setup Node.js environment"
+        }
+        ;;
+      *)
+        log_msg "WARN" "Unknown app type, skipping environment setup"
+        ;;
+    esac
+
+    # Run install script for single app
+    if ! run_install_script "${repo_dir}"; then
+      rm -rf "${app_data_dir}"
+      die "Installation failed, rolling back"
+    fi
+
+    services_to_deploy=()
   fi
 
   # Use BASE_DOMAIN from .env (sourced at script start) or default
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
-  # Check for Procfile (multi-process app)
-  local procfile="${repo_dir}/Procfile"
-  if [[ -f "${procfile}" ]]; then
-    log_msg "INFO" "Procfile detected, setting up multi-process app"
+  # Setup all detected services (multi-component or fallback to Procfile/single)
+  if [[ ${#services_to_deploy[@]} -gt 0 ]]; then
+    # Multi-component deployment
+    log_msg "INFO" "Setting up ${#services_to_deploy[@]} components..."
 
-    local proc_count=0
-    local web_port="${port}"
+    for component in "${services_to_deploy[@]}"; do
+      local component_dir="${repo_dir}/${component}"
+      local component_port="${port}"
 
-    while IFS= read -r proc_line; do
-      if [[ "${proc_line}" =~ ^([a-zA-Z][a-zA-Z0-9_-]*):(.+)$ ]]; then
-        local proc_name="${BASH_REMATCH[1]}"
-        local proc_cmd="${BASH_REMATCH[2]}"
-        local proc_port="${port}"
-
-        # Web process gets the main port, others get incremented ports
-        if [[ "${proc_name}" != "web" ]]; then
-          ((proc_count++))
-          proc_port=$((port + proc_count))
-        fi
-
-        log_msg "INFO" "Creating service for process: ${proc_name} (port ${proc_port})"
-        create_systemd_service_procfile "${app_name}" "${proc_name}" "${repo_dir}" "${proc_port}" "${proc_cmd}"
-
-        # Enable and start service
-        systemctl --user enable "appmotel-${app_name}-${proc_name}"
-        systemctl --user start "appmotel-${app_name}-${proc_name}"
+      # Only frontend gets the public port; others run internal
+      if [[ "${component}" != "frontend" ]]; then
+        component_port=$(find_free_port)
+        log_msg "INFO" "Assigned internal port ${component_port} for ${component}"
       fi
-    done < <(parse_procfile "${procfile}")
 
-    # Create Traefik config (only routes to web process on main port)
+      log_msg "INFO" "Setting up component: ${component}"
+
+      # Detect and setup component type
+      if [[ -f "${component_dir}/go.mod" ]]; then
+        setup_go_env "${component_dir}" || {
+          rm -rf "${app_data_dir}"
+          die "Failed to build Go component: ${component}"
+        }
+      elif [[ -f "${component_dir}/requirements.txt" ]] || [[ -f "${component_dir}/pyproject.toml" ]]; then
+        setup_python_env "${component_dir}" || {
+          rm -rf "${app_data_dir}"
+          die "Failed to setup Python component: ${component}"
+        }
+      elif [[ -f "${component_dir}/package.json" ]]; then
+        setup_nodejs_env "${component_dir}" || {
+          rm -rf "${app_data_dir}"
+          die "Failed to setup Node.js component: ${component}"
+        }
+      fi
+
+      # Run install script if exists in component
+      if [[ -f "${component_dir}/install.sh" ]]; then
+        log_msg "INFO" "Running install script for ${component}"
+        cd "${component_dir}"
+        if ! bash install.sh; then
+          rm -rf "${app_data_dir}"
+          die "Installation failed for component: ${component}"
+        fi
+      fi
+
+      # Create systemd service for component
+      # Frontend uses appmotel-<app>.service (no suffix), others get suffix
+      local service_suffix=""
+      if [[ "${component}" != "frontend" ]]; then
+        service_suffix="-${component}"
+      fi
+      create_systemd_service "${app_name}" "${component_dir}" "${component_port}" "${component}"
+
+      # Enable and start service
+      systemctl --user enable "appmotel-${app_name}${service_suffix}"
+      systemctl --user start "appmotel-${app_name}${service_suffix}"
+    done
+
+    # Create Traefik config only for frontend (public port)
     create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+
+    # Save metadata with services list
+    services_str=$(echo "${services_to_deploy[@]}" | tr ' ' '\n' | sort | tr '\n' ' ' | xargs)
+    save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}" "${services_str}"
   else
-    # Single process app
-    create_systemd_service "${app_name}" "${repo_dir}" "${port}"
+    # Single-component deployment - check for Procfile or standard single service
+    local procfile="${repo_dir}/Procfile"
+    if [[ -f "${procfile}" ]]; then
+      log_msg "INFO" "Procfile detected, setting up multi-process app"
 
-    # Create Traefik config with repo_dir for settings
-    create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+      local proc_count=0
+      while IFS= read -r proc_line; do
+        if [[ "${proc_line}" =~ ^([a-zA-Z][a-zA-Z0-9_-]*):(.+)$ ]]; then
+          local proc_name="${BASH_REMATCH[1]}"
+          local proc_cmd="${BASH_REMATCH[2]}"
+          local proc_port="${port}"
 
-    # Start service
-    systemctl --user enable "appmotel-${app_name}"
-    systemctl --user start "appmotel-${app_name}"
+          # Web process gets the main port, others get incremented ports
+          if [[ "${proc_name}" != "web" ]]; then
+            ((proc_count++))
+            proc_port=$((port + proc_count))
+          fi
+
+          log_msg "INFO" "Creating service for process: ${proc_name} (port ${proc_port})"
+          create_systemd_service_procfile "${app_name}" "${proc_name}" "${repo_dir}" "${proc_port}" "${proc_cmd}"
+
+          # Enable and start service
+          systemctl --user enable "appmotel-${app_name}-${proc_name}"
+          systemctl --user start "appmotel-${app_name}-${proc_name}"
+        fi
+      done < <(parse_procfile "${procfile}")
+
+      # Create Traefik config (only routes to web process on main port)
+      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+    else
+      # Single process app
+      create_systemd_service "${app_name}" "${repo_dir}" "${port}"
+
+      # Create Traefik config with repo_dir for settings
+      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${repo_dir}"
+
+      # Start service
+      systemctl --user enable "appmotel-${app_name}"
+      systemctl --user start "appmotel-${app_name}"
+    fi
+
+    # Save metadata (no SERVICES field for single-component)
+    save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}"
   fi
-
-  # Save metadata
-  save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}"
 
   local app_url="https://${app_name}.${base_domain}"
 
@@ -1242,12 +1488,41 @@ cmd_add() {
     return
   fi
 
-  # Check if the app URL is reachable (5 second timeout)
+  # Check if the app URL is reachable (retry for 15 seconds)
   log_msg "INFO" "Checking if app is accessible..."
-  if curl -s -o /dev/null -w '' --connect-timeout 5 --max-time 10 -k "${app_url}" 2>/dev/null; then
+
+  local http_code
+  local response_body
+  local max_attempts=15
+  local attempt=1
+  local app_accessible=false
+
+  while [[ ${attempt} -le ${max_attempts} ]]; do
+    http_code=$(curl -s -o /tmp/appmo_check_$$.html -w '%{http_code}' --connect-timeout 2 --max-time 3 -k "${app_url}" 2>/dev/null || echo "000")
+    response_body=$(cat /tmp/appmo_check_$$.html 2>/dev/null || echo "")
+    rm -f /tmp/appmo_check_$$.html
+
+    # Check for successful HTTP status (2xx or 3xx) and no "Bad Gateway" in response
+    if [[ "${http_code}" =~ ^[23] ]] && ! grep -qi "bad gateway" <<< "${response_body}"; then
+      app_accessible=true
+      break
+    fi
+
+    # Only wait and retry if not the last attempt
+    if [[ ${attempt} -lt ${max_attempts} ]]; then
+      sleep 1
+    fi
+    ((attempt++))
+  done
+
+  if [[ "${app_accessible}" == "true" ]]; then
     log_msg "INFO" "✓ App is accessible at ${app_url}"
   else
-    log_msg "WARN" "App not yet accessible - DNS may need configuration"
+    if [[ "${http_code}" == "502" ]] || grep -qi "bad gateway" <<< "${response_body}"; then
+      log_msg "WARN" "App not accessible - received Bad Gateway error (app may not be running on port ${port})"
+    else
+      log_msg "WARN" "App not yet accessible - DNS may need configuration"
+    fi
     log_msg "INFO" ""
     log_msg "INFO" "DNS Configuration Required:"
     log_msg "INFO" ""
@@ -1291,26 +1566,29 @@ cmd_remove() {
     log_msg "INFO" "Backed up .env to ${env_backup}"
   fi
 
-  # Stop and disable service
-  if systemctl --user is-active --quiet "appmotel-${app_name}"; then
-    systemctl --user stop "appmotel-${app_name}"
-  fi
+  # Get all services for this app (handles multi-component and Procfile)
+  local -a services
+  get_all_services "${app_name}" services
 
-  systemctl --user disable "appmotel-${app_name}" 2>/dev/null || true
-
-  # Also check for Procfile-based services
-  for service_file in "${SYSTEMD_USER_DIR}"/appmotel-"${app_name}"-*.service; do
-    if [[ -f "${service_file}" ]]; then
-      local service_name
-      service_name=$(basename "${service_file}" .service)
-      systemctl --user stop "${service_name}" 2>/dev/null || true
-      systemctl --user disable "${service_name}" 2>/dev/null || true
-      rm -f "${service_file}"
+  # Stop, disable, and remove all service files
+  for service in "${services[@]}"; do
+    local service_name
+    # Frontend gets no suffix, others get suffix
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      service_name="appmotel-${app_name}"
+    else
+      service_name="appmotel-${app_name}-${service}"
     fi
-  done
 
-  # Remove systemd service
-  rm -f "${SYSTEMD_USER_DIR}/appmotel-${app_name}.service"
+    # Stop and disable service
+    if systemctl --user is-active --quiet "${service_name}" 2>/dev/null; then
+      systemctl --user stop "${service_name}" 2>/dev/null || true
+    fi
+    systemctl --user disable "${service_name}" 2>/dev/null || true
+
+    # Remove service file
+    rm -f "${SYSTEMD_USER_DIR}/${service_name}.service"
+  done
   systemctl --user daemon-reload
 
   # Remove Traefik config
@@ -1355,8 +1633,8 @@ cmd_list() {
     return
   fi
 
-  printf "%-15s %-10s %-35s %s\n" "APP NAME" "STATUS" "URL" "REPO"
-  printf "%-15s %-10s %-35s %s\n" "--------" "------" "---" "----"
+  printf "%-15s %-10s %-30s %s\n" "APP NAME" "STATUS" "REPO" "URL"
+  printf "%-15s %-10s %-30s %s\n" "--------" "------" "----" "---"
 
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
@@ -1385,7 +1663,7 @@ cmd_list() {
       repo=$(echo "${github_url}" | sed -E 's|^https?://github\.com/||; s|^git@github\.com:||; s|\.git$||')
     fi
 
-    printf "%-15s %-10s %-35s %s\n" "${app}" "${status}" "${url}" "${repo}"
+    printf "%-15s %-10s %-30s %s\n" "${app}" "${status}" "${repo}" "${url}"
   done
 
   if [[ ${found_apps} -eq 0 ]]; then
@@ -1412,6 +1690,22 @@ cmd_status() {
 
   load_app_metadata "${app_name}"
 
+  # Get all services for this app
+  local -a services
+  get_all_services "${app_name}" services
+
+  # Show systemctl status for each service (allow failure for stopped services)
+  for service in "${services[@]}"; do
+    local service_name
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      service_name="appmotel-${app_name}"
+    else
+      service_name="appmotel-${app_name}-${service}"
+    fi
+    systemctl --user status "${service_name}" --no-pager 2>/dev/null || true
+    echo ""
+  done
+
   echo "App: ${app_name}"
   echo "URL: https://${app_name}.${base_domain}"
   echo "GitHub: ${GITHUB_URL} (${BRANCH})"
@@ -1419,20 +1713,36 @@ cmd_status() {
   echo "Last Deployment: $(format_timestamp "${LAST_DEPLOYMENT}")"
   echo ""
 
-  # Check systemd status
+  # Check status for each service/component
   echo "Service Status:"
-  if systemctl --user is-active --quiet "appmotel-${app_name}"; then
-    echo "  Systemd: running"
-  else
-    echo "  Systemd: stopped"
-  fi
+  for service in "${services[@]}"; do
+    local service_name
+    local display_name="${service}"
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      service_name="appmotel-${app_name}"
+      if [[ "${service}" == "${app_name}" ]]; then
+        display_name="main"
+      fi
+    else
+      service_name="appmotel-${app_name}-${service}"
+    fi
 
-  # Check port response
-  if timeout 2 bash -c "cat < /dev/null > /dev/tcp/localhost/${PORT}" 2>/dev/null; then
-    echo "  Port ${PORT}: responding"
-  else
-    echo "  Port ${PORT}: not responding"
-  fi
+    echo "  ${display_name}:"
+    if systemctl --user is-active --quiet "${service_name}" 2>/dev/null; then
+      echo "    Systemd: running"
+    else
+      echo "    Systemd: stopped"
+    fi
+
+    # Check port response for frontend only
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      if timeout 2 bash -c "cat < /dev/null > /dev/tcp/localhost/${PORT}" 2>/dev/null; then
+        echo "    Port ${PORT}: responding"
+      else
+        echo "    Port ${PORT}: not responding"
+      fi
+    fi
+  done
 }
 
 # -----------------------------------------------------------------------------
@@ -1445,11 +1755,23 @@ cmd_start() {
   fi
 
   local app_name="$1"
-
   require_app_exists "${app_name}"
 
+  # Get all services for this app (handles multi-component)
+  local -a services
+  get_all_services "${app_name}" services
+
   log_msg "INFO" "Starting app: ${app_name}"
-  systemctl --user start "appmotel-${app_name}"
+  for service in "${services[@]}"; do
+    local service_name
+    # Frontend gets no suffix, others get suffix
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      service_name="appmotel-${app_name}"
+    else
+      service_name="appmotel-${app_name}-${service}"
+    fi
+    systemctl --user start "${service_name}"
+  done
   log_msg "INFO" "App started"
 }
 
@@ -1463,11 +1785,23 @@ cmd_stop() {
   fi
 
   local app_name="$1"
-
   require_app_exists "${app_name}"
 
+  # Get all services for this app (handles multi-component)
+  local -a services
+  get_all_services "${app_name}" services
+
   log_msg "INFO" "Stopping app: ${app_name}"
-  systemctl --user stop "appmotel-${app_name}"
+  for service in "${services[@]}"; do
+    local service_name
+    # Frontend gets no suffix, others get suffix
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      service_name="appmotel-${app_name}"
+    else
+      service_name="appmotel-${app_name}-${service}"
+    fi
+    systemctl --user stop "${service_name}"
+  done
   log_msg "INFO" "App stopped"
 }
 
@@ -1481,11 +1815,23 @@ cmd_restart() {
   fi
 
   local app_name="$1"
-
   require_app_exists "${app_name}"
 
+  # Get all services for this app (handles multi-component)
+  local -a services
+  get_all_services "${app_name}" services
+
   log_msg "INFO" "Restarting app: ${app_name}"
-  systemctl --user restart "appmotel-${app_name}"
+  for service in "${services[@]}"; do
+    local service_name
+    # Frontend gets no suffix, others get suffix
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      service_name="appmotel-${app_name}"
+    else
+      service_name="appmotel-${app_name}-${service}"
+    fi
+    systemctl --user restart "${service_name}"
+  done
   log_msg "INFO" "App restarted"
 }
 
@@ -1548,15 +1894,47 @@ cmd_update() {
       fi
     fi
 
-    # Setup environments
-    setup_python_env "${repo_dir}"
-    setup_nodejs_env "${repo_dir}"
-    setup_go_env "${repo_dir}"
+    # Get all services for this app
+    local -a services
+    get_all_services "${app_name}" services
 
-    # Run install script
-    if ! run_install_script "${repo_dir}"; then
-      log_msg "ERROR" "Install script failed"
-      update_failed=true
+    # Check if multi-component app
+    if [[ ${#services[@]} -gt 1 ]] && [[ "${services[0]}" != "${app_name}" ]]; then
+      # Multi-component: setup each component
+      log_msg "INFO" "Updating ${#services[@]} components..."
+      for component in "${services[@]}"; do
+        local component_dir="${repo_dir}/${component}"
+        log_msg "INFO" "Updating component: ${component}"
+
+        # Setup component environment
+        if [[ -f "${component_dir}/go.mod" ]]; then
+          setup_go_env "${component_dir}" || update_failed=true
+        elif [[ -f "${component_dir}/requirements.txt" ]] || [[ -f "${component_dir}/pyproject.toml" ]]; then
+          setup_python_env "${component_dir}" || update_failed=true
+        elif [[ -f "${component_dir}/package.json" ]]; then
+          setup_nodejs_env "${component_dir}" || update_failed=true
+        fi
+
+        # Run component install script
+        if [[ -f "${component_dir}/install.sh" ]]; then
+          cd "${component_dir}"
+          if ! bash install.sh; then
+            log_msg "ERROR" "Install script failed for ${component}"
+            update_failed=true
+          fi
+        fi
+      done
+    else
+      # Single-component: setup root repo
+      setup_python_env "${repo_dir}"
+      setup_nodejs_env "${repo_dir}"
+      setup_go_env "${repo_dir}"
+
+      # Run install script
+      if ! run_install_script "${repo_dir}"; then
+        log_msg "ERROR" "Install script failed"
+        update_failed=true
+      fi
     fi
   fi
 
@@ -1567,11 +1945,26 @@ cmd_update() {
     return 1
   fi
 
-  # Update metadata timestamp
-  save_app_metadata "${app_name}" "${GITHUB_URL}" "${BRANCH}" "${PORT}"
+  # Get SERVICES string if multi-component
+  local services_str=""
+  if [[ ${#services[@]} -gt 1 ]] && [[ "${services[0]}" != "${app_name}" ]]; then
+    services_str=$(echo "${services[@]}" | tr ' ' '\n' | sort | tr '\n' ' ' | xargs)
+  fi
 
-  # Restart service
-  systemctl --user restart "appmotel-${app_name}"
+  # Update metadata timestamp
+  save_app_metadata "${app_name}" "${GITHUB_URL}" "${BRANCH}" "${PORT}" "${services_str}"
+
+  # Restart all services
+  log_msg "INFO" "Restarting services..."
+  for service in "${services[@]}"; do
+    local service_name
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      service_name="appmotel-${app_name}"
+    else
+      service_name="appmotel-${app_name}-${service}"
+    fi
+    systemctl --user restart "${service_name}"
+  done
 
   log_msg "INFO" "App updated successfully (backup: ${backup_id})"
 }
@@ -1590,7 +1983,24 @@ cmd_logs() {
 
   require_app_exists "${app_name}"
 
-  journalctl --user -u "appmotel-${app_name}" -n "${lines}" --no-pager
+  # Get all services for this app
+  local -a services
+  get_all_services "${app_name}" services
+
+  # Build journalctl command with all service units
+  local -a unit_args=()
+  for service in "${services[@]}"; do
+    local service_name
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      service_name="appmotel-${app_name}"
+    else
+      service_name="appmotel-${app_name}-${service}"
+    fi
+    unit_args+=("-u" "${service_name}")
+  done
+
+  # Show logs from all services
+  journalctl --user "${unit_args[@]}" -n "${lines}" --no-pager
 }
 
 # -----------------------------------------------------------------------------
@@ -1985,7 +2395,7 @@ main() {
   case "${command}" in
     add) cmd_add "$@" ;;
     remove|rm) cmd_remove "$@" ;;
-    list) cmd_list "$@" ;;
+    list|ls) cmd_list "$@" ;;
     status) cmd_status "$@" ;;
     start) cmd_start "$@" ;;
     stop) cmd_stop "$@" ;;
