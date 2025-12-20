@@ -10,9 +10,9 @@ Appmotel is a no-frills PaaS system using ubiquitous components such as Systemd 
 
 ```bash
 # Development testing (from apps user)
-sudo -u appmotel bash reset-home.sh --force  # Reset appmotel home for clean install
-sudo bash install.sh                          # System-level setup (as root)
-sudo su - appmotel && bash install.sh         # User-level setup (as appmotel)
+sudo -u appmotel bash bin/reset-home.sh --force  # Reset appmotel home for clean install
+sudo bash install.sh                             # System-level setup (as root)
+sudo su - appmotel && bash install.sh            # User-level setup (as appmotel)
 
 # Validate Bash scripts before committing
 bash -n script.sh
@@ -75,7 +75,9 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 | `install.sh` | Main installation script (handles both root and user-level setup) |
 | `bin/appmo` | CLI tool for managing apps |
 | `bin/appmo-completion.bash` | Shell completion for appmo |
+| `bin/reset-home.sh` | Reset appmotel home directory for clean testing |
 | `templates/appmotel-autopull.*` | Systemd units for automatic git polling |
+| `docs/*.md` | Development, implementation, and testing documentation |
 | `.claude/skills/` | Reference docs for bash, traefik, troubleshooting, DNS |
 
 ### Directory Structure (appmotel user)
@@ -108,7 +110,14 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 5. Creates systemd user service and Traefik dynamic config
 6. Autopull timer checks for git updates every 2 minutes
 
-**App Type Detection Priority:** Go (`go.mod`) > Python (`requirements.txt`) > Node.js (`package.json`)
+**App Type Detection Priority:**
+- Single app: `start.sh` > Go (`go.mod`) > Python (`requirements.txt`/`pyproject.toml`) > Node.js (`package.json`)
+- Multi-component: Auto-detects components in `frontend/`, `backend/`, `api/`, `worker/`, `db/`, `cache/` or `src/{component}/`
+
+**Automatic Framework Support:**
+- **Next.js static export**: Auto-builds and serves with `serve`
+- **Vite + TypeScript**: Auto-builds and serves static dist
+- **Python with start.sh**: Auto-configures venv PATH
 
 ### appmo CLI Commands
 
@@ -117,6 +126,7 @@ appmo add <app> <url|user/repo> [branch]  # Deploy new app (short form auto-expa
 appmo remove <app>              # Remove app completely (backs up .env)
 appmo rm <app>                  # Alias for remove
 appmo list                      # List all apps
+appmo ls                        # Alias for list
 appmo status [app]              # Show status
 appmo start|stop|restart <app>  # Service control
 appmo update <app>              # Pull and redeploy
@@ -140,6 +150,34 @@ Each deployed app needs:
 - `MEMORY_LIMIT=512M`, `CPU_QUOTA=100%` - Resource limits
 - `RATE_LIMIT_AVG=100`, `RATE_LIMIT_BURST=50` - Rate limiting
 - `HEALTH_CHECK_PATH=/health` - Health check endpoint
+
+### Multi-Component Apps
+
+Appmotel automatically detects and deploys apps with multiple service components (e.g., frontend + backend):
+
+**Supported Structure:**
+- `frontend/`, `backend/`, `api/`, `worker/`, `db/`, `cache/` (root level)
+- `src/frontend/`, `src/backend/`, `src/api/`, etc. (src subdirectory)
+
+**Service Naming:**
+- Frontend: `appmotel-<app>.service` (no suffix, public port, Traefik-enabled)
+- Backend: `appmotel-<app>-backend.service` (with suffix, internal port)
+- Other: `appmotel-<app>-{component}.service`
+
+**Port Allocation:**
+- Frontend gets assigned public PORT (exposed via Traefik)
+- Backend/other components get internal ports (not publicly accessible)
+
+**Command Behavior:**
+All `appmo` commands (start, stop, restart, remove, update, logs, status) affect ALL services in the app namespace. The app appears as a single entry in `appmo list`.
+
+**Example:**
+```bash
+appmo add myapp user/repo      # Detects frontend + backend, creates both services
+appmo ls                        # Shows "myapp" once
+appmo status myapp             # Shows both frontend + backend status
+appmo stop myapp               # Stops both services
+```
 
 ### .env File Management
 
@@ -215,9 +253,9 @@ See `DEV-SETUP.md` for complete execution model documentation.
 
 **Clean Install Testing:**
 ```bash
-sudo -u appmotel bash reset-home.sh --force  # Reset home directory
-sudo bash install.sh                          # System-level (creates user, services, sudoers)
-sudo su - appmotel && bash install.sh         # User-level (Traefik, appmo, configs)
+sudo -u appmotel bash bin/reset-home.sh --force  # Reset home directory
+sudo bash install.sh                             # System-level (creates user, services, sudoers)
+sudo su - appmotel && bash install.sh            # User-level (Traefik, appmo, configs)
 ```
 
 ## Installation

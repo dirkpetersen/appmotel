@@ -661,12 +661,20 @@ detect_components() {
   local known_components=("frontend" "backend" "api" "worker" "db" "cache")
   local detected=()
 
-  # Check each known component directory
+  # Check each known component directory (both root and src/ subdirectory)
   for component in "${known_components[@]}"; do
-    local component_path="${repo_dir}/${component}"
+    local component_path=""
+
+    # Check root level first (e.g., frontend/, backend/)
+    if [[ -d "${repo_dir}/${component}" ]]; then
+      component_path="${repo_dir}/${component}"
+    # Then check src/ subdirectory (e.g., src/frontend/, src/backend/)
+    elif [[ -d "${repo_dir}/src/${component}" ]]; then
+      component_path="${repo_dir}/src/${component}"
+    fi
 
     # Check if component directory exists and has app markers
-    if [[ -d "${component_path}" ]]; then
+    if [[ -n "${component_path}" ]]; then
       if [[ -f "${component_path}/package.json" ]] || \
          [[ -f "${component_path}/requirements.txt" ]] || \
          [[ -f "${component_path}/pyproject.toml" ]] || \
@@ -1368,7 +1376,12 @@ cmd_add() {
     log_msg "INFO" "Setting up ${#services_to_deploy[@]} components..."
 
     for component in "${services_to_deploy[@]}"; do
+      # Resolve component directory (check root level first, then src/)
       local component_dir="${repo_dir}/${component}"
+      if [[ ! -d "${component_dir}" ]]; then
+        component_dir="${repo_dir}/src/${component}"
+      fi
+
       local component_port="${port}"
 
       # Only frontend gets the public port; others run internal
@@ -1377,7 +1390,7 @@ cmd_add() {
         log_msg "INFO" "Assigned internal port ${component_port} for ${component}"
       fi
 
-      log_msg "INFO" "Setting up component: ${component}"
+      log_msg "INFO" "Setting up component: ${component} at ${component_dir}"
 
       # Detect and setup component type
       if [[ -f "${component_dir}/go.mod" ]]; then
@@ -1903,8 +1916,12 @@ cmd_update() {
       # Multi-component: setup each component
       log_msg "INFO" "Updating ${#services[@]} components..."
       for component in "${services[@]}"; do
+        # Resolve component directory (check root level first, then src/)
         local component_dir="${repo_dir}/${component}"
-        log_msg "INFO" "Updating component: ${component}"
+        if [[ ! -d "${component_dir}" ]]; then
+          component_dir="${repo_dir}/src/${component}"
+        fi
+        log_msg "INFO" "Updating component: ${component} at ${component_dir}"
 
         # Setup component environment
         if [[ -f "${component_dir}/go.mod" ]]; then

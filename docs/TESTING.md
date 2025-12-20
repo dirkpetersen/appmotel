@@ -17,7 +17,7 @@ This document provides instructions for testing the Appmotel system.
 ```bash
 # Clean the appmotel user's home directory
 cd /path/to/appmotel
-sudo -u appmotel bash reset-home.sh --force
+sudo -u appmotel bash bin/reset-home.sh --force
 
 # Run installation
 sudo bash install.sh

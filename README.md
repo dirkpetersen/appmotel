@@ -20,6 +20,7 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 
 ### 🚀 Core Features
 - **One-Command Deploy**: `appmo add myapp https://github.com/user/repo main`
+- **Multi-Component Apps**: Auto-detects and deploys frontend + backend as unified app
 - **Automatic HTTPS**: Let's Encrypt integration via Traefik with wildcard certificate support
 - **Zero-Downtime Updates**: Automatic backup and rollback on failure
 - **Multi-Process Apps**: Procfile support for apps requiring multiple processes
@@ -40,9 +41,10 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 - **Backup/Restore**: One-command backup and restore functionality
 
 ### 🔧 Supported Platforms
-- **Python**: Automatic virtual environment setup with `requirements.txt`
-- **Node.js**: Automatic dependency installation with `package.json`
+- **Python**: Virtual environment setup with `requirements.txt` or `pyproject.toml`
+- **Node.js**: Auto-builds Next.js static export and Vite+TypeScript apps
 - **Go**: Automatic build with `go.mod` (supports `cmd/` directory structure)
+- **Multi-Component**: Frontend/backend in `{component}/` or `src/{component}/` directories
 - **Multi-Process**: Procfile support (web, worker, etc.)
 
 ## Quick Start
@@ -550,7 +552,7 @@ sudo su - appmotel
 Clean home directory for fresh install testing:
 ```bash
 # Reset appmotel home directory (executes as appmotel user)
-sudo -u appmotel bash reset-home.sh --force
+sudo -u appmotel bash bin/reset-home.sh --force
 
 # Run fresh installation
 bash install.sh
@@ -768,6 +770,14 @@ myapp/
 - **Default Limits**: 512M memory, 100% CPU per app
 - **Rate Limiting**: 100 req/sec average, 50 burst
 - **Health Checks**: 30s interval, 5s timeout
+
+## Documentation
+
+For detailed information about development, implementation, and testing:
+
+- **[Development Setup](docs/DEV-SETUP.md)** - Complete development environment setup and execution model
+- **[Implementation Details](docs/IMPLEMENTATION.md)** - Architecture, design decisions, and technical details
+- **[Testing Guide](docs/TESTING.md)** - Comprehensive testing procedures and validation steps
 
 ## Contributing
 
