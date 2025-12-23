@@ -10,6 +10,8 @@
 
 Appmotel is a minimalist PaaS that makes deploying and managing web applications as simple as a single command. Deploy Python, Node.js, and Go applications with automatic HTTPS, health checks, rate limiting, and seamless updates—all managed through systemd user services and Traefik reverse proxy.
 
+<img width="820" height="184" alt="image" src="https://github.com/user-attachments/assets/f1996bd3-bf33-4619-9cb4-25eaace8ad04" />
+
 **Key Philosophy:**
 - Use battle-tested, ubiquitous tools (systemd, Traefik, GitHub)
 - No complex orchestration or containers required
