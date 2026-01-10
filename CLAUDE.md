@@ -6,6 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Appmotel is a no-frills PaaS system using ubiquitous components such as Systemd and GitHub runner in combination with Traefik, a reverse proxy with advanced capabilities.
 
+## Running from Operator Account (apps user)
+
+**CRITICAL:** When running Claude Code or automation tools as the `apps` user (operator account), **ALL** appmotel commands must be prefixed with `sudo -u appmotel`:
+
+```bash
+# ✅ CORRECT: All commands run as appmotel user
+sudo -u appmotel appmo add myapp user/repo main
+sudo -u appmotel appmo list
+sudo -u appmotel appmo status myapp
+sudo -u appmotel appmo logs myapp
+
+# ❌ WRONG: Running as apps user (will fail)
+appmo list  # Command not found or permission denied
+```
+
+**See `.claude/skills/appmotel.md` for complete 24x7 automation guide.**
+
 ## Quick Reference Commands
 
 ```bash
@@ -78,7 +95,7 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 | `bin/reset-home.sh` | Reset appmotel home directory for clean testing |
 | `templates/appmotel-autopull.*` | Systemd units for automatic git polling |
 | `docs/*.md` | Development, implementation, and testing documentation |
-| `.claude/skills/` | Reference docs for bash, traefik, troubleshooting, DNS |
+| `.claude/skills/` | Reference docs: appmotel (24x7 automation), bash, traefik, troubleshooting, DNS |
 
 ### Directory Structure (appmotel user)
 
@@ -305,3 +322,17 @@ sudo -u appmotel appmo add flask-test https://github.com/dirkpetersen/appmotel m
 sudo -u appmotel appmo status flask-test
 sudo -u appmotel appmo logs flask-test
 ```
+
+## GitHub Workflows
+
+**Issue Auto-Fix:** The repository has a GitHub Actions workflow (`.github/workflows/issue-auto-fix.yml`) that automatically attempts to fix issues using Claude Code:
+
+- Triggers on new issues or manually via workflow_dispatch
+- Creates feature branch `fix/issue-{number}`
+- Uses Claude Code to analyze and fix the issue
+- Automatically commits changes and creates a PR
+- Optionally auto-merges PR if `ISSUE_AUTO_FIX_MERGE=yes` is set
+
+**Required Secrets:**
+- `BEDROCK_AWS_ACCESS_KEY_ID` and `BEDROCK_AWS_SECRET_ACCESS_KEY` for AWS Bedrock
+- `PAT_TOKEN` for PR creation (optional, falls back to `GITHUB_TOKEN`)
