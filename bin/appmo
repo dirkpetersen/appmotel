@@ -441,6 +441,21 @@ validate_app_name() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: check_github_ssh_access
+# Description: Check if user has SSH access to GitHub
+# Returns: 0 if SSH works, 1 otherwise
+# -----------------------------------------------------------------------------
+check_github_ssh_access() {
+  # Try to connect to GitHub via SSH with a short timeout
+  # GitHub returns "Hi username! You've successfully authenticated" on success
+  # Exit code 1 with that message means authentication worked (not a real shell)
+  if timeout 5 ssh -T -o StrictHostKeyChecking=accept-new -o BatchMode=yes git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    return 0
+  fi
+  return 1
+}
+
+# -----------------------------------------------------------------------------
 # Function: validate_github_url
 # Description: Validates GitHub URL format
 # -----------------------------------------------------------------------------
@@ -1875,10 +1890,18 @@ cmd_add() {
   validate_github_url "${github_url}"
   validate_branch_name "${branch}"
 
-  # Auto-expand short GitHub URLs (e.g., "user/repo" -> "https://github.com/user/repo")
+  # Auto-expand short GitHub URLs (e.g., "user/repo" -> git@github.com:user/repo.git or https://github.com/user/repo)
   if [[ ! "${github_url}" =~ ^(https?://|git@) ]] && [[ "${github_url}" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
-    github_url="https://github.com/${github_url}"
-    log_msg "INFO" "Expanded to: ${github_url}"
+    # Check if user has SSH access to GitHub
+    if check_github_ssh_access; then
+      # Use SSH URL for authenticated access
+      github_url="git@github.com:${github_url}.git"
+      log_msg "INFO" "Expanded to SSH: ${github_url}"
+    else
+      # Use HTTPS URL for anonymous access (no credentials needed for public repos)
+      github_url="https://github.com/${github_url}"
+      log_msg "INFO" "Expanded to HTTPS: ${github_url}"
+    fi
   fi
 
   if app_exists "${app_name}"; then
