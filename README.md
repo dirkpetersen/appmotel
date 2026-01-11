@@ -106,8 +106,8 @@ sudo -u appmotel appmo logs myapp
 # Application Management
 appmo add <app-name> <url|user/repo> [branch] # Deploy a new app
 appmo add <app-name> <github-tree-url>        # Deploy from subfolder
-appmo remove <app-name>                       # Remove an app
-appmo list                                    # List all apps
+appmo remove <app-name>                       # Remove an app (alias: rm)
+appmo list                                    # List all apps (alias: ls)
 appmo status [app-name]                       # Show app status
 
 # App Control
@@ -115,6 +115,13 @@ appmo start <app-name>                        # Start an app
 appmo stop <app-name>                         # Stop an app
 appmo restart <app-name>                      # Restart an app
 appmo update <app-name>                       # Update app (auto-backup & rollback)
+
+# Updates & Automation
+appmo check [app-name]                        # Check for updates (no deploy)
+appmo autopull                                # Check all apps for updates and deploy
+
+# Environment Management
+appmo env <app-name>                          # Edit app's .env file in default editor
 
 # Monitoring & Debugging
 appmo logs <app-name> [lines]                 # View application logs

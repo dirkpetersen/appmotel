@@ -116,7 +116,7 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 │       └── traefik/acme.json # ACME certificates (mode 600)
 ```
 
-**Note:** Each app's physical `.env` file lives in `~/.config/appmotel/<app>/.env`. The repository has a symlink at `~/.local/share/appmotel/<app>/repo/.env` pointing to the config directory.
+**Note:** Each app's physical `.env` file lives in `~/.config/appmotel/<app>/.env`. The repository has a symlink at `~/.local/share/appmotel/<app>/repo/.env` pointing to the config directory. See `docs/ENV-MANAGEMENT.md` for details.
 
 ### Application Deployment Flow
 
@@ -129,7 +129,7 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 
 **App Type Detection Priority:**
 - Single app: `start.sh` > Go (`go.mod`) > Python (`requirements.txt`/`pyproject.toml`) > Node.js (`package.json`)
-- Multi-component: Auto-detects components in `frontend/`, `backend/`, `api/`, `worker/`, `db/`, `cache/` or `src/{component}/`
+- Multi-component: Auto-detects components in `frontend/`, `backend/`, `api/`, `worker/`, `db/`, `cache/` or `src/{component}/`. See `docs/MULTI-COMPONENT.md` for details.
 
 **Automatic Framework Support:**
 - **Next.js static export**: Auto-builds and serves with `serve`
@@ -147,6 +147,7 @@ appmo ls                        # Alias for list
 appmo status [app]              # Show status
 appmo start|stop|restart <app>  # Service control
 appmo update <app>              # Pull and redeploy
+appmo check [app]               # Check for updates (no deploy)
 appmo autopull                  # Check all apps for updates
 appmo logs <app> [lines]        # View logs
 appmo env <app>                 # Edit app's .env file in default editor
@@ -154,12 +155,10 @@ appmo exec <app> <cmd>          # Run command in app env
 appmo backup|restore|backups    # Backup management
 ```
 
-**Note on `remove`/`rm`:** When removing an app, the `.env` file is backed up to `.env.backup`. If the same app is re-added, the user is prompted to restore it.
-
 ### App Requirements
 
 Each deployed app needs:
-1. `.env` file with `PORT` (or auto-assigned)
+1. `.env` file with `PORT` (or auto-assigned). Reads `PORT`, `FLASK_PORT`, or any `*PORT*` variable.
 2. `install.sh` script (runs on deploy and update)
 3. Entry point: `go.mod`, `app.py`, `package.json` with start script, or `Procfile`
 
@@ -167,47 +166,6 @@ Each deployed app needs:
 - `MEMORY_LIMIT=512M`, `CPU_QUOTA=100%` - Resource limits
 - `RATE_LIMIT_AVG=100`, `RATE_LIMIT_BURST=50` - Rate limiting
 - `HEALTH_CHECK_PATH=/health` - Health check endpoint
-
-### Multi-Component Apps
-
-Appmotel automatically detects and deploys apps with multiple service components (e.g., frontend + backend):
-
-**Supported Structure:**
-- `frontend/`, `backend/`, `api/`, `worker/`, `db/`, `cache/` (root level)
-- `src/frontend/`, `src/backend/`, `src/api/`, etc. (src subdirectory)
-
-**Service Naming:**
-- Frontend: `appmotel-<app>.service` (no suffix, public port, Traefik-enabled)
-- Backend: `appmotel-<app>-backend.service` (with suffix, internal port)
-- Other: `appmotel-<app>-{component}.service`
-
-**Port Allocation:**
-- Frontend gets assigned public PORT (exposed via Traefik)
-- Backend/other components get internal ports (not publicly accessible)
-
-**Command Behavior:**
-All `appmo` commands (start, stop, restart, remove, update, logs, status) affect ALL services in the app namespace. The app appears as a single entry in `appmo list`.
-
-**Example:**
-```bash
-appmo add myapp user/repo      # Detects frontend + backend, creates both services
-appmo ls                        # Shows "myapp" once
-appmo status myapp             # Shows both frontend + backend status
-appmo stop myapp               # Stops both services
-```
-
-### .env File Management
-
-**Storage:** Physical `.env` files are stored in `~/.config/appmotel/<app>/.env` (not in the repo). This enables:
-- **Persistent configuration** across app reinstalls/updates
-- **Backup/restore workflow**: When removing an app, `.env` is backed up to `.env.backup`
-- **Restore prompt**: When re-adding an app with an existing backup, user is asked whether to restore it
-
-**Workflow:**
-1. `appmo add myapp ...` → Creates `.env` from template or backup
-2. `appmo env myapp` → Edit `.env` in $EDITOR (physical in config dir)
-3. `appmo remove myapp` → Backs up `.env` to `.env.backup`
-4. `appmo add myapp ...` again → Prompts to restore previous `.env` or start fresh
 
 ### Traefik Configuration
 
@@ -260,20 +218,7 @@ sudo -u appmotel sudo systemctl restart traefik-appmotel
 sudo -u appmotel systemctl --user restart appmotel-myapp
 ```
 
-See `DEV-SETUP.md` for complete execution model documentation.
-
-## Development Environment
-
-**Users:**
-- `apps` (operator) - Development user with full control over appmotel via sudoers, authenticated to GitHub
-- `appmotel` (service) - Target deployment user, limited sudo for Traefik only
-
-**Clean Install Testing:**
-```bash
-sudo -u appmotel bash bin/reset-home.sh --force  # Reset home directory
-sudo bash install.sh                             # System-level (creates user, services, sudoers)
-sudo su - appmotel && bash install.sh            # User-level (Traefik, appmo, configs)
-```
+See `docs/DEV-SETUP.md` for complete execution model documentation.
 
 ## Installation
 
@@ -306,7 +251,7 @@ bash install-aws.sh [instance-type] [region]  # Default: t4g.micro us-west-2
 
 ## Testing
 
-See `TESTING.md` for complete test procedures.
+See `docs/TESTING.md` for complete test procedures.
 
 **Quick Validation:**
 ```bash
@@ -336,3 +281,11 @@ sudo -u appmotel appmo logs flask-test
 **Required Secrets:**
 - `BEDROCK_AWS_ACCESS_KEY_ID` and `BEDROCK_AWS_SECRET_ACCESS_KEY` for AWS Bedrock
 - `PAT_TOKEN` for PR creation (optional, falls back to `GITHUB_TOKEN`)
+
+## Additional Documentation
+
+- **[docs/MULTI-COMPONENT.md](docs/MULTI-COMPONENT.md)** - Multi-component app deployment and management
+- **[docs/ENV-MANAGEMENT.md](docs/ENV-MANAGEMENT.md)** - Environment variable and .env file management
+- **[docs/DEV-SETUP.md](docs/DEV-SETUP.md)** - Complete development environment setup
+- **[docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md)** - Architecture and design decisions
+- **[docs/TESTING.md](docs/TESTING.md)** - Comprehensive testing procedures
