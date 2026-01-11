@@ -1132,15 +1132,24 @@ setup_app_env_file() {
 
   # Ensure PORT is set in .env and override any low ports (< 10001)
   # Apps should not dictate their own ports - the PaaS assigns them
+  local port_updated=false
   if grep -q "^PORT=" "${config_env}" 2>/dev/null; then
     local existing_port
     existing_port=$(grep "^PORT=" "${config_env}" | cut -d'=' -f2 | tr -d ' ')
     if [[ "${existing_port}" =~ ^[0-9]+$ ]] && [[ "${existing_port}" -lt 10001 ]]; then
       log_msg "WARN" "Overriding low port ${existing_port} with assigned port ${port}"
       update_port_in_env "${config_env}" "${port}"
+      port_updated=true
     fi
   else
     echo "PORT=${port}" >> "${config_env}"
+    port_updated=true
+  fi
+
+  # Always update FLASK_PORT if it exists and we're setting a port
+  if [[ "${port_updated}" == "true" ]] && grep -q "^FLASK_PORT=" "${config_env}" 2>/dev/null; then
+    log_msg "INFO" "Updating FLASK_PORT to match assigned PORT ${port}"
+    sed -i "s/^FLASK_PORT=.*/FLASK_PORT=${port}/" "${config_env}"
   fi
 
   # Verify config .env exists before creating symlinks
