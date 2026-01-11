@@ -1917,6 +1917,26 @@ cmd_add() {
   local app_data_dir="${APPS_DATA_DIR}/${app_name}"
   local repo_dir="${app_data_dir}/repo"
 
+  # Clean up any leftover directories from failed deployments
+  # If app doesn't exist in metadata but directory exists, it's a leftover
+  if [[ -d "${app_data_dir}" ]] && ! app_exists "${app_name}"; then
+    log_msg "WARN" "Cleaning up leftover directory from previous failed deployment"
+    safe_rm_rf "${app_data_dir}" "cmd_add cleanup leftover"
+  fi
+
+  # Verify repository exists before attempting to clone (for HTTPS URLs only)
+  # Skip this check for SSH URLs as they require authentication to test
+  if [[ "${github_url}" =~ ^https:// ]]; then
+    log_msg "INFO" "Verifying repository exists: ${github_url}"
+    local repo_check
+    repo_check=$(curl -I -s -o /dev/null -w "%{http_code}" "${github_url}" 2>/dev/null || echo "000")
+    if [[ "${repo_check}" == "404" ]]; then
+      die "Repository not found: ${github_url} (HTTP 404). Please check the URL and ensure the repository exists."
+    elif [[ "${repo_check}" == "000" ]]; then
+      log_msg "WARN" "Could not verify repository existence (network issue?), proceeding anyway"
+    fi
+  fi
+
   mkdir -p "${app_data_dir}"
 
   # Clone or update repository
