@@ -578,6 +578,10 @@ entryPoints:
           scheme: https
   websecure:
     address: ":443"
+    transport:
+      respondingTimeouts:
+        writeTimeout: 600s
+        idleTimeout: 300s
 
 providers:
   file:
