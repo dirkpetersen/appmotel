@@ -400,6 +400,7 @@ Commands:
   backup <app-name>                      Create a backup of an app
   restore <app-name> [backup-id]         Restore an app from backup
   backups <app-name>                     List available backups for an app
+  self-update                            Update appmo CLI, Traefik, and configs
 
 URL Formats:
   user/repo                              Short form (expands to GitHub)
@@ -3238,6 +3239,47 @@ cmd_autopull() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: cmd_self_update
+# Description: Update all appmotel components (appmo CLI, Traefik, configs)
+# Downloads and runs the latest install.sh in user mode for full parity
+# with a fresh install. Components updated:
+#   - appmo CLI binary and shell completion
+#   - Traefik binary (latest release)
+#   - Traefik static configuration (picks up new settings)
+#   - Autopull systemd units
+# Note: Traefik service restart requires sudo and is prompted separately.
+# -----------------------------------------------------------------------------
+cmd_self_update() {
+  local github_base="https://raw.githubusercontent.com/dirkpetersen/appmotel/main"
+  local install_url="${github_base}/install.sh?$(date +%s)"
+
+  log_msg "INFO" "Updating appmotel components..."
+
+  # Download latest install.sh to temp file
+  local tmp_install
+  tmp_install=$(create_temp_file "install-update")
+  if ! curl -fsSL "${install_url}" -o "${tmp_install}"; then
+    die "Failed to download latest install.sh from GitHub"
+  fi
+
+  # Run user-level installation (same code path as fresh install)
+  # install.sh detects non-root and runs run_as_appmotel_user() which updates:
+  #   download_traefik, generate_traefik_config, install_appmo_cli,
+  #   install_autopull, setup_path
+  log_msg "INFO" "Running latest install.sh (user-level)..."
+  if bash "${tmp_install}"; then
+    log_msg "INFO" "All appmotel components updated successfully"
+  else
+    die "Self-update failed during install.sh execution"
+  fi
+
+  # Traefik needs a service restart to pick up binary/config changes
+  log_msg "INFO" ""
+  log_msg "INFO" "To apply Traefik changes, restart the service:"
+  log_msg "INFO" "  sudo systemctl restart traefik-appmotel"
+}
+
+# -----------------------------------------------------------------------------
 # Function: main
 # Description: Main CLI dispatcher
 # -----------------------------------------------------------------------------
@@ -3266,6 +3308,7 @@ main() {
     backup) cmd_backup "$@" ;;
     restore) cmd_restore "$@" ;;
     backups) cmd_backups "$@" ;;
+    self-update) cmd_self_update "$@" ;;
     -h|--help|help) usage ;;
     *) die "Unknown command: ${command}. Use 'appmo --help' for usage." ;;
   esac

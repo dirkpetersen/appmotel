@@ -10,7 +10,7 @@ _appmo_completions() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   # Main commands (rm is hidden alias for remove)
-  local commands="add remove rm list status start stop restart update autopull logs env exec backup restore backups help"
+  local commands="add remove rm list status start stop restart update autopull logs env exec backup restore backups self-update help"
 
   # Get list of apps for completion (exclude .env file, only list directories)
   local apps=""
@@ -33,7 +33,7 @@ _appmo_completions() {
           # Complete with app names
           COMPREPLY=($(compgen -W "${apps}" -- "${cur}"))
           ;;
-        list|help)
+        list|self-update|help)
           # No further arguments
           ;;
       esac
