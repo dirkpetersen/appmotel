@@ -131,6 +131,9 @@ appmo exec <app-name> <command>               # Run command in app environment
 appmo backup <app-name>                       # Create backup
 appmo restore <app-name> [backup-id]          # Restore from backup
 appmo backups <app-name>                      # List available backups
+
+# System Maintenance
+appmo self-update                             # Update appmo CLI, Traefik, and configs
 ```
 
 ### Application Requirements

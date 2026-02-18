@@ -164,6 +164,16 @@ sudo -u appmotel appmo restore myapp 2025-01-10-120000
 sudo -u appmotel appmo restore myapp
 ```
 
+### Self-Update
+
+```bash
+# Update appmo CLI, Traefik binary, and configs
+sudo -u appmotel appmo self-update
+
+# After self-update, restart Traefik to apply changes
+sudo -u appmotel sudo systemctl restart traefik-appmotel
+```
+
 ### Checking System Status
 
 ```bash
@@ -530,6 +540,9 @@ sudo -u appmotel appmo update <app>
 
 # Remove app
 sudo -u appmotel appmo remove <app>
+
+# Self-update appmotel components
+sudo -u appmotel appmo self-update
 
 # Check Traefik
 sudo -u appmotel sudo systemctl status traefik-appmotel
