@@ -62,28 +62,38 @@ install_required_packages() {
   local os_family
   os_family=$(detect_os)
 
-  # Check if git is already installed
-  if command -v git >/dev/null 2>&1; then
+  # Build list of missing packages
+  # python3-venv / python3-pip are required for Python/Flask app deployments
+  local packages_needed=()
+
+  command -v git >/dev/null 2>&1 \
+    || packages_needed+=(git)
+  python3 -c "import ensurepip" >/dev/null 2>&1 \
+    || packages_needed+=(python3-venv)
+  command -v pip3 >/dev/null 2>&1 \
+    || packages_needed+=(python3-pip)
+
+  if [[ ${#packages_needed[@]} -eq 0 ]]; then
     return 0
   fi
 
-  log_msg "INFO" "Installing git..."
+  log_msg "INFO" "Installing required packages: ${packages_needed[*]}"
 
   case "${os_family}" in
     debian)
       apt-get update -qq
-      apt-get install -y -qq git
+      apt-get install -y -qq "${packages_needed[@]}"
       ;;
     rhel)
       if command -v dnf >/dev/null 2>&1; then
-        dnf install -y -q git
+        dnf install -y -q "${packages_needed[@]}"
       else
-        yum install -y -q git
+        yum install -y -q "${packages_needed[@]}"
       fi
       ;;
     *)
-      # Can't install automatically, warn the user
-      log_msg "WARN" "git is not installed. Please install it manually."
+      log_msg "WARN" "Cannot install packages automatically on this OS."
+      log_msg "WARN" "Please install manually: ${packages_needed[*]}"
       ;;
   esac
 }
@@ -207,6 +217,109 @@ create_appmotel_user() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: detect_aws
+# Description: Returns 0 if running on AWS EC2, 1 otherwise
+# Checks IMDS reachability (works without an IAM role)
+# -----------------------------------------------------------------------------
+detect_aws() {
+  curl -sf --connect-timeout 2 "http://169.254.169.254/latest/meta-data/instance-id" \
+    -o /dev/null 2>/dev/null
+}
+
+# -----------------------------------------------------------------------------
+# Function: setup_local_dns
+# Description: Configures dnsmasq to resolve *.BASE_DOMAIN to the private IP
+# Workaround for AWS hairpin NAT: the server cannot reach its own Elastic IP,
+# so we intercept *.BASE_DOMAIN queries locally and return the private IP.
+# Only runs on AWS when BASE_DOMAIN is set to a real domain.
+# Safe to re-run (idempotent).
+# -----------------------------------------------------------------------------
+setup_local_dns() {
+  if ! detect_aws; then
+    return 0
+  fi
+
+  # Skip if BASE_DOMAIN is unset or still a placeholder
+  if [[ -z "${BASE_DOMAIN:-}" ]] || \
+     [[ "${BASE_DOMAIN}" == *"example"* ]] || \
+     [[ "${BASE_DOMAIN}" == *"yourdomain"* ]]; then
+    log_msg "INFO" "AWS detected but BASE_DOMAIN not configured yet - skipping local DNS setup"
+    log_msg "INFO" "Re-run 'sudo bash install.sh' after setting BASE_DOMAIN in ${APPMOTEL_HOME}/.config/appmotel/.env"
+    return 0
+  fi
+
+  log_msg "INFO" "AWS detected: configuring local DNS for *.${BASE_DOMAIN}"
+
+  # Get private IP of this instance
+  local private_ip
+  private_ip=$(hostname -I | awk '{print $1}')
+  if [[ -z "${private_ip}" ]]; then
+    log_msg "WARN" "Could not determine private IP - skipping local DNS setup"
+    return 0
+  fi
+
+  # Capture current upstream DNS before we touch anything
+  local upstream_dns
+  upstream_dns=$(resolvectl status 2>/dev/null | awk '/Current DNS Server:/{print $NF; exit}')
+  if [[ -z "${upstream_dns}" ]]; then
+    upstream_dns=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null)
+  fi
+  # Final fallback: AWS VPC DNS is always at .2 of the VPC CIDR
+  [[ -z "${upstream_dns}" ]] && upstream_dns="169.254.169.253"
+
+  # Install dnsmasq
+  local os_family
+  os_family=$(detect_os)
+  case "${os_family}" in
+    debian) apt-get install -y -qq dnsmasq >/dev/null 2>&1 || true ;;
+    rhel)
+      if command -v dnf >/dev/null 2>&1; then
+        dnf install -y -q dnsmasq >/dev/null 2>&1 || true
+      else
+        yum install -y -q dnsmasq >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+
+  if ! command -v dnsmasq >/dev/null 2>&1; then
+    log_msg "WARN" "Could not install dnsmasq - skipping local DNS setup"
+    return 0
+  fi
+
+  # Write dnsmasq config: listen only on 127.0.0.1 to avoid conflict with
+  # systemd-resolved stub on 127.0.0.53
+  mkdir -p /etc/dnsmasq.d
+  cat > /etc/dnsmasq.d/appmotel-local.conf <<EOF
+# Appmotel: resolve *.${BASE_DOMAIN} to private IP (AWS hairpin NAT workaround)
+listen-address=127.0.0.1
+bind-interfaces
+no-resolv
+server=${upstream_dns}
+address=/.${BASE_DOMAIN}/${private_ip}
+EOF
+
+  # Tell systemd-resolved to forward only this domain to dnsmasq on 127.0.0.1
+  # All other DNS queries continue through systemd-resolved as normal
+  mkdir -p /etc/systemd/resolved.conf.d
+  cat > /etc/systemd/resolved.conf.d/appmotel-local.conf <<EOF
+# Appmotel: forward *.${BASE_DOMAIN} queries to local dnsmasq
+[Resolve]
+DNS=127.0.0.1
+Domains=~${BASE_DOMAIN}
+EOF
+
+  systemctl enable dnsmasq >/dev/null 2>&1 || true
+  systemctl restart dnsmasq \
+    && log_msg "INFO" "dnsmasq started" \
+    || log_msg "WARN" "dnsmasq failed to start - check 'systemctl status dnsmasq'"
+  systemctl restart systemd-resolved \
+    && log_msg "INFO" "systemd-resolved reloaded" \
+    || log_msg "WARN" "systemd-resolved failed to restart"
+
+  log_msg "INFO" "Local DNS ready: *.${BASE_DOMAIN} -> ${private_ip} (via 127.0.0.1)"
+}
+
+# -----------------------------------------------------------------------------
 # Function: create_traefik_service
 # Description: Creates systemd service for Traefik
 # -----------------------------------------------------------------------------
@@ -214,14 +327,6 @@ create_traefik_service() {
   log_msg "INFO" "Creating Traefik systemd service"
 
   local service_file="/etc/systemd/system/traefik-appmotel.service"
-
-  # Build environment variables for DNS challenge
-  local env_vars=""
-  if [[ "${USE_LETSENCRYPT:-no}" == "yes" ]] && [[ "${LETSENCRYPT_MODE:-http}" == "dns" ]]; then
-    env_vars="Environment=\"AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}\"
-Environment=\"AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}\"
-Environment=\"AWS_HOSTED_ZONE_ID=${AWS_HOSTED_ZONE_ID:-}\""
-  fi
 
   cat > "${service_file}" <<EOF
 [Unit]
@@ -236,7 +341,7 @@ Group=${APPMOTEL_USER}
 
 Environment="XDG_CONFIG_HOME=${APPMOTEL_HOME}/.config"
 Environment="XDG_DATA_HOME=${APPMOTEL_HOME}/.local/share"
-${env_vars}
+EnvironmentFile=-${APPMOTEL_HOME}/.config/appmotel/.env
 
 # Allow binding to privileged ports (80, 443)
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -833,6 +938,9 @@ install_as_root() {
   # Fix ownership of home directory and all contents
   chown -R "${APPMOTEL_USER}:${APPMOTEL_USER}" "${APPMOTEL_HOME}"
   log_msg "INFO" "Fixed ownership of ${APPMOTEL_HOME}"
+
+  # AWS hairpin NAT workaround: resolve *.BASE_DOMAIN locally via dnsmasq
+  setup_local_dns
 
   # System-level operations
   configure_sudoers

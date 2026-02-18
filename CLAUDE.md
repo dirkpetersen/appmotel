@@ -94,6 +94,8 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 | `bin/appmo-completion.bash` | Shell completion for appmo |
 | `bin/reset-home.sh` | Reset appmotel home directory for clean testing |
 | `templates/appmotel-autopull.*` | Systemd units for automatic git polling |
+| `examples/flask-hello/` | Reference Python/Flask app (used for integration tests) |
+| `examples/express-hello/` | Reference Node.js/Express app (used for integration tests) |
 | `docs/*.md` | Development, implementation, and testing documentation |
 | `.claude/skills/` | Reference docs: appmotel (24x7 automation), bash, traefik, troubleshooting, DNS |
 
@@ -118,6 +120,20 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 
 **Note:** Each app's physical `.env` file lives in `~/.config/appmotel/<app>/.env`. The repository has a symlink at `~/.local/share/appmotel/<app>/repo/.env` pointing to the config directory. See `docs/ENV-MANAGEMENT.md` for details.
 
+**Important:** `APPMOTEL_HOME` is hardcoded as `/home/appmotel` in `bin/appmo`. The tool only operates on the `appmotel` user's home directory. App backups are stored at `~/.local/share/appmotel-backups/<app>/`.
+
+### Key Safety Functions in bin/appmo
+
+When writing new code that touches files or environment parsing, use these functions — do not bypass them:
+
+| Function | Purpose |
+|----------|---------|
+| `safe_rm_rf <path> <context>` | Delete files/dirs only within allowed directories; rejects empty paths, symlinks to outside, and critical dirs |
+| `safe_source_env <file>` | Source an app `.env` file after rejecting dangerous patterns (`$(...)`, backticks, semicolons, pipes) |
+| `safe_source_metadata <file>` | Source a `metadata.conf` file using a whitelist of allowed variable names |
+
+The global `~/.config/appmotel/.env` is sourced directly at startup (not via `safe_source_env`) since it is operator-controlled.
+
 ### Application Deployment Flow
 
 1. `appmo add <name> <github-url> [branch]` clones repo
@@ -140,6 +156,8 @@ IFS=$'\n\t'      # Set Internal Field Separator to newline and tab only
 
 ```bash
 appmo add <app> <url|user/repo> [branch]  # Deploy new app (short form auto-expands)
+# Subfolder deployment via GitHub tree URL:
+# appmo add myapp https://github.com/user/repo/tree/main/path/to/folder
 appmo remove <app>              # Remove app completely (backs up .env)
 appmo rm <app>                  # Alias for remove
 appmo list                      # List all apps
@@ -153,6 +171,7 @@ appmo logs <app> [lines]        # View logs
 appmo env <app>                 # Edit app's .env file in default editor
 appmo exec <app> <cmd>          # Run command in app env
 appmo backup|restore|backups    # Backup management
+appmo self-update               # Update appmo CLI, Traefik binary, and configs
 ```
 
 ### App Requirements
