@@ -3130,6 +3130,168 @@ cmd_check() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: check_app_errors
+# Description: Checks recent app logs for errors and files a GitHub issue
+# with Claude Code analysis. Runs during each autopull cycle.
+# Controlled by AUTO_DEBUG=no in app .env to opt out.
+# Deduplication: 24h cooldown file prevents repeated filing for the same app.
+# Prerequisites: claude (Claude Code CLI) + gh (GitHub CLI, authenticated)
+# -----------------------------------------------------------------------------
+check_app_errors() {
+  local app_name="$1"
+  local app_config_dir="${APPS_CONFIG_DIR}/${app_name}"
+  local cooldown_file="${app_config_dir}/.auto-debug-cooldown"
+  local metadata_file="${app_config_dir}/metadata.conf"
+  local env_file="${app_config_dir}/.env"
+
+  # Respect per-app opt-out
+  if [[ -f "${env_file}" ]]; then
+    local parsed_env
+    parsed_env=$(parse_env_file "${env_file}")
+    if echo "${parsed_env}" | grep -q "^AUTO_DEBUG=no$"; then
+      return 0
+    fi
+  fi
+
+  # Enforce 24-hour cooldown to avoid duplicate issues
+  if [[ -f "${cooldown_file}" ]]; then
+    local last_check now
+    last_check=$(cat "${cooldown_file}" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    if (( now - last_check < 86400 )); then
+      return 0
+    fi
+  fi
+
+  # Collect last 3 minutes of app logs (slight overlap covers cycle timing)
+  local recent_logs
+  recent_logs=$(XDG_RUNTIME_DIR=/run/user/"$(id -u)" \
+    journalctl --user -u "appmotel-${app_name}" \
+    --since "3 minutes ago" --no-pager -o short 2>/dev/null || true)
+
+  [[ -z "${recent_logs}" ]] && return 0
+
+  # Detect error patterns across Python, Node.js, Go, and generic frameworks
+  local error_lines
+  error_lines=$(echo "${recent_logs}" | \
+    grep -iE "(ERROR|CRITICAL|EXCEPTION|TRACEBACK|FATAL|PANIC:|UnhandledPromise)" || true)
+
+  [[ -z "${error_lines}" ]] && return 0
+
+  log_msg "WARN" "${app_name}: errors detected in recent logs"
+
+  # Check prerequisites — fail gracefully with actionable messages
+  local claude_bin gh_bin
+  claude_bin=$(command -v claude 2>/dev/null || true)
+  gh_bin=$(command -v gh 2>/dev/null || true)
+
+  if [[ -z "${claude_bin}" ]]; then
+    log_msg "INFO" "${app_name}: auto-debug requires Claude Code CLI (https://claude.ai/code)"
+    return 0
+  fi
+
+  if [[ -z "${gh_bin}" ]]; then
+    log_msg "INFO" "${app_name}: auto-debug requires the GitHub CLI (https://cli.github.com)"
+    return 0
+  fi
+
+  if ! "${gh_bin}" auth status >/dev/null 2>&1; then
+    log_msg "INFO" "${app_name}: auto-debug requires 'gh auth login' to file issues"
+    return 0
+  fi
+
+  # Read repo URL from metadata
+  local github_url=""
+  if [[ -f "${metadata_file}" ]]; then
+    github_url=$(grep "^GITHUB_URL=" "${metadata_file}" | cut -d= -f2- | tr -d '"')
+  fi
+
+  if [[ -z "${github_url}" ]]; then
+    log_msg "WARN" "${app_name}: auto-debug skipped — no GITHUB_URL in metadata"
+    return 0
+  fi
+
+  # Derive owner/repo from full GitHub URL (strip protocol, host, .git, /tree/... subfolder)
+  local repo_ref
+  repo_ref=$(echo "${github_url}" | sed 's|https://github.com/||; s|\.git$||; s|/tree/.*||')
+
+  log_msg "INFO" "${app_name}: sending logs to Claude Code for analysis"
+
+  # Structured prompt — ask for a fixed output format so we can parse it reliably
+  local prompt
+  prompt="Analyze this error log from a deployed web application.
+
+App name: ${app_name}
+Repository: ${github_url}
+
+Recent log output (last 3 minutes):
+\`\`\`
+${recent_logs}
+\`\`\`
+
+Respond using exactly this format (be concise):
+TITLE: <one-line summary of the error, max 80 chars>
+CAUSE: <one paragraph — most likely root cause>
+FIX: <concrete steps to investigate or resolve>"
+
+  local analysis
+  analysis=$(echo "${prompt}" | "${claude_bin}" -p 2>/dev/null || true)
+
+  if [[ -z "${analysis}" ]]; then
+    log_msg "WARN" "${app_name}: Claude Code returned no output"
+    return 0
+  fi
+
+  # Parse structured sections from Claude's response
+  local issue_title cause fix
+  issue_title=$(echo "${analysis}" | grep "^TITLE:" | sed 's/^TITLE:[[:space:]]*//')
+  cause=$(echo "${analysis}" | awk '/^CAUSE:/{found=1; sub(/^CAUSE:[[:space:]]*/,""); print; next} /^FIX:/{found=0} found{print}')
+  fix=$(echo "${analysis}" | awk '/^FIX:/{found=1; sub(/^FIX:[[:space:]]*/,""); print; next} found{print}')
+
+  [[ -z "${issue_title}" ]] && issue_title="Error detected in ${app_name}"
+
+  # File GitHub issue
+  local issue_url
+  issue_url=$("${gh_bin}" issue create \
+    --repo "${repo_ref}" \
+    --title "[appmotel] ${issue_title}" \
+    --body "## Auto-detected error in \`${app_name}\`
+
+**Server:** $(hostname -f 2>/dev/null || hostname)
+**Time:** $(date -u +"%Y-%m-%d %H:%M UTC")
+
+## Error excerpt
+\`\`\`
+${error_lines}
+\`\`\`
+
+## Claude Code analysis
+
+**Likely cause:** ${cause}
+
+**Suggested fix:** ${fix}
+
+<details>
+<summary>Full recent logs</summary>
+
+\`\`\`
+${recent_logs}
+\`\`\`
+</details>
+
+---
+*Auto-filed by [appmotel](https://github.com/dirkpetersen/appmotel). Disable per-app with \`AUTO_DEBUG=no\` in the app's \`.env\`.*" \
+    2>/dev/null || true)
+
+  if [[ -n "${issue_url}" ]]; then
+    log_msg "INFO" "${app_name}: filed GitHub issue — ${issue_url}"
+    date +%s > "${cooldown_file}"
+  else
+    log_msg "WARN" "${app_name}: failed to file GitHub issue (check repo access and gh auth)"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_autopull
 # Description: Automatically checks all apps for updates and deploys them
 # This is designed to run periodically via systemd timer
@@ -3234,6 +3396,9 @@ cmd_autopull() {
         log_msg "ERROR" "${app_name}: Update failed"
       fi
     fi
+
+    # Check for runtime errors and auto-file GitHub issues via Claude Code
+    check_app_errors "${app_name}"
   done
 
   if [[ ${app_count} -eq 0 ]]; then
