@@ -706,6 +706,24 @@ create_backup() {
   else
     log_msg "INFO" "Backup created: ${backup_id}"
   fi
+
+  # Prune old backups — keep only the newest BACKUP_RETENTION (default 5)
+  local retention=5
+  local app_env="${APPS_CONFIG_DIR}/${app_name}/.env"
+  if [[ -f "${app_env}" ]]; then
+    local env_retention
+    env_retention=$(grep -E '^BACKUP_RETENTION=[0-9]+$' "${app_env}" | cut -d= -f2 | head -1)
+    [[ -n "${env_retention}" ]] && retention="${env_retention}"
+  fi
+  local app_backup_dir="${BACKUPS_DIR}/${app_name}"
+  local old_backups
+  mapfile -t old_backups < <(ls -1t "${app_backup_dir}" 2>/dev/null | tail -n +$((retention + 1)))
+  if [[ ${#old_backups[@]} -gt 0 ]]; then
+    log_msg "INFO" "Pruning ${#old_backups[@]} old backup(s) for ${app_name} (keeping ${retention})"
+    for old in "${old_backups[@]}"; do
+      rm -rf "${app_backup_dir:?}/${old}"
+    done
+  fi
 }
 
 # -----------------------------------------------------------------------------

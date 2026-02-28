@@ -114,6 +114,7 @@ appmo self-update           # Update CLI, Traefik binary, and configs
 - `RATE_LIMIT_AVG=100`, `RATE_LIMIT_BURST=50` — Rate limiting
 - `HEALTH_CHECK_PATH=/health` — Health check endpoint
 - `AUTO_DEBUG=no` — Disable auto-debug error detection for this app
+- `BACKUP_RETENTION=5` — Number of backups to keep per app (default: 5)
 
 ### Traefik & TLS
 
