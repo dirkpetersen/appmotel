@@ -16,7 +16,7 @@ sudo -u appmotel appmo list
 sudo -u appmotel appmo status myapp
 ```
 
-See `.claude/skills/appmotel.md` for the complete 24x7 automation guide.
+See `.claude/skills/appmotel/SKILL.md` for the complete 24x7 automation guide.
 
 ## Quick Reference Commands
 
@@ -51,7 +51,7 @@ IFS=$'\n\t'
 
 **Key Rules:** `[[ ]]` for conditionals, `local` for function variables, `snake_case` for functions/variables, `UPPERCASE` for exported constants, manual `while`/`case` for arg parsing (not getopt). All scripts must be idempotent.
 
-See `.claude/skills/bash.md` for full coding standards (associative arrays, namerefs, performance tips).
+See `.claude/skills/bash/SKILL.md` for full coding standards (associative arrays, namerefs, performance tips).
 
 ## Architecture
 
@@ -122,7 +122,7 @@ Per-app dynamic configs use `certResolver: myresolver` in the router TLS section
 
 **CRITICAL Traefik v3:** TLS stores MUST be in dynamic config, not static. Router TLS must use `tls:` with `certResolver`, NOT bare `tls:` (null).
 
-See `.claude/skills/traefik.md` for configuration details.
+See `.claude/skills/traefik/SKILL.md` for configuration details.
 
 ## Systemd Architecture
 
