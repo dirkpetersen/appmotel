@@ -392,12 +392,29 @@ appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/syste
 # Allow appmotel to view ONLY traefik-appmotel logs with any journalctl options (for debugging)
 appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/journalctl -u traefik-appmotel *
 
+# Allow appmotel to fix TLS certificate permissions (needed by self-update)
+appmotel ALL=(ALL) NOPASSWD: /usr/local/bin/appmotel-fix-certs
+
 # Note: App services use systemctl --user (no sudo needed)
 # Traefik config changes are auto-reloaded (no restart needed for config updates)
 EOF
 
   chmod 0440 "${sudoers_file}"
   log_msg "INFO" "Sudoers configured"
+
+  # Install helper script for cert permission fixing (callable via sudo by appmotel)
+  local fix_certs_src="${SCRIPT_DIR}/bin/appmotel-fix-certs"
+  local fix_certs_dest="/usr/local/bin/appmotel-fix-certs"
+  if [[ -f "${fix_certs_src}" ]]; then
+    cp "${fix_certs_src}" "${fix_certs_dest}"
+  else
+    # Download from GitHub if not available locally
+    local fix_certs_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmotel-fix-certs?$(date +%s)"
+    curl -fsSL "${fix_certs_url}" -o "${fix_certs_dest}" || log_msg "WARN" "Could not download appmotel-fix-certs"
+  fi
+  if [[ -f "${fix_certs_dest}" ]]; then
+    chmod 755 "${fix_certs_dest}"
+  fi
 }
 
 # -----------------------------------------------------------------------------

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -o errexit -o nounset -o pipefail
+# Fix TLS certificate permissions so appmotel (via ssl-cert group) can read them.
+# Called by: appmo self-update (via sudo)
+# Installed to: /usr/local/bin/appmotel-fix-certs
+
+if ! getent group ssl-cert >/dev/null 2>&1; then
+  echo "ssl-cert group does not exist" >&2
+  exit 1
+fi
+
+if [[ ! -d /etc/letsencrypt/archive ]]; then
+  exit 0  # No certs to fix
+fi
+
+# Set group ownership
+chgrp -R ssl-cert /etc/letsencrypt/archive 2>/dev/null || true
+chgrp -R ssl-cert /etc/letsencrypt/live 2>/dev/null || true
+
+# Directory permissions: 750 (owner full, group read/execute)
+find /etc/letsencrypt/archive -type d -exec chmod 750 {} + 2>/dev/null || true
+find /etc/letsencrypt/live -type d -exec chmod 750 {} + 2>/dev/null || true
+
+# Private keys: 640 (owner rw, group read)
+find /etc/letsencrypt/archive -name "privkey*.pem" -exec chmod 640 {} + 2>/dev/null || true
+
+# Public certs: 644
+find /etc/letsencrypt/archive -name "*.pem" ! -name "privkey*.pem" -exec chmod 644 {} + 2>/dev/null || true
+
+echo "Certificate permissions fixed"

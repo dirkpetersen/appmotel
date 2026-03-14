@@ -3429,6 +3429,94 @@ cmd_autopull() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: fix_cert_permissions
+# Description: Check TLS cert readability and fix permissions if needed.
+#   Parses tls-config.yaml to find referenced cert/key files, tests if they
+#   are readable, and runs the sudo helper to fix permissions if not.
+# -----------------------------------------------------------------------------
+fix_cert_permissions() {
+  local tls_config="${TRAEFIK_DYNAMIC_DIR}/tls-config.yaml"
+  if [[ ! -f "${tls_config}" ]]; then
+    return
+  fi
+
+  # Extract the key file path from tls-config.yaml
+  local key_file
+  key_file=$(grep 'keyFile:' "${tls_config}" 2>/dev/null | awk '{print $2}') || return
+  if [[ -z "${key_file}" ]]; then
+    return
+  fi
+
+  # Test if the key file is readable by the current user
+  if [[ -r "${key_file}" ]]; then
+    log_msg "INFO" "TLS certificates are readable"
+    return
+  fi
+
+  log_msg "WARN" "TLS key not readable: ${key_file}"
+
+  # Try to fix using the helper script
+  if [[ -x /usr/local/bin/appmotel-fix-certs ]]; then
+    log_msg "INFO" "Fixing certificate permissions..."
+    if sudo /usr/local/bin/appmotel-fix-certs; then
+      # Verify the fix worked
+      if [[ -r "${key_file}" ]]; then
+        log_msg "INFO" "Certificate permissions fixed successfully"
+      else
+        log_msg "ERROR" "Permissions fixed but key still not readable (check ssl-cert group membership)"
+      fi
+    else
+      log_msg "ERROR" "Failed to fix certificate permissions"
+      log_msg "ERROR" "Run as root: /usr/local/bin/appmotel-fix-certs"
+    fi
+  else
+    log_msg "ERROR" "Fix-certs helper not found. Re-run: sudo bash install.sh"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: update_app_domains
+# Description: Propagate BASE_DOMAIN changes to all app Traefik routing configs.
+#   Scans dynamic configs for Host rules with a stale domain and replaces them
+#   with the current BASE_DOMAIN from .env.
+# -----------------------------------------------------------------------------
+update_app_domains() {
+  local current_domain="${BASE_DOMAIN:-}"
+  if [[ -z "${current_domain}" ]]; then
+    log_msg "WARN" "BASE_DOMAIN not set, skipping domain propagation"
+    return
+  fi
+
+  local updated_count=0
+  local config_file
+  for config_file in "${TRAEFIK_DYNAMIC_DIR}"/*.yaml; do
+    [[ -f "${config_file}" ]] || continue
+    local filename
+    filename=$(basename "${config_file}")
+    # Skip non-app configs (tls-config, default-transport, etc.)
+    if [[ "${filename}" == "tls-config.yaml" ]] || \
+       [[ "${filename}" == "default-transport.yaml" ]]; then
+      continue
+    fi
+
+    # Extract existing domain from Host rule: Host(`appname.old.domain`)
+    local old_host
+    old_host=$(grep -oP 'Host\(`[^.]+\.\K[^`]+' "${config_file}" 2>/dev/null) || continue
+    if [[ -n "${old_host}" ]] && [[ "${old_host}" != "${current_domain}" ]]; then
+      sed -i "s/${old_host}/${current_domain}/g" "${config_file}"
+      log_msg "INFO" "Updated domain in ${filename}: ${old_host} -> ${current_domain}"
+      updated_count=$((updated_count + 1))
+    fi
+  done
+
+  if [[ ${updated_count} -gt 0 ]]; then
+    log_msg "INFO" "Updated domain in ${updated_count} app config(s)"
+  else
+    log_msg "INFO" "All app configs already use ${current_domain}"
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_self_update
 # Description: Update all appmotel components (appmo CLI, Traefik, configs)
 # Downloads and runs the latest install.sh in user mode for full parity
@@ -3437,6 +3525,7 @@ cmd_autopull() {
 #   - Traefik binary (latest release)
 #   - Traefik static configuration (picks up new settings)
 #   - Autopull systemd units
+#   - Propagates BASE_DOMAIN changes to all app routing configs
 # Note: Traefik service restart requires sudo and is prompted separately.
 # -----------------------------------------------------------------------------
 cmd_self_update() {
@@ -3463,10 +3552,29 @@ cmd_self_update() {
     die "Self-update failed during install.sh execution"
   fi
 
-  # Traefik needs a service restart to pick up binary/config changes
-  log_msg "INFO" ""
-  log_msg "INFO" "To apply Traefik changes, restart the service:"
-  log_msg "INFO" "  sudo systemctl restart traefik-appmotel"
+  # Re-source .env to pick up any BASE_DOMAIN changes
+  if [[ -f "${APPMOTEL_ENV_FILE}" ]]; then
+    local _saved_ifs="${IFS}"
+    IFS=$' \t\n'
+    # shellcheck source=/dev/null
+    source "${APPMOTEL_ENV_FILE}"
+    IFS="${_saved_ifs}"
+  fi
+
+  # Propagate BASE_DOMAIN to all app Traefik routing configs
+  update_app_domains
+
+  # Check and fix TLS certificate permissions
+  fix_cert_permissions
+
+  # Restart Traefik to pick up binary/config/cert changes
+  log_msg "INFO" "Restarting Traefik service..."
+  if sudo systemctl restart traefik-appmotel 2>/dev/null; then
+    log_msg "INFO" "Traefik restarted successfully"
+  else
+    log_msg "WARN" "Could not restart Traefik automatically"
+    log_msg "WARN" "Run manually: sudo systemctl restart traefik-appmotel"
+  fi
 }
 
 # -----------------------------------------------------------------------------
