@@ -731,20 +731,27 @@ install_appmo_cli() {
   local appmo_dest="${APPMOTEL_HOME}/.local/bin/appmo"
   local github_appmo_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmo?$(date +%s)"
 
+  # Use atomic replacement (mv) to avoid corrupting a running appmo process.
+  # cp overwrites in-place which shifts bytes under bash's open file descriptor;
+  # mv creates a new inode so the old process keeps reading the old file.
+  local appmo_tmp="${appmo_dest}.tmp.$$"
+
   # Try local file first, download if not found
   if [[ -f "${appmo_source_local}" ]]; then
     log_msg "INFO" "Using local appmo CLI from repository"
-    cp "${appmo_source_local}" "${appmo_dest}"
+    cp "${appmo_source_local}" "${appmo_tmp}"
   else
     log_msg "INFO" "Downloading appmo CLI from GitHub"
-    if curl -fsSL "${github_appmo_url}" -o "${appmo_dest}"; then
+    if curl -fsSL "${github_appmo_url}" -o "${appmo_tmp}"; then
       log_msg "INFO" "Downloaded appmo CLI successfully"
     else
+      rm -f "${appmo_tmp}"
       die "Failed to download appmo CLI from GitHub"
     fi
   fi
 
-  chmod +x "${appmo_dest}"
+  chmod +x "${appmo_tmp}"
+  mv -f "${appmo_tmp}" "${appmo_dest}"
   log_msg "INFO" "appmo CLI installed to ${appmo_dest}"
 
   # Install shell completion
