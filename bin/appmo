@@ -3478,7 +3478,8 @@ fix_cert_permissions() {
 # Function: update_app_domains
 # Description: Propagate BASE_DOMAIN changes to all app Traefik routing configs.
 #   Scans dynamic configs for Host rules with a stale domain and replaces them
-#   with the current BASE_DOMAIN from .env.
+#   with the current BASE_DOMAIN from .env. Also sets up permanent redirects
+#   from REDIRECT_BASE_DOMAIN if configured.
 # -----------------------------------------------------------------------------
 update_app_domains() {
   local current_domain="${BASE_DOMAIN:-}"
@@ -3487,23 +3488,28 @@ update_app_domains() {
     return
   fi
 
+  local redirect_domain="${REDIRECT_BASE_DOMAIN:-}"
+
   local updated_count=0
+  local redirect_count=0
   local config_file
   for config_file in "${TRAEFIK_DYNAMIC_DIR}"/*.yaml; do
     [[ -f "${config_file}" ]] || continue
     local filename
     filename=$(basename "${config_file}")
-    # Skip non-app configs (tls-config, default-transport, etc.)
+    # Skip non-app configs (tls-config, default-transport, redirect-domains, etc.)
     if [[ "${filename}" == "tls-config.yaml" ]] || \
-       [[ "${filename}" == "default-transport.yaml" ]]; then
+       [[ "${filename}" == "default-transport.yaml" ]] || \
+       [[ "${filename}" == "redirect-domains.yaml" ]]; then
       continue
     fi
 
-    # Extract existing domain from Host rule: Host(`appname.old.domain`)
+    # Extract existing domain from the primary router Host rule
     local old_host
-    old_host=$(grep -oP 'Host\(`[^.]+\.\K[^`]+' "${config_file}" 2>/dev/null) || continue
+    old_host=$(grep -oP 'Host\(`[^.]+\.\K[^`]+' "${config_file}" 2>/dev/null | head -1) || continue
     if [[ -n "${old_host}" ]] && [[ "${old_host}" != "${current_domain}" ]]; then
-      sed -i "s/${old_host}/${current_domain}/g" "${config_file}"
+      # Only update the primary router Host rule, not redirect routers
+      sed -i "0,/Host(\`[^.]*\.${old_host}\`)/{s/${old_host}/${current_domain}/}" "${config_file}"
       log_msg "INFO" "Updated domain in ${filename}: ${old_host} -> ${current_domain}"
       updated_count=$((updated_count + 1))
     fi
@@ -3514,6 +3520,53 @@ update_app_domains() {
   else
     log_msg "INFO" "All app configs already use ${current_domain}"
   fi
+
+  # Set up redirect routers from REDIRECT_BASE_DOMAIN -> BASE_DOMAIN
+  if [[ -n "${redirect_domain}" ]] && [[ "${redirect_domain}" != "${current_domain}" ]]; then
+    setup_domain_redirects "${redirect_domain}" "${current_domain}"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: setup_domain_redirects
+# Description: Create a single Traefik dynamic config that redirects all app
+#   subdomains from the old domain to the new domain using 301 permanent
+#   redirects. Uses a regex redirect so one config handles all apps.
+# Parameters: $1 = old domain (redirect from), $2 = new domain (redirect to)
+# -----------------------------------------------------------------------------
+setup_domain_redirects() {
+  local old_domain="$1"
+  local new_domain="$2"
+  local redirect_config="${TRAEFIK_DYNAMIC_DIR}/redirect-domains.yaml"
+
+  # Build YAML with proper escaping:
+  # - HostRegexp needs Go regex inside backticks (dots unescaped is fine for domains)
+  # - redirectRegex needs escaped dots but YAML double-quoted strings treat \ as escape
+  #   so we use \\. which YAML interprets as literal \.
+  cat > "${redirect_config}" <<REOF
+# Auto-generated: Permanent redirects from ${old_domain} -> ${new_domain}
+# Managed by: appmo self-update (REDIRECT_BASE_DOMAIN setting)
+http:
+  routers:
+    domain-redirect:
+      rule: "HostRegexp(\`.+.${old_domain}\`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - domain-redirect
+      service: noop@internal
+      tls: {}
+      priority: 1
+
+  middlewares:
+    domain-redirect:
+      redirectRegex:
+        regex: "^https://([^.]+).${old_domain}/(.*)"
+        replacement: "https://\${1}.${new_domain}/\${2}"
+        permanent: true
+REOF
+
+  log_msg "INFO" "Redirect config created: *.${old_domain} -> *.${new_domain} (301)"
 }
 
 # -----------------------------------------------------------------------------
