@@ -105,8 +105,13 @@ appmo logs <app> [lines]    # View logs
 appmo env <app>             # Edit app .env
 appmo exec <app> <cmd>      # Run command in app env
 appmo backup|restore|backups  # Backup management
-appmo self-update           # Update CLI, Traefik binary, and configs
+appmo self-update           # Update CLI, Traefik, configs, propagate domain changes
 ```
+
+### Global `.env` Settings (`~/.config/appmotel/.env`)
+
+- `BASE_DOMAIN=dev-ai.example.edu` — Primary domain for all apps (`app.BASE_DOMAIN`)
+- `REDIRECT_BASE_DOMAIN=old.example.edu` — Optional: 308 permanent redirect from old domain to `BASE_DOMAIN`. When set, `appmo self-update` generates a single Traefik catch-all config that redirects `*.old.example.edu` → `*.BASE_DOMAIN`
 
 ### Optional App `.env` Settings
 
@@ -118,9 +123,9 @@ appmo self-update           # Update CLI, Traefik binary, and configs
 
 ### Traefik & TLS
 
-Per-app dynamic configs use `certResolver: myresolver` in the router TLS section to obtain Let's Encrypt certificates. Wildcard certs (`*.BASE_DOMAIN`) are supported via DNS-01 challenge with Route53.
+Per-app dynamic configs are auto-generated in `~/.config/traefik/dynamic/`. Wildcard certs (`*.BASE_DOMAIN`) are supported via pre-existing certs or DNS-01 challenge with Route53.
 
-**CRITICAL Traefik v3:** TLS stores MUST be in dynamic config, not static. Router TLS must use `tls:` with `certResolver`, NOT bare `tls:` (null).
+**CRITICAL Traefik v3:** TLS stores MUST be in dynamic config, not static. When using pre-existing wildcard certs, use bare `tls: {}` (not `certResolver`).
 
 See `.claude/skills/traefik/SKILL.md` for configuration details.
 
