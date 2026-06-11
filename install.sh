@@ -702,8 +702,11 @@ entryPoints:
     address: ":443"
     transport:
       respondingTimeouts:
-        writeTimeout: 600s
-        idleTimeout: 300s
+        # Long timeouts for streaming/SSE apps (e.g. codecheck runs multi-minute
+        # LLM analyses). writeTimeout caps total response duration, so it must
+        # exceed the slowest stream; idleTimeout caps silence between writes.
+        writeTimeout: 1800s
+        idleTimeout: 1800s
 
 providers:
   file:

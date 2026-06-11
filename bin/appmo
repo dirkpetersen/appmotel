@@ -1635,6 +1635,17 @@ create_traefik_config() {
           timeout: 5s"
   fi
 
+  # Build TLS block. When a pre-existing wildcard cert store is present
+  # (tls-config.yaml, written by generate_traefik_config), Traefik v3 serves
+  # it via the default store, so the router must use a bare `tls: {}` and must
+  # NOT reference an ACME certResolver (which is undefined in that mode). Only
+  # fall back to certResolver: myresolver when ACME is the active issuer.
+  local tls_block="tls: {}"
+  if [[ ! -f "${TRAEFIK_DYNAMIC_DIR}/tls-config.yaml" ]]; then
+    tls_block="tls:
+        certResolver: myresolver"
+  fi
+
   cat > "${config_file}" <<EOF
 http:
   routers:
@@ -1644,8 +1655,7 @@ http:
         - websecure
       service: ${app_name}
       ${middlewares_line}
-      tls:
-        certResolver: myresolver
+      ${tls_block}
 
   services:
     ${app_name}:
