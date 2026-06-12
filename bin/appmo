@@ -672,9 +672,10 @@ create_backup() {
     fi
   fi
 
-  # Backup repo (excluding .venv and node_modules to save space)
+  # Backup repo (excluding .venv and node_modules to save space; .git is kept so
+  # a restored backup is a valid git repo and autopull can update it normally)
   if [[ -d "${APPS_DATA_DIR}/${app_name}/repo" ]]; then
-    if ! tar --exclude='.venv' --exclude='node_modules' --exclude='.git' \
+    if ! tar --exclude='.venv' --exclude='node_modules' \
         -czf "${backup_dir}/repo.tar.gz" \
         -C "${APPS_DATA_DIR}/${app_name}" repo 2>/dev/null; then
       log_msg "WARN" "Failed to backup repo (tar failed - disk full?)"
