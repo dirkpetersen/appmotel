@@ -674,10 +674,13 @@ check_existing_appmotel_records() {
 
   log_msg "INFO" "Checking for existing appmotel DNS records..."
 
+  # Route53 returns wildcard names octal-escaped (* -> \052), so the
+  # wildcard comparison must use the escaped form or it never matches and
+  # an existing production wildcard record would be silently UPSERTed over.
   local records
   records=$(aws_route53 list-resource-record-sets \
     --hosted-zone-id "${zone_id}" \
-    --query "ResourceRecordSets[?Name=='appmotel.${domain}.' || Name=='*.${domain}.'].Name" \
+    --query "ResourceRecordSets[?Name=='appmotel.${domain}.' || Name=='*.${domain}.' || Name=='\\052.${domain}.'].Name" \
     --output text 2>/dev/null)
 
   if [[ -n "${records}" ]] && [[ "${records}" != "None" ]]; then
@@ -1247,6 +1250,18 @@ main() {
 
       # Configure DNS-01 mode for Let's Encrypt wildcard certificates
       configure_dns01_mode "${public_ip}" "${key_file}" "${VALIDATED_ZONE_ID}" "${region}"
+
+      # Re-run the root installer now that .env holds the real BASE_DOMAIN:
+      # the first run saw the placeholder domain and setup_local_dns skipped
+      # itself, so the dnsmasq hairpin-NAT workaround was never configured.
+      # install.sh is idempotent, so the repeat root pass is safe.
+      log_msg "INFO" "Re-running root install to configure local DNS (dnsmasq)..."
+      ssh -i "${key_file}" \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          "${SSH_USER}@${public_ip}" \
+          "sudo bash /tmp/install.sh" || log_msg "WARN" "Root install re-run failed; local DNS (dnsmasq) may need manual setup"
 
       # Restart Traefik to apply new domain configuration
       log_msg "INFO" "Restarting Traefik to apply DNS configuration..."

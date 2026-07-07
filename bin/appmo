@@ -10,30 +10,26 @@ set -o nounset
 set -o pipefail
 IFS=$'\n\t'
 
-# Temp file tracking for cleanup
-declare -a TEMP_FILES=()
-
 # -----------------------------------------------------------------------------
 # Function: cleanup_temp_files
 # Description: Remove all tracked temp files on exit
 # -----------------------------------------------------------------------------
 cleanup_temp_files() {
-  for tmp_file in "${TEMP_FILES[@]:-}"; do
-    [[ -n "${tmp_file}" ]] && rm -f "${tmp_file}" 2>/dev/null || true
-  done
+  # Clean by PID-scoped pattern rather than a tracked array: create_temp_file
+  # is always called via $(...), so an array append would only mutate the
+  # subshell's copy and the parent would have nothing to clean. $$ is the
+  # main shell PID even inside command substitutions, so the pattern is safe.
+  rm -f /tmp/appmo."$$".* 2>/dev/null || true
 }
 trap cleanup_temp_files EXIT
 
 # -----------------------------------------------------------------------------
 # Function: create_temp_file
-# Description: Create a temp file and register it for cleanup
+# Description: Create a temp file that cleanup_temp_files removes on exit
 # -----------------------------------------------------------------------------
 create_temp_file() {
-  local prefix="${1:-appmo}"
-  local tmp_file
-  tmp_file=$(mktemp "/tmp/${prefix}_$$.XXXXXX")
-  TEMP_FILES+=("${tmp_file}")
-  echo "${tmp_file}"
+  local prefix="${1:-tmp}"
+  mktemp "/tmp/appmo.$$.${prefix}.XXXXXX"
 }
 
 # Constants
@@ -684,10 +680,13 @@ create_backup() {
   fi
 
   # Backup all systemd service files for this app (including multi-component)
-  for service_file in "${SYSTEMD_USER_DIR}"/appmotel-${app_name}*.service; do
-    if [[ -f "${service_file}" ]]; then
-      if ! cp "${service_file}" "${backup_dir}/"; then
-        log_msg "WARN" "Failed to backup service file: $(basename "${service_file}")"
+  local -a unit_files
+  get_app_unit_files "${app_name}" unit_files
+  local unit_file
+  for unit_file in "${unit_files[@]}"; do
+    if [[ -f "${SYSTEMD_USER_DIR}/${unit_file}" ]]; then
+      if ! cp "${SYSTEMD_USER_DIR}/${unit_file}" "${backup_dir}/"; then
+        log_msg "WARN" "Failed to backup service file: ${unit_file}"
         backup_warnings=true
       fi
     fi
@@ -787,11 +786,15 @@ restore_backup() {
     fi
   fi
 
-  # Restore systemd service(s)
-  for service_file in "${backup_dir}"/appmotel-${app_name}*.service; do
-    if [[ -f "${service_file}" ]]; then
-      if ! cp "${service_file}" "${SYSTEMD_USER_DIR}/"; then
-        log_msg "ERROR" "Failed to restore systemd service: $(basename "${service_file}")"
+  # Restore systemd service(s). Only units this app owns (per metadata) —
+  # the old glob could copy a stale unit over a sibling app's current one.
+  local -a unit_files
+  get_app_unit_files "${app_name}" unit_files
+  local unit_file
+  for unit_file in "${unit_files[@]}"; do
+    if [[ -f "${backup_dir}/${unit_file}" ]]; then
+      if ! cp "${backup_dir}/${unit_file}" "${SYSTEMD_USER_DIR}/"; then
+        log_msg "ERROR" "Failed to restore systemd service: ${unit_file}"
         restore_failed=true
       fi
     fi
@@ -944,32 +947,49 @@ parse_procfile() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: port_available
+# Description: Check a specific port against listening sockets, other apps'
+#   metadata, and an optional space-separated exclude list (ports assigned
+#   earlier in the same run whose metadata is not written yet)
+# Returns: 0 if available
+# -----------------------------------------------------------------------------
+port_available() {
+  local port="$1"
+  local exclude_ports="${2:-}"
+
+  if [[ -n "${exclude_ports}" ]] && echo "${exclude_ports}" | grep -qw "${port}" 2>/dev/null; then
+    return 1
+  fi
+
+  local allocated_ports
+  allocated_ports=$(grep -h "^PORT=" "${APPS_CONFIG_DIR}"/*/metadata.conf 2>/dev/null | cut -d'=' -f2 || true)
+  if echo "${allocated_ports}" | grep -qw "${port}" 2>/dev/null; then
+    return 1
+  fi
+
+  if ss -tuln | grep -q ":${port} "; then
+    return 1
+  fi
+
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Function: find_free_port
 # Description: Finds a random free port
+# Parameters: $1 (optional) - space-separated ports to additionally exclude
 # -----------------------------------------------------------------------------
 find_free_port() {
+  local exclude_ports="${1:-}"
   local port
   local max_attempts=100
   local attempt=0
-
-  # Get all ports already allocated to appmotel apps to avoid self-collision
-  local allocated_ports=""
-  if [[ -d "${APPS_CONFIG_DIR}" ]]; then
-    allocated_ports=$(grep -h "^PORT=" "${APPS_CONFIG_DIR}"/*/metadata.conf 2>/dev/null | cut -d'=' -f2 || true)
-  fi
 
   while [[ ${attempt} -lt ${max_attempts} ]]; do
     # Generate random port in range
     port=$((MIN_PORT + RANDOM % (MAX_PORT - MIN_PORT)))
 
-    # Check if port is already allocated to another app
-    if echo "${allocated_ports}" | grep -qw "${port}" 2>/dev/null; then
-      attempt=$((attempt + 1))
-      continue
-    fi
-
-    # Check if port is currently in use by any process
-    if ! ss -tuln | grep -q ":${port} "; then
+    if port_available "${port}" "${exclude_ports}"; then
       echo "${port}"
       return 0
     fi
@@ -1381,6 +1401,34 @@ get_all_services() {
     # Apps without SERVICES field use the app name as single service
     services_ref=("${app_name}")
   fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: get_app_unit_files
+# Description: Resolve the exact systemd unit file names an app owns, from
+#   metadata. Used instead of the glob appmotel-${app_name}*.service, which
+#   would also match a different app whose name shares the prefix (backing up
+#   app "foo" must not capture app "foo-bar"'s unit).
+# Parameters: $1 = app_name, $2 = nameref to output array
+# -----------------------------------------------------------------------------
+get_app_unit_files() {
+  local app_name="$1"
+  local -n units_ref=$2
+  units_ref=()
+
+  local -a services
+  if ! get_all_services "${app_name}" services 2>/dev/null || [[ ${#services[@]} -eq 0 ]]; then
+    services=("${app_name}")
+  fi
+
+  local service
+  for service in "${services[@]}"; do
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      units_ref+=("appmotel-${app_name}.service")
+    else
+      units_ref+=("appmotel-${app_name}-${service}.service")
+    fi
+  done
 }
 
 # =============================================================================
@@ -2078,8 +2126,14 @@ cmd_add() {
   local config_dir="${APPS_CONFIG_DIR}/${app_name}"
   local env_backup="${config_dir}/.env.backup"
   if [[ -f "${env_backup}" ]]; then
-    printf "Found previous .env backup for '${app_name}'. Restore it? [Y/n] "
-    read -r restore_answer
+    local restore_answer=""
+    if [[ -t 0 ]]; then
+      printf "Found previous .env backup for '${app_name}'. Restore it? [Y/n] "
+      # || guard: read fails at EOF and errexit would abort mid-deployment
+      read -r restore_answer || restore_answer=""
+    else
+      log_msg "INFO" "Non-interactive session: restoring previous .env backup (default)"
+    fi
     case "${restore_answer}" in
       [nN]|[nN][oO])
         log_msg "INFO" "Starting with fresh .env"
@@ -2220,6 +2274,10 @@ cmd_add() {
     # Track services to start (backend first, then frontend)
     local -a backend_services=()
     local frontend_service=""
+    # Ports handed out during this run: this app's metadata is not written
+    # yet, so find_free_port alone could return a port already given to a
+    # sibling component (or the frontend's own port)
+    local assigned_ports="${port}"
 
     for component in "${services_to_deploy[@]}"; do
       # Resolve component directory (check root level first, then src/)
@@ -2233,7 +2291,8 @@ cmd_add() {
 
       # Only frontend gets the public port; others run internal
       if [[ "${component}" != "frontend" ]]; then
-        component_port=$(find_free_port)
+        component_port=$(find_free_port "${assigned_ports}")
+        assigned_ports="${assigned_ports} ${component_port}"
         log_msg "INFO" "Assigned internal port ${component_port} for ${component}"
       fi
 
@@ -2306,23 +2365,27 @@ cmd_add() {
       log_msg "INFO" "Procfile detected, setting up multi-process app"
 
       local proc_count=0
+      local assigned_ports="${port}"
       while IFS= read -r proc_line; do
         if [[ "${proc_line}" =~ ^([a-zA-Z][a-zA-Z0-9_-]*):(.+)$ ]]; then
           local proc_name="${BASH_REMATCH[1]}"
           local proc_cmd="${BASH_REMATCH[2]}"
           local proc_port="${port}"
 
-          # Web process gets the main port, others get incremented ports
+          # Web process gets the main port; others prefer consecutive ports
+          # but fall back to a random free one if port+N is taken (it may
+          # belong to another app or a live socket)
           if [[ "${proc_name}" != "web" ]]; then
             # Not ((proc_count++)): post-increment from 0 returns status 1 and
             # errexit would abort the deploy mid-way
             proc_count=$((proc_count + 1))
             proc_port=$((port + proc_count))
 
-            # Ensure port doesn't exceed maximum allowed port
-            if [[ ${proc_port} -gt ${MAX_PORT} ]]; then
-              die "Port overflow: Procfile has too many processes. Port ${proc_port} exceeds maximum ${MAX_PORT}"
+            if [[ ${proc_port} -gt ${MAX_PORT} ]] || ! port_available "${proc_port}" "${assigned_ports}"; then
+              proc_port=$(find_free_port "${assigned_ports}")
+              log_msg "INFO" "Port $((port + proc_count)) unavailable for ${proc_name}, assigned ${proc_port}"
             fi
+            assigned_ports="${assigned_ports} ${proc_port}"
           fi
 
           log_msg "INFO" "Creating service for process: ${proc_name} (port ${proc_port})"
@@ -3019,7 +3082,7 @@ cmd_env() {
     log_msg "INFO" "Environment file changed"
     # Ask user if they want to restart
     printf "Restart app to apply changes? [Y/n] "
-    read -r answer
+    read -r answer || answer=""
     case "${answer}" in
       [nN]|[nN][oO])
         log_msg "INFO" "Skipping restart. Run 'appmo restart ${app_name}' to apply changes later."
@@ -3391,7 +3454,9 @@ cmd_autopull() {
   echo $$ >&9
 
   # Trap will release lock automatically when fd 9 is closed on exit
-  trap 'exec 9>&-' EXIT
+  # Keep temp-file cleanup: a bare trap here would overwrite the EXIT trap
+  # installed at script start
+  trap 'exec 9>&-; cleanup_temp_files' EXIT
 
   log_msg "INFO" "Starting autopull check"
 

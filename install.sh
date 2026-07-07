@@ -529,9 +529,12 @@ find_existing_wildcard_cert() {
 
   local cert_dir="/etc/letsencrypt/live"
 
-  # First, try to find a wildcard cert matching *.BASE_DOMAIN
+  # First, try to find a wildcard cert matching *.BASE_DOMAIN exactly.
+  # Apps live at <app>.BASE_DOMAIN, so the SAN must be *.BASE_DOMAIN itself —
+  # stripping a label here (e.g. matching *.example.edu for
+  # BASE_DOMAIN=apps.example.edu) would select a cert that cannot cover the
+  # apps, since wildcards only match one level.
   if [[ -n "${BASE_DOMAIN:-}" ]]; then
-    local base_domain="${BASE_DOMAIN#*.}"  # Remove any leading subdomain
     for domain_dir in "${cert_dir}"/*; do
       if [[ ! -d "${domain_dir}" ]]; then
         continue
@@ -539,7 +542,7 @@ find_existing_wildcard_cert() {
       local domain_name=$(basename "${domain_dir}")
       if [[ -f "${domain_dir}/fullchain.pem" ]]; then
         if openssl x509 -in "${domain_dir}/fullchain.pem" -text -noout 2>/dev/null | \
-           grep -q "DNS:\*\.${base_domain}"; then
+           grep -qE "DNS:\*\.${BASE_DOMAIN//./\\.}(,|\$| )"; then
           echo "${domain_name}"
           return
         fi
@@ -905,7 +908,7 @@ enable_traefik_service() {
       return 0
     fi
     sleep 1
-    ((attempt++))
+    attempt=$((attempt + 1))
   done
 
   log_msg "ERROR" "Traefik service failed to start within ${max_attempts} seconds"
@@ -989,6 +992,13 @@ install_as_root() {
 
   # Create systemd service (requires root, but Traefik binary doesn't exist yet)
   create_traefik_service
+
+  # Enable boot-start now: enabling works without the binary, and the
+  # user-level sudoers grant only covers start/stop/restart/status, so this
+  # is the only phase that can do it. Without this the service stays
+  # disabled and Traefik is down after the first reboot.
+  systemctl enable traefik-appmotel
+  log_msg "INFO" "Traefik service enabled for boot"
 
   # Check for and prepare existing certificates
   local existing_cert
