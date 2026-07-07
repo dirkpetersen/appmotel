@@ -738,6 +738,13 @@ restore_backup() {
   local backup_dir="${BACKUPS_DIR}/${app_name}/${backup_id}"
   local restore_failed=false
 
+  # An empty backup_id would make backup_dir the backup root, which exists —
+  # the -d check below would pass while restoring nothing
+  if [[ -z "${backup_id}" ]]; then
+    log_msg "ERROR" "restore_backup called with empty backup id for '${app_name}'"
+    return 1
+  fi
+
   if [[ ! -d "${backup_dir}" ]]; then
     log_msg "ERROR" "Backup '${backup_id}' not found for app '${app_name}'"
     return 1
@@ -1731,8 +1738,13 @@ setup_python_env() {
   fi
 
   source .venv/bin/activate
-  pip install --upgrade pip
-  pip install -r requirements.txt
+  if ! pip install --upgrade pip; then
+    log_msg "WARN" "pip self-upgrade failed, continuing with existing pip"
+  fi
+  if ! pip install -r requirements.txt; then
+    log_msg "ERROR" "Failed to install Python dependencies from requirements.txt"
+    return 1
+  fi
 
   log_msg "INFO" "Python dependencies installed"
 }
@@ -1751,7 +1763,10 @@ setup_nodejs_env() {
   log_msg "INFO" "Installing Node.js dependencies"
 
   safe_cd "${repo_dir}" "setting up Node.js environment"
-  npm install
+  if ! npm install; then
+    log_msg "ERROR" "npm install failed"
+    return 1
+  fi
 
   # Check if this is a Next.js app with static export
   local nextjs_config=""
@@ -1767,10 +1782,16 @@ setup_nodejs_env() {
       log_msg "INFO" "Detected Next.js static export - building application"
 
       # Build the static export
-      npm run build
+      if ! npm run build; then
+        log_msg "ERROR" "Next.js build failed"
+        return 1
+      fi
 
       # Install serve for static hosting
-      npm install serve
+      if ! npm install serve; then
+        log_msg "ERROR" "Failed to install serve for static hosting"
+        return 1
+      fi
 
       # Update package.json start script to use serve
       if command -v jq &> /dev/null; then
@@ -1794,10 +1815,16 @@ setup_nodejs_env() {
       log_msg "INFO" "Detected Vite app - building for production"
 
       # Build the app
-      npm run build
+      if ! npm run build; then
+        log_msg "ERROR" "Vite build failed"
+        return 1
+      fi
 
       # Install serve for static hosting
-      npm install serve
+      if ! npm install serve; then
+        log_msg "ERROR" "Failed to install serve for static hosting"
+        return 1
+      fi
 
       # Add/update start script that serves the dist folder
       if command -v jq &> /dev/null; then
@@ -1840,7 +1867,10 @@ setup_go_env() {
 
   # Download dependencies
   log_msg "INFO" "Downloading Go dependencies"
-  go mod download
+  if ! go mod download; then
+    log_msg "ERROR" "go mod download failed"
+    return 1
+  fi
 
   # Build the application
   # Try to find the module name from go.mod for the binary name
@@ -2284,7 +2314,9 @@ cmd_add() {
 
           # Web process gets the main port, others get incremented ports
           if [[ "${proc_name}" != "web" ]]; then
-            ((proc_count++))
+            # Not ((proc_count++)): post-increment from 0 returns status 1 and
+            # errexit would abort the deploy mid-way
+            proc_count=$((proc_count + 1))
             proc_port=$((port + proc_count))
 
             # Ensure port doesn't exceed maximum allowed port
@@ -2362,7 +2394,7 @@ cmd_add() {
     if [[ ${attempt} -lt ${max_attempts} ]]; then
       sleep 1
     fi
-    ((attempt++))
+    attempt=$((attempt + 1))
   done
 
   if [[ "${app_accessible}" == "true" ]]; then
@@ -2720,10 +2752,15 @@ cmd_update() {
 
   log_msg "INFO" "Updating app: ${app_name}"
 
-  # Create backup before update
+  # Create backup before update. Guarded explicitly: when invoked from
+  # autopull (errexit suppressed), an unchecked failure here would leave
+  # backup_id empty and the later rollback would "restore" nothing.
   log_msg "INFO" "Creating backup before update..."
   local backup_id
-  backup_id=$(create_backup "${app_name}")
+  if ! backup_id=$(create_backup "${app_name}") || [[ -z "${backup_id}" ]]; then
+    log_msg "ERROR" "Backup failed, aborting update (nothing was changed)"
+    return 1
+  fi
 
   # Track if we need to rollback
   local update_failed=false
@@ -2812,9 +2849,9 @@ cmd_update() {
         fi
       fi
 
-      setup_python_env "${deps_dir}"
-      setup_nodejs_env "${deps_dir}"
-      setup_go_env "${deps_dir}"
+      setup_python_env "${deps_dir}" || update_failed=true
+      setup_nodejs_env "${deps_dir}" || update_failed=true
+      setup_go_env "${deps_dir}" || update_failed=true
 
       # Run install script
       if ! run_install_script "${app_dir}"; then
@@ -3127,7 +3164,10 @@ cmd_check() {
 
     local local_head
     local remote_head
-    local_head=$(git rev-parse HEAD)
+    if ! local_head=$(git rev-parse HEAD 2>/dev/null); then
+      printf "%-22s %-12s %-10s %s\n" "${app_name}" "BAD HEAD" "-" "-"
+      continue
+    fi
 
     local tracking_branch
     tracking_branch=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "")
@@ -3137,7 +3177,10 @@ cmd_check() {
       continue
     fi
 
-    remote_head=$(git rev-parse "${tracking_branch}")
+    if ! remote_head=$(git rev-parse "${tracking_branch}" 2>/dev/null); then
+      printf "%-22s %-12s %-10s %s\n" "${app_name}" "BAD TRACK" "${local_head:0:8}" "-"
+      continue
+    fi
 
     if [[ "${local_head}" != "${remote_head}" ]]; then
       printf "%-22s %-12s %-10s %s\n" "${app_name}" "UPDATE" "${local_head:0:8}" "${remote_head:0:8}"
@@ -3271,9 +3314,11 @@ FIX: <concrete steps to investigate or resolve>"
     return 0
   fi
 
-  # Parse structured sections from Claude's response
+  # Parse structured sections from Claude's response.
+  # grep exits 1 on no match; without the || the assignment would abort the
+  # whole autopull run under errexit+pipefail when a TITLE: line is missing.
   local issue_title cause fix
-  issue_title=$(echo "${analysis}" | grep "^TITLE:" | sed 's/^TITLE:[[:space:]]*//')
+  issue_title=$(echo "${analysis}" | grep "^TITLE:" | sed 's/^TITLE:[[:space:]]*//' || true)
   cause=$(echo "${analysis}" | awk '/^CAUSE:/{found=1; sub(/^CAUSE:[[:space:]]*/,""); print; next} /^FIX:/{found=0} found{print}')
   fix=$(echo "${analysis}" | awk '/^FIX:/{found=1; sub(/^FIX:[[:space:]]*/,""); print; next} found{print}')
 
@@ -3397,10 +3442,14 @@ cmd_autopull() {
       continue
     fi
 
-    # Get current HEAD and remote HEAD
+    # Get current HEAD and remote HEAD. Guarded so one app with a broken
+    # HEAD or deleted upstream ref skips instead of killing the whole run.
     local local_head
     local remote_head
-    local_head=$(git rev-parse HEAD)
+    if ! local_head=$(git rev-parse HEAD 2>/dev/null); then
+      log_msg "WARN" "${app_name}: Cannot resolve HEAD"
+      continue
+    fi
 
     # Get the tracking branch
     local tracking_branch
@@ -3411,7 +3460,10 @@ cmd_autopull() {
       continue
     fi
 
-    remote_head=$(git rev-parse "${tracking_branch}")
+    if ! remote_head=$(git rev-parse "${tracking_branch}" 2>/dev/null); then
+      log_msg "WARN" "${app_name}: Cannot resolve tracking ref ${tracking_branch}"
+      continue
+    fi
 
     # Check if update is needed
     if [[ "${local_head}" != "${remote_head}" ]]; then
@@ -3427,7 +3479,7 @@ cmd_autopull() {
     fi
 
     # Check for runtime errors and auto-file GitHub issues via Claude Code
-    check_app_errors "${app_name}"
+    check_app_errors "${app_name}" || log_msg "WARN" "${app_name}: error scan failed (non-fatal)"
   done
 
   if [[ ${app_count} -eq 0 ]]; then
