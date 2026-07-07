@@ -774,6 +774,12 @@ install_appmo_cli() {
       log_msg "INFO" "Shell completion installed"
     fi
   fi
+
+  # bash-completion lazy-loads by command name, so the appmotel alias needs
+  # the same file under its own name to get completion on first <Tab>
+  if [[ -f "${completion_dest}/appmo" ]]; then
+    ln -sf appmo "${completion_dest}/appmotel"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -788,19 +794,27 @@ setup_path() {
   # Check if PATH setup already exists
   if grep -q '.local/bin' "${bashrc}" 2>/dev/null; then
     log_msg "INFO" "PATH already configured"
-    return
-  fi
-
-  # Add to .bashrc
-  cat >> "${bashrc}" <<'EOF'
+  else
+    # Add to .bashrc
+    cat >> "${bashrc}" <<'EOF'
 
 # Add ~/.local/bin to PATH
 if [[ -d "$HOME/.local/bin" ]] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 EOF
+    log_msg "INFO" "PATH configured in .bashrc"
+  fi
 
-  log_msg "INFO" "PATH configured in .bashrc"
+  # Convenience alias; completion for it is registered in appmo-completion.bash
+  if ! grep -q "alias appmotel=" "${bashrc}" 2>/dev/null; then
+    cat >> "${bashrc}" <<'EOF'
+
+# appmotel is an alias for the appmo CLI
+alias appmotel='appmo'
+EOF
+    log_msg "INFO" "appmotel alias added to .bashrc"
+  fi
 }
 
 # -----------------------------------------------------------------------------

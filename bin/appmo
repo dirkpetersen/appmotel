@@ -2488,8 +2488,8 @@ cmd_list() {
     return
   fi
 
-  printf "%-15s %-10s %-35s %s\n" "APP NAME" "STATUS" "REPO" "URL"
-  printf "%-15s %-10s %-35s %s\n" "--------" "------" "----" "---"
+  printf "%-22s %-10s %-35s %s\n" "APP NAME" "STATUS" "REPO" "URL"
+  printf "%-22s %-10s %-35s %s\n" "--------" "------" "----" "---"
 
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
@@ -2518,7 +2518,7 @@ cmd_list() {
       repo=$(echo "${github_url}" | sed -E 's|^https?://github\.com/||; s|^git@github\.com:||; s|\.git$||')
     fi
 
-    printf "%-15s %-10s %-35s %s\n" "${app}" "${status}" "${repo}" "${url}"
+    printf "%-22s %-10s %-35s %s\n" "${app}" "${status}" "${repo}" "${url}"
   done
 
   if [[ ${found_apps} -eq 0 ]]; then
@@ -3082,8 +3082,8 @@ cmd_check() {
   local updates_available=0
   local app_count=0
 
-  printf "%-15s %-12s %-10s %s\n" "APP" "STATUS" "LOCAL" "REMOTE"
-  printf "%-15s %-12s %-10s %s\n" "---" "------" "-----" "------"
+  printf "%-22s %-12s %-10s %s\n" "APP" "STATUS" "LOCAL" "REMOTE"
+  printf "%-22s %-12s %-10s %s\n" "---" "------" "-----" "------"
 
   for app_dir in "${APPS_CONFIG_DIR}"/*; do
     if [[ ! -d "${app_dir}" ]]; then
@@ -3108,20 +3108,20 @@ cmd_check() {
     local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
 
     if [[ ! -d "${repo_dir}" ]]; then
-      printf "%-15s %-12s %-10s %s\n" "${app_name}" "NO REPO" "-" "-"
+      printf "%-22s %-12s %-10s %s\n" "${app_name}" "NO REPO" "-" "-"
       continue
     fi
 
-    cd "${repo_dir}" || { printf "%-15s %-12s %-10s %s\n" "${app_name}" "CD ERR" "-" "-"; continue; }
+    cd "${repo_dir}" || { printf "%-22s %-12s %-10s %s\n" "${app_name}" "CD ERR" "-" "-"; continue; }
 
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
-      printf "%-15s %-12s %-10s %s\n" "${app_name}" "NOT GIT" "-" "-"
+      printf "%-22s %-12s %-10s %s\n" "${app_name}" "NOT GIT" "-" "-"
       continue
     fi
 
     # Fetch latest changes (quietly)
     if ! git_with_timeout fetch origin 2>/dev/null; then
-      printf "%-15s %-12s %-10s %s\n" "${app_name}" "FETCH ERR" "-" "-"
+      printf "%-22s %-12s %-10s %s\n" "${app_name}" "FETCH ERR" "-" "-"
       continue
     fi
 
@@ -3133,17 +3133,17 @@ cmd_check() {
     tracking_branch=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo "")
 
     if [[ -z "${tracking_branch}" ]]; then
-      printf "%-15s %-12s %-10s %s\n" "${app_name}" "NO TRACK" "${local_head:0:8}" "-"
+      printf "%-22s %-12s %-10s %s\n" "${app_name}" "NO TRACK" "${local_head:0:8}" "-"
       continue
     fi
 
     remote_head=$(git rev-parse "${tracking_branch}")
 
     if [[ "${local_head}" != "${remote_head}" ]]; then
-      printf "%-15s %-12s %-10s %s\n" "${app_name}" "UPDATE" "${local_head:0:8}" "${remote_head:0:8}"
+      printf "%-22s %-12s %-10s %s\n" "${app_name}" "UPDATE" "${local_head:0:8}" "${remote_head:0:8}"
       updates_available=$((updates_available + 1))
     else
-      printf "%-15s %-12s %-10s %s\n" "${app_name}" "up-to-date" "${local_head:0:8}" "-"
+      printf "%-22s %-12s %-10s %s\n" "${app_name}" "up-to-date" "${local_head:0:8}" "-"
     fi
   done
 

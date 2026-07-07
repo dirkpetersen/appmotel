@@ -9,8 +9,8 @@ _appmo_completions() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-  # Main commands (rm is hidden alias for remove)
-  local commands="add remove rm list status start stop restart update autopull logs env exec backup restore backups self-update help"
+  # Main commands (rm/ls are hidden aliases for remove/list)
+  local commands="add remove rm list ls status start stop restart update check autopull logs env exec backup restore backups self-update help"
 
   # Get list of apps for completion (exclude .env file, only list directories)
   local apps=""
@@ -29,11 +29,11 @@ _appmo_completions() {
         add)
           # No completion for add (needs app-name, github-url, branch)
           ;;
-        remove|rm|status|start|stop|restart|update|logs|env|exec|backup|restore|backups)
+        remove|rm|status|start|stop|restart|update|check|logs|env|exec|backup|restore|backups)
           # Complete with app names
           COMPREPLY=($(compgen -W "${apps}" -- "${cur}"))
           ;;
-        list|self-update|help)
+        list|ls|self-update|help)
           # No further arguments
           ;;
       esac
@@ -58,4 +58,7 @@ _appmo_completions() {
   return 0
 }
 
-complete -F _appmo_completions appmo
+# Register for both the command and the appmotel alias so tab completion
+# works regardless of which name is typed (completion is looked up by the
+# literal first word, so the alias needs its own registration).
+complete -F _appmo_completions appmo appmotel
