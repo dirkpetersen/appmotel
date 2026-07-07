@@ -1192,9 +1192,12 @@ main() {
   log_msg "INFO" "Phase 2: Launching EC2 instance"
   log_msg "INFO" "============================================"
 
-  # Determine architecture based on instance type
+  # Determine architecture based on instance type. Graviton families have a
+  # 'g' right after the generation digit (t4g, m6g, c6gn, m7gd, c8g, im4gn,
+  # hpc7g, ...); a1 is the legacy ARM family. x86 GPU families like g5/g4dn
+  # do not match (no 'g' directly after the digit).
   local arch
-  if [[ "${instance_type}" =~ ^t4g\. ]] || [[ "${instance_type}" =~ ^c7g\. ]] || [[ "${instance_type}" =~ ^m7g\. ]]; then
+  if [[ "${instance_type}" =~ ^[a-z]+[0-9]+g[a-z]*\. ]] || [[ "${instance_type}" =~ ^a1\. ]]; then
     arch="arm64"
   else
     arch="x86_64"

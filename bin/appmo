@@ -2792,7 +2792,7 @@ cmd_update() {
         PORT="${assigned_port}"
 
         # Update Traefik config with new port
-        local base_domain="${BASE_DOMAIN:-apps.example.com}"
+        local base_domain="${BASE_DOMAIN:-apps.example.edu}"
         create_traefik_config "${app_name}" "${assigned_port}" "${base_domain}" "${app_dir}"
       fi
     fi

@@ -260,7 +260,7 @@ setup_local_dns() {
 
   # Capture current upstream DNS before we touch anything
   local upstream_dns
-  upstream_dns=$(resolvectl status 2>/dev/null | awk '/Current DNS Server:/{print $NF; exit}')
+  upstream_dns=$(resolvectl status 2>/dev/null | awk '/Current DNS Server:/{print $NF; exit}' || true)
   if [[ -z "${upstream_dns}" ]]; then
     upstream_dns=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf 2>/dev/null)
   fi
@@ -482,7 +482,7 @@ download_traefik() {
 
   # Get latest version
   local version
-  version=$(curl -sL https://api.github.com/repos/traefik/traefik/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+  version=$(curl -sL https://api.github.com/repos/traefik/traefik/releases/latest | grep '"tag_name"' | cut -d'"' -f4 || true)
   if [[ -z "${version}" ]]; then
     die "Failed to determine latest Traefik version"
   fi
