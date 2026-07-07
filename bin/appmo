@@ -251,12 +251,15 @@ safe_source_env() {
 
       # Check for dangerous patterns in value
       # Reject: $(...), `...`, ;, &&, ||, |, >, <, \n in value
+      # Note the braces: || and && have equal precedence in bash, so without
+      # grouping the fully-quoted exemption (meant only for pipes) would
+      # apply to the entire chain and quoted $(...)/backticks/; would pass
       if [[ "${value}" =~ \$\( ]] || \
          [[ "${value}" =~ \` ]] || \
          [[ "${value}" =~ \; ]] || \
          [[ "${value}" =~ \&\& ]] || \
          [[ "${value}" =~ \|\| ]] || \
-         [[ "${value}" =~ \| ]] && [[ ! "${value}" =~ ^[\"\'][^\"\']*[\"\']$ ]]; then
+         { [[ "${value}" =~ \| ]] && [[ ! "${value}" =~ ^[\"\'][^\"\']*[\"\']$ ]]; }; then
         if [[ "${strict}" == "true" ]]; then
           IFS="${saved_ifs}"
           die "Invalid .env file '${env_file}': dangerous pattern at line ${line_num}"
@@ -3348,7 +3351,9 @@ check_app_errors() {
 
   # Derive owner/repo from full GitHub URL (strip protocol, host, .git, /tree/... subfolder)
   local repo_ref
-  repo_ref=$(echo "${github_url}" | sed 's|https://github.com/||; s|\.git$||; s|/tree/.*||')
+  # Handle both https and SSH clone URLs (cmd_add produces git@ URLs when
+  # SSH access exists); gh --repo needs plain owner/repo
+  repo_ref=$(echo "${github_url}" | sed 's|https://github.com/||; s|git@github.com:||; s|\.git$||; s|/tree/.*||')
 
   log_msg "INFO" "${app_name}: sending logs to Claude Code for analysis"
 

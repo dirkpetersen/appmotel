@@ -581,6 +581,22 @@ ensure_cert_readable() {
     return
   fi
 
+  # This function needs root (groupadd/usermod/chgrp). It is also reachable
+  # from the user-level path via generate_traefik_config; there, either the
+  # cert is already readable (root pass set it up) or we can only warn —
+  # an unguarded groupadd would abort the whole user-level install.
+  if [[ ${EUID} -ne 0 ]]; then
+    if [[ -x /usr/local/bin/appmotel-fix-certs ]] && sudo -n /usr/local/bin/appmotel-fix-certs 2>/dev/null; then
+      log_msg "INFO" "Certificate permissions fixed via sudo helper"
+    elif [[ -r "/etc/letsencrypt/live/${domain}/fullchain.pem" ]]; then
+      log_msg "INFO" "Certificate for ${domain} is readable"
+    else
+      log_msg "WARN" "Certificate for ${domain} is not readable by this user."
+      log_msg "WARN" "Run as root to fix: sudo bash install.sh"
+    fi
+    return 0
+  fi
+
   local os_type
   os_type=$(detect_os)
 
@@ -1101,20 +1117,27 @@ install_as_user() {
   # Not appmotel user, need to switch
   log_msg "INFO" "Switching to ${APPMOTEL_USER} user for installation"
 
-  # Check if we can switch to appmotel user
-  if ! sudo /bin/su - appmotel -c "echo test" &>/dev/null; then
+  # Check if we can switch to appmotel user. Probe with the same command
+  # form used below: the sudoers rule this installer writes only covers
+  # `(appmotel) NOPASSWD: ALL`, and an exact-match rule like
+  # `/bin/su - appmotel` would not authorize `su ... -c "echo test"`, so a
+  # su-based probe can falsely abort. -n avoids hanging on a password prompt.
+  if ! sudo -n -u appmotel true 2>/dev/null; then
     log_msg "ERROR" "Cannot switch to ${APPMOTEL_USER} user"
-    log_msg "ERROR" "Make sure you have permission: sudo su - appmotel"
+    log_msg "ERROR" "Make sure you have permission: sudo -u appmotel true"
     log_msg "ERROR" ""
     log_msg "ERROR" "If system-level setup is not done, run as root first:"
     log_msg "ERROR" "  sudo bash install.sh"
     exit 1
   fi
 
-  # Switch to appmotel user and run installation
-  sudo -u appmotel bash -c "cd '${SCRIPT_DIR}' && bash install.sh"
-
-  local exit_code=$?
+  # Switch to appmotel user and run installation. The if-guard keeps errexit
+  # from exiting before we can report the failure (a bare $? capture after
+  # the command is dead code under errexit).
+  local exit_code=0
+  if ! sudo -u appmotel bash -c "cd '${SCRIPT_DIR}' && bash install.sh"; then
+    exit_code=$?
+  fi
 
   if [[ ${exit_code} -eq 0 ]]; then
     log_msg "INFO" "======================================"

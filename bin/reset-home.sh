@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
+set -o errexit -o nounset -o pipefail
+IFS=$'\n\t'
 
 # ==========================================
 # LINUX HOME DIRECTORY RESET SCRIPT
 # ==========================================
 # Usage from repository root:
-#   sudo -u appmotel bash reset-home.sh --force
+#   sudo -u appmotel bash bin/reset-home.sh --force
 #
 # This script should NOT be made executable
 # Must be run as the appmotel user (not root)
 # ==========================================
+
+# The only user whose home this script is allowed to wipe
+readonly EXPECTED_USER="appmotel"
 
 # Parse command line arguments
 FORCE_MODE=0
@@ -23,9 +28,19 @@ SCRIPT_NAME=$(basename "$0")
 
 # Ensure the script is NOT run as root (sudo).
 # We want to reset the current user's home, not /root.
-if [ "$EUID" -eq 0 ]; then
-  echo "❌ ERROR: Please run this as your normal user, NOT as root (do not use sudo)."
-  echo "   This ensures the new files are owned by you, not root."
+if [[ ${EUID} -eq 0 ]]; then
+  echo "❌ ERROR: Please run this as the ${EXPECTED_USER} user, NOT as root."
+  echo "   Usage: sudo -u ${EXPECTED_USER} bash bin/reset-home.sh --force"
+  exit 1
+fi
+
+# Ensure we are the intended service user: running this as the operator
+# account by mistake (forgetting the sudo -u prefix) would irreversibly
+# wipe the operator's home, including this repository checkout.
+if [[ "$(id -un)" != "${EXPECTED_USER}" ]]; then
+  echo "❌ ERROR: This script resets the ${EXPECTED_USER} home directory and"
+  echo "   must run as that user, not '$(id -un)'."
+  echo "   Usage: sudo -u ${EXPECTED_USER} bash bin/reset-home.sh --force"
   exit 1
 fi
 
@@ -34,15 +49,15 @@ cd "$HOME" || { echo "Could not enter home directory"; exit 1; }
 
 # 2. CONFIRMATION
 # ----------------
-if [[ $FORCE_MODE -eq 0 ]]; then
+if [[ ${FORCE_MODE} -eq 0 ]]; then
   echo "⚠️  WARNING: YOU ARE ABOUT TO RESET: $HOME"
   echo "   - ALL files (Hidden & Visible) will be DELETED."
-  echo "   - This script ($SCRIPT_NAME) will be preserved."
+  echo "   - This script (${SCRIPT_NAME}) will be preserved."
   echo "   - Skeleton files will be restored."
   echo ""
-  read -p "Are you sure you want to proceed? (Type 'y' to confirm): " -n 1 -r
+  read -p "Are you sure you want to proceed? (Type 'y' to confirm): " -n 1 -r || REPLY=""
   echo ""
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+  if [[ ! ${REPLY} =~ ^[Yy]$ ]]; then
       echo "Aborted."
       exit 1
   fi
@@ -59,7 +74,11 @@ echo "🧹 Cleaning directory..."
 # -mindepth 1:     Ignore the folder itself (don't delete /home/user)
 # ! -name ...:     EXCLUDE this script file
 # -delete:         Delete everything else
-find "$HOME" -mindepth 1 ! -name "$SCRIPT_NAME" -delete
+# Busy/undeletable entries must fail loudly, not print "Success!" below
+if ! find "$HOME" -mindepth 1 ! -name "${SCRIPT_NAME}" -delete; then
+  echo "❌ ERROR: Some files could not be deleted; home is partially reset."
+  exit 1
+fi
 
 # 4. RESTORE SKELETON
 # ----------------
@@ -68,16 +87,14 @@ echo "💀 Copying skeleton files..."
 # Since we are running as the user, 'chown' is not required.
 cp -r /etc/skel/. "$HOME"
 
-# 5. REINITIALIZE XDG FOLDERS
-# ----------------
-#echo "📂 Creating standard folders (Documents, Downloads...)..."
-#xdg-user-dirs-update
-
-# 6. FORCE BASH RELOAD (Optional)
+# 5. FORCE BASH RELOAD (Optional)
 # ----------------
 # Re-source the new .bashrc so the terminal looks right immediately
-if [ -f "$HOME/.bashrc" ]; then
+if [[ -f "$HOME/.bashrc" ]]; then
+    # .bashrc is not written for nounset/errexit; relax for sourcing
+    set +o errexit +o nounset
     source "$HOME/.bashrc"
+    set -o errexit -o nounset
 fi
 
 echo "✅ Success! Your Home Directory has been reset."
