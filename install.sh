@@ -705,6 +705,23 @@ EOF
     fi
   fi
 
+  # Backend transport timeouts (dynamic config). Complements the entrypoint
+  # respondingTimeouts below: these govern the Traefik->app connection, while
+  # respondingTimeouts govern the client->Traefik side. Named "default" so it
+  # applies to all services without per-app configuration.
+  cat > "${dynamic_config_dir}/default-transport.yaml" <<EOF
+# Default transport configuration for long-running requests
+# Managed by: install.sh (generate_traefik_config), rewritten on self-update
+http:
+  serversTransports:
+    default:
+      forwardingTimeouts:
+        dialTimeout: 30s
+        responseHeaderTimeout: 600s
+        idleConnTimeout: 600s
+EOF
+  log_msg "INFO" "Default transport configuration written to ${dynamic_config_dir}/default-transport.yaml"
+
   # Write static configuration
   cat > "${static_config_file}" <<EOF
 # STATIC CONFIGURATION
