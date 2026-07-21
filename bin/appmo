@@ -400,6 +400,7 @@ Commands:
   restore <app-name> [backup-id]         Restore an app from backup
   backups <app-name>                     List available backups for an app
   self-update                            Update appmo CLI, Traefik, and configs
+  skill                                  Install the Appmotel Claude Code skill into ~/.claude/skills/
 
 URL Formats:
   user/repo                              Short form (expands to GitHub)
@@ -3703,6 +3704,49 @@ REOF
 }
 
 # -----------------------------------------------------------------------------
+# Function: cmd_skill
+# Description: Install the Appmotel Claude Code skill into the calling user's
+# ~/.claude/skills/appmotel/ directory. Downloads the latest skill files from
+# GitHub. Safe to run as any system user; does not require appmotel permissions.
+# Usage: appmo skill
+# -----------------------------------------------------------------------------
+cmd_skill() {
+  local target_home="${HOME}"
+  local target_user="${USER:-$(id -un)}"
+
+  # When invoked as appmotel via sudo (sudo -u appmotel appmo skill), install
+  # into the real caller's home instead of appmotel's.
+  if [[ "${target_user}" == "appmotel" && -n "${SUDO_USER:-}" ]]; then
+    target_user="${SUDO_USER}"
+    target_home=$(getent passwd "${SUDO_USER}" | cut -d: -f6)
+    [[ -n "${target_home}" ]] || die "Cannot determine home directory for user: ${SUDO_USER}"
+  fi
+
+  local target_dir="${target_home}/.claude/skills/appmotel"
+  local github_base="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/.claude/skills/appmotel"
+  local skill_files=(SKILL.md automation.md security.md testing.md troubleshooting.md)
+
+  log_msg "INFO" "Installing Appmotel skill for user '${target_user}' -> ${target_dir}"
+
+  mkdir -p "${target_dir}"
+  local failed=0
+  for skill_file in "${skill_files[@]}"; do
+    if curl -fsSL "${github_base}/${skill_file}" -o "${target_dir}/${skill_file}"; then
+      log_msg "INFO" "  [ok] ${skill_file}"
+    else
+      log_msg "WARN" "  [fail] ${skill_file}"
+      failed=$(( failed + 1 ))
+    fi
+  done
+
+  if (( failed > 0 )); then
+    log_msg "WARN" "${failed} file(s) failed to download. Check your network connection."
+  else
+    log_msg "INFO" "Appmotel skill installed. Restart Claude Code to load it."
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_self_update
 # Description: Update all appmotel components (appmo CLI, Traefik, configs)
 # Downloads and runs the latest install.sh in user mode for full parity
@@ -3793,6 +3837,7 @@ main() {
     restore) cmd_restore "$@" ;;
     backups) cmd_backups "$@" ;;
     self-update) cmd_self_update "$@" ;;
+    skill) cmd_skill "$@" ;;
     -h|--help|help) usage ;;
     *) die "Unknown command: ${command}. Use 'appmo --help' for usage." ;;
   esac

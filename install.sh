@@ -1016,6 +1016,17 @@ install_as_root() {
   chown -R "${APPMOTEL_USER}:${APPMOTEL_USER}" "${APPMOTEL_HOME}"
   log_msg "INFO" "Fixed ownership of ${APPMOTEL_HOME}"
 
+  # Allow all users to traverse into the appmotel home so the system-wide
+  # /usr/local/bin/appmo symlink is usable by everyone (751 = owner:rwx,
+  # group:r-x, others:--x — traverse only, no directory listing).
+  chmod 751 "${APPMOTEL_HOME}"
+  log_msg "INFO" "Set ${APPMOTEL_HOME} permissions to 751 (world-traversable)"
+
+  # Create system-wide symlink so any user can run 'appmo' or 'appmo skill'
+  # directly without needing sudo -u appmotel.
+  ln -sf "${APPMOTEL_HOME}/.local/bin/appmo" "/usr/local/bin/appmo"
+  log_msg "INFO" "System-wide symlink created: /usr/local/bin/appmo"
+
   # AWS hairpin NAT workaround: resolve *.BASE_DOMAIN locally via dnsmasq
   setup_local_dns
 

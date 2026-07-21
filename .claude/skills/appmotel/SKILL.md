@@ -47,6 +47,22 @@ appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/syste
 appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/journalctl -u traefik-appmotel *
 ```
 
+### Multi-User Access Option
+
+To allow **all logged-in users** on the machine to manage apps via the appmotel user, replace the `apps`-specific lines with a wildcard:
+
+```bash
+# Allow ALL users to control appmotel user (multi-user machines)
+ALL ALL=(ALL) NOPASSWD: /bin/su - appmotel
+ALL ALL=(appmotel) NOPASSWD: ALL
+
+# TIER 2 -> TIER 3: Allow appmotel to manage ONLY the Traefik system service
+appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/systemctl stop traefik-appmotel, /bin/systemctl start traefik-appmotel, /bin/systemctl status traefik-appmotel
+appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/journalctl -u traefik-appmotel *
+```
+
+With this configuration any user can run `sudo -u appmotel appmo <command>` without a password. The system-wide symlink `/usr/local/bin/appmo → /home/appmotel/.local/bin/appmo` makes `appmo` available to all users directly.
+
 ## Command Execution Patterns
 
 ### CRITICAL: Always Use `sudo -u appmotel` Prefix
@@ -81,6 +97,22 @@ sudo -u appmotel systemctl status traefik-appmotel  # Permission denied
 sudo -u appmotel systemctl --user status appmotel-myapp
 sudo -u appmotel systemctl --user restart appmotel-myapp
 sudo -u appmotel journalctl --user -u appmotel-myapp -f
+```
+
+## Installing the Claude Code Skill
+
+Any user on the machine can install the Appmotel Claude Code skill with a single command:
+
+```bash
+appmo skill
+```
+
+This downloads the latest skill files from GitHub and installs them to `~/.claude/skills/appmotel/`. Restart Claude Code afterward to load the skill.
+
+When invoked as the appmotel user via sudo, the skill is installed into the real caller's home:
+
+```bash
+sudo -u appmotel appmo skill   # installs to $SUDO_USER's ~/.claude/skills/appmotel/
 ```
 
 ## Common Operations
@@ -128,6 +160,9 @@ sudo -u appmotel bash -c 'echo "NEW_VAR=value" >> /home/appmotel/.config/appmote
 ## Quick Reference
 
 ```bash
+# Install skill for the current user (run as yourself, no sudo needed)
+appmo skill
+
 # System status
 sudo -u appmotel appmo status
 sudo -u appmotel sudo systemctl status traefik-appmotel

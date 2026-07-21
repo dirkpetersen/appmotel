@@ -24,10 +24,11 @@ See `.claude/skills/appmotel/SKILL.md` for the complete 24x7 automation guide.
 # Development testing
 sudo -u appmotel bash bin/reset-home.sh --force  # Reset appmotel home
 sudo bash install.sh                             # System-level setup (root)
-sudo su - appmotel && bash install.sh            # User-level setup
+sudo -u appmotel bash install.sh                 # User-level setup
 
 # Validate Bash scripts before committing
-bash -n script.sh
+bash -n bin/appmo
+bash -n install.sh
 
 # Service management
 sudo -u appmotel sudo systemctl status traefik-appmotel
@@ -60,7 +61,8 @@ See `.claude/skills/bash/SKILL.md` for full coding standards (associative arrays
 | File | Purpose |
 |------|---------|
 | `install.sh` | Main installer (root + user-level setup) |
-| `bin/appmo` | CLI tool for managing apps (~3300 lines) |
+| `install-aws.sh` | EC2 deployment with Route53 DNS (wraps install.sh) |
+| `bin/appmo` | CLI tool for managing apps (~3600 lines); commands are `cmd_<name>` functions |
 | `bin/appmo-completion.bash` | Shell completion for appmo |
 | `templates/appmotel-autopull.*` | Systemd units for 2-minute git polling |
 | `examples/flask-hello/`, `examples/express-hello/` | Reference apps for testing |
@@ -79,7 +81,10 @@ See `.claude/skills/bash/SKILL.md` for full coding standards (associative arrays
 ├── .local/bin/                 # traefik, appmo binaries
 └── .local/share/
     ├── appmotel/<app>/repo/    # App git repos (.env symlinked to config dir)
+    ├── appmotel-backups/       # App backups (tar.gz, BACKUP_RETENTION=5 default)
     └── traefik/acme.json       # ACME certificates (mode 600)
+
+Port range for app assignments: 10001–59999 (auto-assigned if not set in app `.env`).
 ```
 
 ### Key Safety Functions in bin/appmo
@@ -89,6 +94,18 @@ See `.claude/skills/bash/SKILL.md` for full coding standards (associative arrays
 | `safe_rm_rf <path> <ctx>` | Delete only within allowed dirs; rejects symlinks, empty paths, critical dirs |
 | `safe_source_env <file>` | Source `.env` after rejecting `$(...)`, backticks, semicolons, pipes |
 | `safe_source_metadata <file>` | Source `metadata.conf` using a whitelist of allowed keys |
+
+### App Runtime Detection
+
+`bin/appmo` detects app type in this priority order (see `detect_app_type`):
+
+1. **Go** — `go.mod` present → builds via `go build`, binary placed in `bin/`
+2. **Python** — `requirements.txt` or `pyproject.toml` → creates `.venv`, runs `app.py`
+3. **Node.js** — `package.json` → runs `npm install && npm start`
+4. **Procfile** — multiple named processes (e.g., `web:`, `worker:`) → one systemd service per process; only `web` is exposed via Traefik
+5. **Binary** — executable in `bin/` directory
+
+For subfolder deploys (`appmo add app repo/tree/main/subdir`), dependency files are searched upward to the repo root.
 
 ### appmo CLI Commands
 
