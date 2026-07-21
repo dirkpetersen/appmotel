@@ -83,6 +83,11 @@ if [[ "$(id -un)" != "${APPMOTEL_USER}" ]]; then
 
   if [[ "${appmo_elevate}" -eq 1 ]]; then
     appmo_self=$(command -v appmo 2>/dev/null || echo "$0")
+    # The re-exec'd process inherits our cwd, not appmotel's. If the caller's
+    # cwd (e.g. their home dir) isn't reachable by appmotel, commands like
+    # `find` fail to restore it on exit and print a spurious warning. Move
+    # somewhere appmotel is guaranteed to reach before switching users.
+    cd "${APPMOTEL_HOME}" 2>/dev/null || cd /tmp
     exec sudo -u "${APPMOTEL_USER}" env "PATH=${PATH}" "${appmo_self}" "$@"
   fi
   unset appmo_elevate appmo_self
