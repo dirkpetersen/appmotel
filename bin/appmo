@@ -33,7 +33,8 @@ create_temp_file() {
 }
 
 # Constants
-readonly APPMOTEL_HOME="/home/appmotel"
+readonly APPMOTEL_USER="appmotel"
+readonly APPMOTEL_HOME="/home/${APPMOTEL_USER}"
 readonly APPMOTEL_CONFIG_DIR="${APPMOTEL_HOME}/.config/appmotel"
 readonly APPMOTEL_ENV_FILE="${APPMOTEL_CONFIG_DIR}/.env"
 readonly APPS_CONFIG_DIR="${APPMOTEL_CONFIG_DIR}"
@@ -43,6 +44,49 @@ readonly SYSTEMD_USER_DIR="${APPMOTEL_HOME}/.config/systemd/user"
 readonly BACKUPS_DIR="${APPMOTEL_HOME}/.local/share/appmotel-backups"
 readonly MIN_PORT=10001
 readonly MAX_PORT=59999
+
+# -----------------------------------------------------------------------------
+# Ensure appmotel's local bin dirs are on PATH regardless of how this script
+# was invoked (direct call as appmotel, `sudo -u appmotel appmo ...`, or the
+# auto-elevation below). sudo's env_reset resets PATH to secure_path, which
+# does not include ${APPMOTEL_HOME}/.local/bin — the directory holding the
+# traefik binary, this script itself, and any per-app tooling.
+# -----------------------------------------------------------------------------
+case ":${PATH}:" in
+  *":${APPMOTEL_HOME}/.local/bin:"*) ;;
+  *) PATH="${APPMOTEL_HOME}/.local/bin:${APPMOTEL_HOME}/bin:${PATH}" ;;
+esac
+export PATH
+
+# -----------------------------------------------------------------------------
+# Auto-elevate to the appmotel user
+# Description: appmo operates on the appmotel user's files and `systemctl
+# --user` services, so any invocation by another user (including root)
+# transparently re-execs as appmotel via sudo. A small set of user-specific
+# commands are exempted and run as the invoking user instead, so callers
+# never need to type `sudo -u appmotel` themselves.
+# -----------------------------------------------------------------------------
+readonly APPMO_LOCAL_COMMANDS=(skill -h --help help)
+if [[ "$(id -un)" != "${APPMOTEL_USER}" ]]; then
+  appmo_elevate=1
+  if [[ $# -eq 0 ]]; then
+    appmo_elevate=0
+  else
+    for appmo_local_cmd in "${APPMO_LOCAL_COMMANDS[@]}"; do
+      if [[ "$1" == "${appmo_local_cmd}" ]]; then
+        appmo_elevate=0
+        break
+      fi
+    done
+    unset appmo_local_cmd
+  fi
+
+  if [[ "${appmo_elevate}" -eq 1 ]]; then
+    appmo_self=$(command -v appmo 2>/dev/null || echo "$0")
+    exec sudo -u "${APPMOTEL_USER}" env "PATH=${PATH}" "${appmo_self}" "$@"
+  fi
+  unset appmo_elevate appmo_self
+fi
 
 # Load appmotel configuration
 # Note: Temporarily reset IFS for proper .env parsing, then restore
@@ -3716,7 +3760,7 @@ cmd_skill() {
 
   # When invoked as appmotel via sudo (sudo -u appmotel appmo skill), install
   # into the real caller's home instead of appmotel's.
-  if [[ "${target_user}" == "appmotel" && -n "${SUDO_USER:-}" ]]; then
+  if [[ "${target_user}" == "${APPMOTEL_USER}" && -n "${SUDO_USER:-}" ]]; then
     target_user="${SUDO_USER}"
     target_home=$(getent passwd "${SUDO_USER}" | cut -d: -f6)
     [[ -n "${target_home}" ]] || die "Cannot determine home directory for user: ${SUDO_USER}"

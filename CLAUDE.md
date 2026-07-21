@@ -8,13 +8,15 @@ Appmotel is a no-frills PaaS system using Systemd, Traefik (reverse proxy), and 
 
 ## Running from Operator Account (apps user)
 
-**CRITICAL:** All appmotel commands must be prefixed with `sudo -u appmotel`:
+`appmo` auto-elevates: any user (including `apps` or root) can run `appmo <command>` directly and it transparently re-execs as `sudo -u appmotel` internally, since app files and `systemctl --user` services are owned by `appmotel`. The `sudo -u appmotel` prefix is no longer required but still works if used explicitly:
 
 ```bash
-sudo -u appmotel appmo add myapp user/repo main
-sudo -u appmotel appmo list
-sudo -u appmotel appmo status myapp
+appmo add myapp user/repo main
+appmo list
+appmo status myapp
 ```
+
+A few user-specific commands (e.g. `appmo skill`) are exempt and always run as the invoking user rather than elevating. See `bin/appmo`'s `APPMO_LOCAL_COMMANDS` for the exempt list.
 
 See `.claude/skills/appmotel/SKILL.md` for the complete 24x7 automation guide.
 

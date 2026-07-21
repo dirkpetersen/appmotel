@@ -35,8 +35,8 @@ sudo -u appmotel bash -x script.sh            # Debug execution (-x traces each 
 ## Use Backups Before Major Changes
 
 ```bash
-sudo -u appmotel appmo backup myapp
-sudo -u appmotel appmo update myapp
+appmo backup myapp
+appmo update myapp
 # If something breaks:
-sudo -u appmotel appmo restore myapp
+appmo restore myapp
 ```

@@ -20,15 +20,15 @@ bash -n /home/appmotel/install.sh
 
 ```bash
 # Deploy test Flask app
-sudo -u appmotel appmo add flask-test https://github.com/dirkpetersen/appmotel main examples/flask-hello
+appmo add flask-test https://github.com/dirkpetersen/appmotel main examples/flask-hello
 
-sudo -u appmotel appmo status flask-test
-sudo -u appmotel appmo logs flask-test 50
+appmo status flask-test
+appmo logs flask-test 50
 
 # Test access
 curl -I http://flask-test.apps.yourdomain.edu    # Should redirect to HTTPS
 curl https://flask-test.apps.yourdomain.edu
 
 # Cleanup
-sudo -u appmotel appmo remove flask-test
+appmo remove flask-test
 ```

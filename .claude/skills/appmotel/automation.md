@@ -12,7 +12,7 @@ sudo -u appmotel systemctl --user start appmotel-autopull.service  # manual trig
 
 ## Monitoring Checklist
 
-1. **App services:** `sudo -u appmotel appmo status`
+1. **App services:** `appmo status`
 2. **Traefik service:** `sudo -u appmotel sudo systemctl status traefik-appmotel`
 3. **Autopull timer:** `sudo -u appmotel systemctl --user status appmotel-autopull.timer`
 4. **Disk space:** `df -h /home/appmotel`

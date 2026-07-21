@@ -8,7 +8,7 @@ sudo -u appmotel journalctl --user -u appmotel-myapp -n 100
 cat /home/appmotel/.config/appmotel/myapp/metadata.conf
 cat /home/appmotel/.config/appmotel/myapp/.env
 ss -tlnp | grep <port>
-sudo -u appmotel appmo restart myapp
+appmo restart myapp
 ```
 
 ## Traefik 404 Errors

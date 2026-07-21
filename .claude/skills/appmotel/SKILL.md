@@ -65,17 +65,21 @@ With this configuration any user can run `sudo -u appmotel appmo <command>` with
 
 ## Command Execution Patterns
 
-### CRITICAL: Always Use `sudo -u appmotel` Prefix
+### `appmo` Auto-Elevates — No Prefix Needed
+
+`appmo` detects when it's not running as the `appmotel` user and transparently re-execs itself via `sudo -u appmotel`, since app files and services are owned by `appmotel`. Run it directly as any user:
 
 ```bash
-# ✅ CORRECT
-sudo -u appmotel appmo list
-sudo -u appmotel appmo add myapp https://github.com/user/repo main
-sudo -u appmotel appmo status myapp
-
-# ❌ WRONG: Running as apps user will fail
+# ✅ CORRECT — appmo elevates internally
 appmo list
+appmo add myapp https://github.com/user/repo main
+appmo status myapp
+
+# Also still works (explicit form, e.g. from scripts)
+sudo -u appmotel appmo list
 ```
+
+A small set of user-specific commands are exempt from elevation and always run as the invoking user: `skill`, `help`, `-h`, `--help`.
 
 ### Traefik Management (Two-Level Sudo)
 
@@ -119,27 +123,27 @@ sudo -u appmotel appmo skill   # installs to $SUDO_USER's ~/.claude/skills/appmo
 
 ```bash
 # Deploy
-sudo -u appmotel appmo add myapp https://github.com/username/repo main
-sudo -u appmotel appmo add myapp https://github.com/username/repo/tree/main/apps/myapp
-sudo -u appmotel appmo add myapp username/repo main  # short form
+appmo add myapp https://github.com/username/repo main
+appmo add myapp https://github.com/username/repo/tree/main/apps/myapp
+appmo add myapp username/repo main  # short form
 
 # Manage
-sudo -u appmotel appmo list
-sudo -u appmotel appmo status [myapp]
-sudo -u appmotel appmo logs myapp 100
-sudo -u appmotel appmo restart myapp
-sudo -u appmotel appmo update myapp
-sudo -u appmotel appmo env myapp
-sudo -u appmotel appmo exec myapp python manage.py migrate
-sudo -u appmotel appmo remove myapp
+appmo list
+appmo status [myapp]
+appmo logs myapp 100
+appmo restart myapp
+appmo update myapp
+appmo env myapp
+appmo exec myapp python manage.py migrate
+appmo remove myapp
 
 # Backup/restore
-sudo -u appmotel appmo backup myapp
-sudo -u appmotel appmo backups myapp
-sudo -u appmotel appmo restore myapp [2025-01-10-120000]
+appmo backup myapp
+appmo backups myapp
+appmo restore myapp [2025-01-10-120000]
 
 # Self-update CLI, Traefik binary, and configs
-sudo -u appmotel appmo self-update
+appmo self-update
 ```
 
 ## Key Patterns for Claude Code
@@ -155,7 +159,7 @@ sudo -u appmotel bash -c 'echo "NEW_VAR=value" >> /home/appmotel/.config/appmote
 
 **Multi-component apps:** `appmo restart myapp` restarts all components (frontend + backend).
 
-**After .env changes:** Always restart the app: `sudo -u appmotel appmo restart myapp`
+**After .env changes:** Always restart the app: `appmo restart myapp`
 
 ## Quick Reference
 
@@ -164,7 +168,7 @@ sudo -u appmotel bash -c 'echo "NEW_VAR=value" >> /home/appmotel/.config/appmote
 appmo skill
 
 # System status
-sudo -u appmotel appmo status
+appmo status
 sudo -u appmotel sudo systemctl status traefik-appmotel
 sudo -u appmotel systemctl --user status appmotel-autopull.timer
 
@@ -178,7 +182,7 @@ sudo -u appmotel systemctl --user status appmotel-autopull.timer
 
 ## Summary
 
-1. ✅ Always prefix with `sudo -u appmotel`
+1. ✅ Run `appmo <command>` directly — it auto-elevates to `sudo -u appmotel` internally (except `skill`/`help`)
 2. ✅ Double sudo for Traefik: `sudo -u appmotel sudo systemctl`
 3. ✅ Single sudo for apps: `sudo -u appmotel systemctl --user`
 4. ✅ Read files directly, use Write/Edit tools for modifications
