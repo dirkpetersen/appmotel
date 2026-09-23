@@ -387,7 +387,10 @@ apps ALL=(appmotel) NOPASSWD: ALL
 
 # TIER 2 -> TIER 3: Allow appmotel to manage ONLY the Traefik system service
 # This is needed because Traefik runs as a system service to bind ports 80/443
+# Both paths are listed: `sudo systemctl` resolves via secure_path to
+# /usr/bin/systemctl, which sudo does not match against a /bin rule.
 appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/systemctl stop traefik-appmotel, /bin/systemctl start traefik-appmotel, /bin/systemctl status traefik-appmotel
+appmotel ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart traefik-appmotel, /usr/bin/systemctl stop traefik-appmotel, /usr/bin/systemctl start traefik-appmotel, /usr/bin/systemctl status traefik-appmotel
 
 # Allow appmotel to view ONLY traefik-appmotel logs with any journalctl options (for debugging)
 appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/journalctl -u traefik-appmotel *
