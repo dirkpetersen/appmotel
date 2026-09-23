@@ -865,7 +865,14 @@ restore_backup() {
   # Only reinstall dependencies if repo restore succeeded
   if [[ "${restore_failed}" == "false" ]]; then
     local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
-    if [[ -f "${repo_dir}/go.mod" ]]; then
+    local site_root="${repo_dir}"
+    [[ -n "${SUBDIR:-}" ]] && site_root="${repo_dir}/${SUBDIR}"
+    if is_zensical_site "${site_root}"; then
+      if ! setup_zensical_env "${site_root}"; then
+        log_msg "ERROR" "Failed to rebuild Zensical site"
+        restore_failed=true
+      fi
+    elif [[ -f "${repo_dir}/go.mod" ]]; then
       if ! setup_go_env "${repo_dir}"; then
         log_msg "ERROR" "Failed to reinstall Go dependencies"
         restore_failed=true
@@ -1303,6 +1310,13 @@ detect_app_type() {
   # Check for start.sh script first (component-specific startup)
   if [[ -f "${repo_dir}/start.sh" ]]; then
     cmd_ref="bash start.sh"
+    return 0
+  fi
+
+  # Zensical docs site: served by the static server setup_zensical_env wrote
+  # into .venv (python3 is swapped for the venv python by the caller)
+  if is_zensical_site "${repo_dir}"; then
+    cmd_ref="python3 .venv/bin/appmotel-static-server $(zensical_site_dir "${repo_dir}")"
     return 0
   fi
 
@@ -2016,6 +2030,191 @@ setup_go_env() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: is_zensical_site
+# Description: True for a Zensical docs project (zensical.toml) that brings no
+#   server of its own. Repos that ship start.sh, app.py, main.py or a Procfile
+#   keep full control, e.g. a custom server that builds with Zensical itself.
+# -----------------------------------------------------------------------------
+is_zensical_site() {
+  local dir="$1"
+  [[ -f "${dir}/zensical.toml" ]] && \
+    [[ ! -f "${dir}/start.sh" ]] && [[ ! -f "${dir}/app.py" ]] && \
+    [[ ! -f "${dir}/main.py" ]] && [[ ! -f "${dir}/Procfile" ]]
+}
+
+# -----------------------------------------------------------------------------
+# Function: zensical_site_dir
+# Description: Print the build output directory from zensical.toml (site_dir),
+#   defaulting to "site". Restricted to a plain relative path because it is
+#   interpolated into the systemd ExecStart line.
+# -----------------------------------------------------------------------------
+zensical_site_dir() {
+  local dir="$1"
+  local site_dir
+  site_dir=$(sed -n 's/^[[:space:]]*site_dir[[:space:]]*=[[:space:]]*["'\'']\([^"'\'']*\)["'\''].*/\1/p' \
+    "${dir}/zensical.toml" 2>/dev/null | head -1 || true)
+  if [[ -z "${site_dir}" ]] || [[ ! "${site_dir}" =~ ^[A-Za-z0-9._-][A-Za-z0-9._/-]*$ ]] || \
+     [[ "${site_dir}" =~ \.\. ]]; then
+    site_dir="site"
+  fi
+  echo "${site_dir}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: write_static_server
+# Description: Write the stdlib-only static file server used for Zensical
+#   sites into the app's venv. It lives in .venv (untracked, rebuilt on
+#   restore) so the repo needs no app.py. Serves the site's own 404.html and
+#   answers HEALTH_CHECK_PATH (default /health) for Traefik health checks.
+# -----------------------------------------------------------------------------
+write_static_server() {
+  local server_file="$1"
+
+  cat > "${server_file}" <<'PYEOF'
+#!/usr/bin/env python3
+"""Appmotel static site server: serve a built site directory on $PORT."""
+
+import os
+import sys
+from functools import partial
+from http import HTTPStatus
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+SITE_DIR = Path(sys.argv[1] if len(sys.argv) > 1 else "site").resolve()
+HEALTH_PATH = os.environ.get("HEALTH_CHECK_PATH", "/health")
+
+
+class SiteHandler(SimpleHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):
+        if not self._health(body=True):
+            super().do_GET()
+
+    def do_HEAD(self):
+        if not self._health(body=False):
+            super().do_HEAD()
+
+    def _health(self, body):
+        if self.path.split("?", 1)[0] != HEALTH_PATH:
+            return False
+        payload = b'{"status": "healthy"}'
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        if body:
+            self.wfile.write(payload)
+        return True
+
+    def send_error(self, code, message=None, explain=None):
+        page = SITE_DIR / "404.html"
+        if code == HTTPStatus.NOT_FOUND and page.is_file():
+            content = page.read_bytes()
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(content)
+            return
+        super().send_error(code, message, explain)
+
+    def log_message(self, fmt, *args):
+        # journald adds its own timestamp
+        sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
+
+
+def main():
+    if not (SITE_DIR / "index.html").is_file():
+        sys.exit(f"ERROR: {SITE_DIR}/index.html missing - site was not built")
+    port = int(os.environ.get("PORT") or 10800)
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", port), partial(SiteHandler, directory=str(SITE_DIR))
+    )
+    print(f"Serving {SITE_DIR} on port {port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
+PYEOF
+  chmod +x "${server_file}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: setup_zensical_env
+# Description: Build a Zensical site: create .venv, install zensical (plus a
+#   requirements.txt if the repo pins versions or adds extensions), write the
+#   static server, and run `zensical build --clean`. Runs on add, update and
+#   restore, so every deploy serves a fresh build.
+# -----------------------------------------------------------------------------
+setup_zensical_env() {
+  local site_root="$1"
+
+  log_msg "INFO" "Setting up Zensical site"
+
+  safe_cd "${site_root}" "setting up Zensical site"
+
+  if [[ ! -d ".venv" ]]; then
+    if ! python3 -m venv .venv 2>/dev/null; then
+      log_msg "ERROR" "Failed to create Python virtual environment"
+      log_msg "ERROR" "Install the required system packages and retry:"
+      log_msg "ERROR" "  sudo apt install python3-venv python3-pip   # Debian/Ubuntu"
+      log_msg "ERROR" "  sudo dnf install python3-pip                # RHEL/Amazon Linux"
+      return 1
+    fi
+  fi
+
+  if ! .venv/bin/pip install --quiet --upgrade pip; then
+    log_msg "WARN" "pip self-upgrade failed, continuing with existing pip"
+  fi
+  if [[ -f requirements.txt ]]; then
+    if ! .venv/bin/pip install --quiet -r requirements.txt; then
+      log_msg "ERROR" "Failed to install Python dependencies from requirements.txt"
+      return 1
+    fi
+  fi
+  if [[ ! -x .venv/bin/zensical ]]; then
+    if ! .venv/bin/pip install --quiet zensical; then
+      log_msg "ERROR" "Failed to install zensical"
+      return 1
+    fi
+  fi
+
+  write_static_server ".venv/bin/appmotel-static-server"
+
+  local site_dir
+  site_dir=$(zensical_site_dir "${site_root}")
+
+  log_msg "INFO" "Building site with $(.venv/bin/zensical --version 2>/dev/null | head -1 || echo zensical)"
+  if ! .venv/bin/zensical build --clean; then
+    log_msg "ERROR" "zensical build failed"
+    return 1
+  fi
+  if [[ ! -f "${site_dir}/index.html" ]]; then
+    log_msg "ERROR" "Build finished but ${site_dir}/index.html is missing"
+    return 1
+  fi
+
+  # The `zensical new` scaffold ships a placeholder site_url. The site still
+  # works (links are root-relative) but canonical URLs and sitemap.xml point
+  # at the placeholder, so nudge the author.
+  if grep -q '^[[:space:]]*site_url[[:space:]]*=.*example\.com' zensical.toml 2>/dev/null; then
+    log_msg "WARN" "zensical.toml still has the placeholder site_url (example.com);"
+    log_msg "WARN" "set it to this app's URL for correct canonical links and sitemap.xml"
+  fi
+
+  log_msg "INFO" "Zensical site built: $(find "${site_dir}" -type f | wc -l) files in ${site_dir}/"
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_add
 # Description: Adds a new app
 # Supports subfolder URLs: https://github.com/user/repo/tree/branch/path/to/folder
@@ -2253,7 +2452,9 @@ cmd_add() {
     local app_type="unknown"
     local deps_dir="${app_dir}"  # Directory containing dependency files
 
-    if [[ -f "${app_dir}/go.mod" ]]; then
+    if is_zensical_site "${app_dir}"; then
+      app_type="zensical"
+    elif [[ -f "${app_dir}/go.mod" ]]; then
       app_type="go"
     elif [[ -f "${app_dir}/requirements.txt" ]] || [[ -f "${app_dir}/pyproject.toml" ]]; then
       app_type="python"
@@ -2284,6 +2485,12 @@ cmd_add() {
     log_msg "INFO" "Detected app type: ${app_type}"
 
     case "${app_type}" in
+      zensical)
+        setup_zensical_env "${app_dir}" || {
+          safe_rm_rf "${app_data_dir}" "Zensical build failed"
+          die "Failed to build Zensical site"
+        }
+        ;;
       go)
         setup_go_env "${deps_dir}" || {
           safe_rm_rf "${app_data_dir}" "Go build failed"
@@ -2965,9 +3172,13 @@ cmd_update() {
         fi
       fi
 
-      setup_python_env "${deps_dir}" || update_failed=true
-      setup_nodejs_env "${deps_dir}" || update_failed=true
-      setup_go_env "${deps_dir}" || update_failed=true
+      if is_zensical_site "${app_dir}"; then
+        setup_zensical_env "${app_dir}" || update_failed=true
+      else
+        setup_python_env "${deps_dir}" || update_failed=true
+        setup_nodejs_env "${deps_dir}" || update_failed=true
+        setup_go_env "${deps_dir}" || update_failed=true
+      fi
 
       # Run install script
       if ! run_install_script "${app_dir}"; then

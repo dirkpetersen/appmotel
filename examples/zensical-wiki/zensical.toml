@@ -1,0 +1,10 @@
+# Minimal Zensical site for testing Appmotel's built-in Zensical support.
+# No app.py, install.sh or requirements.txt needed: appmo detects
+# zensical.toml, builds the site and serves site/ itself.
+[project]
+site_name = "Zensical Hello"
+site_url = "/"
+nav = [
+  { "Home" = "index.md" },
+  { "Second page" = "second.md" },
+]

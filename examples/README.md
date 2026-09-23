@@ -42,6 +42,26 @@ git commit -m "Initial commit"
 # Push to GitHub and deploy with appmo
 ```
 
+### 3. Zensical Wiki (`zensical-wiki/`)
+
+A documentation site built with [Zensical](https://zensical.org/). No server code needed:
+Appmotel detects `zensical.toml`, installs Zensical into `.venv`, runs `zensical build`,
+and serves the generated `site/` directory.
+
+**Files:**
+- `zensical.toml` - Site configuration
+- `docs/` - Markdown content
+
+**Deploy:**
+```bash
+appmo add zensical-test https://github.com/dirkpetersen/appmotel/tree/main/examples/zensical-wiki
+```
+
+A brand-new `zensical new` project deploys the same way. Set `site_url` in
+`zensical.toml` to the app's URL (the scaffold's `example.com` placeholder only affects
+canonical links and `sitemap.xml`). Add a `requirements.txt` to pin the Zensical version
+or install extensions.
+
 ## Creating Your Own Application
 
 Your application must include:

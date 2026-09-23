@@ -101,11 +101,12 @@ Port range for app assignments: 10001–59999 (auto-assigned if not set in app `
 
 `bin/appmo` detects app type in this priority order (see `detect_app_type`):
 
-1. **Go** — `go.mod` present → builds via `go build`, binary placed in `bin/`
-2. **Python** — `requirements.txt` or `pyproject.toml` → creates `.venv`, runs `app.py`
-3. **Node.js** — `package.json` → runs `npm install && npm start`
-4. **Procfile** — multiple named processes (e.g., `web:`, `worker:`) → one systemd service per process; only `web` is exposed via Traefik
-5. **Binary** — executable in `bin/` directory
+1. **Zensical** — `zensical.toml` present and no `app.py`/`main.py`/`start.sh`/`Procfile` → installs `zensical` into `.venv`, runs `zensical build --clean` on every add/update/restore, serves `site/` with a built-in static server (`.venv/bin/appmotel-static-server`)
+2. **Go** — `go.mod` present → builds via `go build`, binary placed in `bin/`
+3. **Python** — `requirements.txt` or `pyproject.toml` → creates `.venv`, runs `app.py`
+4. **Node.js** — `package.json` → runs `npm install && npm start`
+5. **Procfile** — multiple named processes (e.g., `web:`, `worker:`) → one systemd service per process; only `web` is exposed via Traefik
+6. **Binary** — executable in `bin/` directory
 
 For subfolder deploys (`appmo add app repo/tree/main/subdir`), dependency files are searched upward to the repo root.
 

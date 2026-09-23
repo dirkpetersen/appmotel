@@ -126,6 +126,7 @@ sudo -u appmotel appmo skill   # installs to $SUDO_USER's ~/.claude/skills/appmo
 appmo add myapp https://github.com/username/repo main
 appmo add myapp https://github.com/username/repo/tree/main/apps/myapp
 appmo add myapp username/repo main  # short form
+appmo add mywiki username/my-zensical-wiki  # Zensical site: zensical.toml + docs/ is enough
 
 # Manage
 appmo list
