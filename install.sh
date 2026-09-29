@@ -366,24 +366,77 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
-# Function: configure_sudoers
-# Description: Configures sudoers for appmotel user
-# See DEV-SETUP.md for complete execution model documentation
+# Function: resolve_operator_users
+# Description: Decide who may control the appmotel user (sudoers TIER 1) and
+#   print it as a sudoers user list.
+#   OPERATOR_USERS in .env takes comma/space separated user names, %groups,
+#   or ALL (every user on the machine):
+#     unset -> keep ALL if the existing sudoers file already grants it to
+#              everyone (reinstalling must never silently revoke access),
+#              otherwise "apps"
+# Parameters: $1 = existing sudoers file (consulted only when unset)
 # -----------------------------------------------------------------------------
-configure_sudoers() {
-  log_msg "INFO" "Configuring sudoers"
+resolve_operator_users() {
+  local existing_file="$1"
+  local raw="${OPERATOR_USERS:-}"
 
-  local sudoers_file="/etc/sudoers.d/appmotel"
+  if [[ -z "${raw}" ]]; then
+    if [[ -f "${existing_file}" ]] && \
+       grep -qE '^ALL[[:space:]]+ALL=\(appmotel\)' "${existing_file}" 2>/dev/null; then
+      echo "ALL"
+    else
+      echo "apps"
+    fi
+    return 0
+  fi
 
-  cat > "${sudoers_file}" <<'EOF'
+  # Entries end up verbatim in a sudoers file: accept nothing but plain
+  # names, %groups and ALL
+  local -a users=()
+  local entry
+  local saved_ifs="${IFS}"
+  IFS=$', \t\n'
+  for entry in ${raw}; do
+    if [[ ! "${entry}" =~ ^(ALL|%?[A-Za-z_][A-Za-z0-9_.-]*)$ ]]; then
+      IFS="${saved_ifs}"
+      die "Invalid entry in OPERATOR_USERS: '${entry}' (use user names, %groups, or ALL)"
+    fi
+    if [[ "${entry}" == "ALL" ]]; then
+      IFS="${saved_ifs}"
+      echo "ALL"
+      return 0
+    fi
+    users+=("${entry}")
+  done
+  IFS="${saved_ifs}"
+
+  if [[ ${#users[@]} -eq 0 ]]; then
+    die "OPERATOR_USERS is set but contains no users"
+  fi
+
+  local joined
+  joined=$(IFS=,; echo "${users[*]}")
+  echo "${joined}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: render_sudoers
+# Description: Print the appmotel sudoers file for the given operator list
+# Parameters: $1 = sudoers user list from resolve_operator_users
+# -----------------------------------------------------------------------------
+render_sudoers() {
+  local operators="$1"
+
+  sed "s|__OPERATOR_USERS__|${operators}|g" <<'EOF'
 # Appmotel Sudoers Configuration
 # See DEV-SETUP.md for complete execution model documentation
 
-# TIER 1 -> TIER 2: Allow operator user to control appmotel user
+# TIER 1 -> TIER 2: Allow operator user(s) to control appmotel user
+# Who is set by OPERATOR_USERS in ~/.config/appmotel/.env (default: apps; ALL = every user)
 # Interactive shell access
-apps ALL=(ALL) NOPASSWD: /bin/su - appmotel
+__OPERATOR_USERS__ ALL=(ALL) NOPASSWD: /bin/su - appmotel
 # Non-interactive command execution (required for automation tools like Claude Code)
-apps ALL=(appmotel) NOPASSWD: ALL
+__OPERATOR_USERS__ ALL=(appmotel) NOPASSWD: ALL
 
 # TIER 2 -> TIER 3: Allow appmotel to manage ONLY the Traefik system service
 # This is needed because Traefik runs as a system service to bind ports 80/443
@@ -401,8 +454,43 @@ appmotel ALL=(ALL) NOPASSWD: /usr/local/bin/appmotel-fix-certs
 # Note: App services use systemctl --user (no sudo needed)
 # Traefik config changes are auto-reloaded (no restart needed for config updates)
 EOF
+}
 
-  chmod 0440 "${sudoers_file}"
+# -----------------------------------------------------------------------------
+# Function: configure_sudoers
+# Description: Configures sudoers for appmotel user
+# See DEV-SETUP.md for complete execution model documentation
+# -----------------------------------------------------------------------------
+configure_sudoers() {
+  log_msg "INFO" "Configuring sudoers"
+
+  local sudoers_file="/etc/sudoers.d/appmotel"
+
+  local operators
+  operators=$(resolve_operator_users "${sudoers_file}")
+  if [[ "${operators}" == "ALL" ]]; then
+    log_msg "INFO" "Sudoers: ALL users may control the ${APPMOTEL_USER} user"
+  else
+    log_msg "INFO" "Sudoers: operator user(s): ${operators}"
+  fi
+
+  # Render to a temp file and validate first: a syntax error in /etc/sudoers.d
+  # breaks sudo for everyone, so the live file is only replaced by a good one
+  local sudoers_tmp
+  sudoers_tmp=$(mktemp)
+  render_sudoers "${operators}" > "${sudoers_tmp}"
+
+  if command -v visudo >/dev/null 2>&1; then
+    if ! visudo -cf "${sudoers_tmp}" >/dev/null; then
+      rm -f "${sudoers_tmp}"
+      die "Generated sudoers failed validation; ${sudoers_file} left unchanged"
+    fi
+  else
+    log_msg "WARN" "visudo not found, installing sudoers without validation"
+  fi
+
+  install -m 0440 -o root -g root "${sudoers_tmp}" "${sudoers_file}"
+  rm -f "${sudoers_tmp}"
   log_msg "INFO" "Sudoers configured"
 
   # Install helper script for cert permission fixing (callable via sudo by appmotel)

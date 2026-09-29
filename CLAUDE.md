@@ -131,6 +131,7 @@ appmo self-update           # Update CLI, Traefik, configs, propagate domain cha
 ### Global `.env` Settings (`~/.config/appmotel/.env`)
 
 - `BASE_DOMAIN=dev-ai.example.edu` — Primary domain for all apps (`app.BASE_DOMAIN`)
+- `OPERATOR_USERS=apps` — Who may control the appmotel user via sudoers (users, `%groups`, or `ALL` for every user). Applied by `sudo bash install.sh`; unset keeps an existing `ALL` grant, else `apps`
 - `REDIRECT_BASE_DOMAIN=old.example.edu` — Optional: 308 permanent redirect from old domain to `BASE_DOMAIN`. When set, `appmo self-update` generates a single Traefik catch-all config that redirects `*.old.example.edu` → `*.BASE_DOMAIN`
 
 ### Optional App `.env` Settings

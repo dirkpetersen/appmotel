@@ -49,19 +49,20 @@ appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/j
 
 ### Multi-User Access Option
 
-To allow **all logged-in users** on the machine to manage apps via the appmotel user, replace the `apps`-specific lines with a wildcard:
+Who may control the appmotel user is a setting, not something to hand-edit in sudoers. Set `OPERATOR_USERS` in `/home/appmotel/.config/appmotel/.env` and re-run `sudo bash install.sh`:
 
 ```bash
-# Allow ALL users to control appmotel user (multi-user machines)
-ALL ALL=(ALL) NOPASSWD: /bin/su - appmotel
-ALL ALL=(appmotel) NOPASSWD: ALL
-
-# TIER 2 -> TIER 3: Allow appmotel to manage ONLY the Traefik system service
-appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/systemctl stop traefik-appmotel, /bin/systemctl start traefik-appmotel, /bin/systemctl status traefik-appmotel
-appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/journalctl -u traefik-appmotel *
+OPERATOR_USERS="apps"            # default: just the apps user
+OPERATOR_USERS="apps alice"      # named users (comma or space separated)
+OPERATOR_USERS="apps %devs"      # a group
+OPERATOR_USERS="ALL"             # every user on the machine
 ```
 
-With this configuration any user can run `sudo -u appmotel appmo <command>` without a password. The system-wide symlink `/usr/local/bin/appmo → /home/appmotel/.local/bin/appmo` makes `appmo` available to all users directly.
+`ALL` writes `ALL ALL=(ALL) NOPASSWD: /bin/su - appmotel` and `ALL ALL=(appmotel) NOPASSWD: ALL`, so any local user can run `appmo <command>` without a password. That includes reading app secrets and deploying code, so use it only where every login is trusted. New users then run `appmo skill` to install this skill into their own `~/.claude`.
+
+- If `OPERATOR_USERS` is unset, an existing `ALL` grant is kept (reinstalling never silently revokes access); otherwise the default is `apps`.
+- Entries are validated (names, `%groups`, `ALL` only) and the generated file is checked with `visudo -c` before it replaces `/etc/sudoers.d/appmotel`; on failure the old file stays.
+- The system-wide symlink `/usr/local/bin/appmo → /home/appmotel/.local/bin/appmo` makes `appmo` available to all users directly.
 
 ## Command Execution Patterns
 
