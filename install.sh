@@ -652,6 +652,57 @@ ensure_cert_readable() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: install_cert_renewal_hook
+# Description: Installs a certbot deploy hook that restarts Traefik after a
+#   renewal. Traefik reads certFile/keyFile once and does not watch them, so
+#   without this a renewed certificate stays on disk while Traefik keeps
+#   serving the old (eventually expired) one from memory.
+#   The hook runs as root, only when certbot actually renewed something, and
+#   only restarts Traefik if the renewed lineage is the one tls-config.yaml
+#   points at. It re-applies ssl-cert permissions first, since the renewed
+#   files are new and must stay readable by the appmotel user.
+# Note: Must be run as root. Idempotent (overwrites the hook each run).
+# -----------------------------------------------------------------------------
+install_cert_renewal_hook() {
+  if [[ ! -d /etc/letsencrypt ]] && ! command -v certbot >/dev/null 2>&1; then
+    log_msg "INFO" "No certbot/letsencrypt found, skipping certificate renewal hook"
+    return 0
+  fi
+
+  local hook_dir="/etc/letsencrypt/renewal-hooks/deploy"
+  local hook_file="${hook_dir}/appmotel-restart-traefik"
+  local tls_config="${APPMOTEL_HOME}/.config/traefik/dynamic/tls-config.yaml"
+
+  mkdir -p "${hook_dir}"
+  cat > "${hook_file}" <<HOOKEOF
+#!/bin/sh
+# Installed by Appmotel install.sh - do not edit (overwritten on reinstall).
+# certbot runs this as root after a successful renewal. RENEWED_LINEAGE is the
+# renewed certificate's /etc/letsencrypt/live/<name> directory.
+set -eu
+
+TLS_CONFIG="${tls_config}"
+
+lineage="\${RENEWED_LINEAGE:-}"
+[ -n "\$lineage" ] || exit 0
+
+# Only act if Traefik is configured to use this certificate
+grep -qsF "\$lineage/" "\$TLS_CONFIG" || exit 0
+
+# Renewed files are new: make sure appmotel (ssl-cert group) can read them
+if [ -x /usr/local/bin/appmotel-fix-certs ]; then
+  /usr/local/bin/appmotel-fix-certs
+fi
+
+# Traefik does not watch cert files; restart to load the renewed certificate
+systemctl restart traefik-appmotel
+HOOKEOF
+  chmod 755 "${hook_file}"
+
+  log_msg "INFO" "Certbot deploy hook installed: ${hook_file}"
+}
+
+# -----------------------------------------------------------------------------
 # Function: generate_traefik_config
 # Description: Generates Traefik static and dynamic configuration
 # Note: In Traefik v3, TLS stores MUST be in dynamic configuration, not static
@@ -1054,6 +1105,9 @@ install_as_root() {
     log_msg "INFO" "Found existing wildcard certificate: ${existing_cert}"
     ensure_cert_readable "${existing_cert}"
   fi
+
+  # Restart Traefik automatically when certbot renews (it never reloads certs itself)
+  install_cert_renewal_hook
 
   log_msg "INFO" "System-level installation complete!"
   log_msg "INFO" "======================================"

@@ -2891,6 +2891,12 @@ cmd_status() {
   if [[ $# -eq 0 ]]; then
     # Show Traefik service status
     sudo /bin/systemctl status traefik-appmotel || true
+
+    local cert_secs
+    if cert_secs=$(tls_cert_seconds_left); then
+      echo ""
+      echo "TLS certificate: $(format_cert_expiry "${cert_secs}")"
+    fi
     return
   fi
 
@@ -3726,6 +3732,9 @@ cmd_autopull() {
 
   log_msg "INFO" "Starting autopull check"
 
+  # Surface an expiring/expired TLS certificate (once a day) in the journal
+  check_tls_expiry || true
+
   # Check if apps directory exists
   if [[ ! -d "${APPS_CONFIG_DIR}" ]]; then
     log_msg "INFO" "No apps configured yet"
@@ -3820,6 +3829,78 @@ cmd_autopull() {
   else
     log_msg "INFO" "Checked ${app_count} app(s), updated ${updated_count}"
   fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: tls_cert_seconds_left
+# Description: Print seconds until the default TLS certificate in
+#   tls-config.yaml expires (negative once expired). Returns 1 if there is no
+#   such certificate or it cannot be read/parsed.
+# -----------------------------------------------------------------------------
+tls_cert_seconds_left() {
+  local tls_config="${TRAEFIK_DYNAMIC_DIR}/tls-config.yaml"
+  [[ -f "${tls_config}" ]] || return 1
+
+  local cert_file
+  cert_file=$(grep 'certFile:' "${tls_config}" 2>/dev/null | awk '{print $2}' | head -1) || return 1
+  [[ -n "${cert_file}" ]] && [[ -r "${cert_file}" ]] || return 1
+
+  local end_date end_epoch
+  end_date=$(openssl x509 -in "${cert_file}" -noout -enddate 2>/dev/null | cut -d= -f2) || return 1
+  [[ -n "${end_date}" ]] || return 1
+  end_epoch=$(date -d "${end_date}" +%s 2>/dev/null) || return 1
+
+  echo $(( end_epoch - $(date +%s) ))
+}
+
+# -----------------------------------------------------------------------------
+# Function: format_cert_expiry
+# Description: Human-readable expiry for a seconds-left value: "expires in 3
+#   day(s)" / "EXPIRED 16 hour(s) ago". Hours are used under 2 days so a cert
+#   that expired this morning does not read as "0 days".
+# -----------------------------------------------------------------------------
+format_cert_expiry() {
+  local secs="$1"
+  local abs=$(( secs < 0 ? -secs : secs ))
+  local amount unit
+  if (( abs < 172800 )); then
+    amount=$(( abs / 3600 )); unit="hour(s)"
+  else
+    amount=$(( abs / 86400 )); unit="day(s)"
+  fi
+  if (( secs <= 0 )); then
+    echo "EXPIRED ${amount} ${unit} ago"
+  else
+    echo "expires in ${amount} ${unit}"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: check_tls_expiry
+# Description: Log a WARN/ERROR when the TLS certificate expires within
+#   TLS_EXPIRY_WARN_DAYS (default 14) or has expired. Throttled to once per
+#   24h via a stamp file so autopull (every 2 min) does not flood the journal.
+#   Never fails: this is a report, not a gate.
+# -----------------------------------------------------------------------------
+check_tls_expiry() {
+  local stamp="${APPS_DATA_DIR}/.tls-expiry-check"
+  local warn_days="${TLS_EXPIRY_WARN_DAYS:-14}"
+
+  if [[ -f "${stamp}" ]] && [[ -n "$(find "${stamp}" -mmin -1440 2>/dev/null)" ]]; then
+    return 0
+  fi
+
+  local secs
+  secs=$(tls_cert_seconds_left) || return 0
+  touch "${stamp}" 2>/dev/null || true
+
+  if (( secs <= 0 )); then
+    log_msg "ERROR" "TLS certificate $(format_cert_expiry "${secs}") - browsers will reject every app"
+    log_msg "ERROR" "Check renewal: sudo certbot renew  (journalctl -u certbot)"
+  elif (( secs < warn_days * 86400 )); then
+    log_msg "WARN" "TLS certificate $(format_cert_expiry "${secs}") - check certbot renewal"
+  fi
+  return 0
 }
 
 # -----------------------------------------------------------------------------
