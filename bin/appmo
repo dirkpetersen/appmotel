@@ -783,7 +783,10 @@ sync_isolated_traefik() {
   chmod 600 "${env_copy}"
   as_app_user "${app_name}" cat "${home}/.config/appmotel/${app_name}/.env" > "${env_copy}" 2>/dev/null || true
 
-  create_traefik_config "${app_name}" "${port}" "${BASE_DOMAIN:-apps.example.edu}" "${env_copy}"
+  if ! create_traefik_config "${app_name}" "${port}" "${BASE_DOMAIN:-apps.example.edu}" "${env_copy}"; then
+    rm -f "${env_copy}"
+    return 1
+  fi
   rm -f "${env_copy}"
   printf 'ISOLATED_USER="%s"\nPORT="%s"\n' "${APP_USER_PREFIX}${app_name}" "${port}" \
     > "${APPS_CONFIG_DIR}/${app_name}/isolated.conf"
@@ -833,20 +836,23 @@ copy_ssh_keys_to_app() {
 }
 
 # Create the app user and prepare its home. Echoes the clone URL to use.
+# isolated.conf is written only by sync_isolated_traefik after a good deploy,
+# so a failure here never hides an existing app behind an empty user.
 prepare_app_user() {
   local app_name="$1"
   local url="$2"
 
   # An app user must not be able to read appmotel's files
   secure_appmotel_files
-  sudo -n /usr/local/bin/appmotel-user create "${app_name}" >/dev/null \
-    || die "Could not create user ${APP_USER_PREFIX}${app_name} (is /usr/local/bin/appmotel-user installed? re-run 'sudo bash install.sh')"
+  if ! sudo -n /usr/local/bin/appmotel-user create "${app_name}" >/dev/null; then
+    log_msg "ERROR" "Could not create user ${APP_USER_PREFIX}${app_name} (is /usr/local/bin/appmotel-user installed? re-run 'sudo bash install.sh')"
+    return 1
+  fi
 
-  mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
-  printf 'ISOLATED_USER="%s"\nPORT=""\n' "${APP_USER_PREFIX}${app_name}" > "${APPS_CONFIG_DIR}/${app_name}/isolated.conf"
-
+  mkdir -p "${APPS_CONFIG_DIR}/${app_name}" || return 1
   printf 'BASE_DOMAIN="%s"\nPYTHON_VERSION="%s"\n' "${BASE_DOMAIN:-}" "${PYTHON_VERSION:-}" \
-    | as_app_user "${app_name}" bash -c 'umask 077 && mkdir -p ~/.config/appmotel && cat > ~/.config/appmotel/.env'
+    | as_app_user "${app_name}" bash -c 'umask 077 && mkdir -p ~/.config/appmotel && cat > ~/.config/appmotel/.env' \
+    || return 1
 
   if repo_is_public "${url%%/tree/*}"; then
     # The app user has no SSH key, so use HTTPS for public repos
@@ -854,17 +860,17 @@ prepare_app_user() {
       url="https://github.com/${BASH_REMATCH[1]%.git}"
     fi
   else
-    copy_ssh_keys_to_app "${app_name}"
+    copy_ssh_keys_to_app "${app_name}" || return 1
   fi
   echo "${url}"
 }
 
-# Undo prepare_app_user after a failed deploy
+# Undo prepare_app_user after a failed deploy. Leaves the Traefik route alone:
+# during isolate it still belongs to the old app.
 drop_app_user() {
   local app_name="$1"
   sudo -n /usr/local/bin/appmotel-user delete "${app_name}" || log_msg "WARN" "Could not delete user ${APP_USER_PREFIX}${app_name}"
   rm -f "${APPS_CONFIG_DIR}/${app_name}/isolated.conf"
-  rm -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
   rmdir "${APPS_CONFIG_DIR}/${app_name}" 2>/dev/null || true
 }
 
@@ -882,22 +888,27 @@ add_isolated() {
   validate_github_url "${url%%/tree/*}"
 
   log_msg "INFO" "Adding isolated app '${app_name}' as user ${APP_USER_PREFIX}${app_name}"
-  url=$(prepare_app_user "${app_name}" "${url}")
+  if ! url=$(prepare_app_user "${app_name}" "${url}"); then
+    drop_app_user "${app_name}"
+    die "Could not prepare user ${APP_USER_PREFIX}${app_name}, nothing deployed"
+  fi
 
   # A .env kept by an earlier 'appmo remove' goes to the app user, where
-  # cmd_add offers to restore it
+  # cmd_add offers to restore it; appmotel's copy goes only after success
   local env_backup="${APPS_CONFIG_DIR}/${app_name}/.env.backup"
   if [[ -f "${env_backup}" ]]; then
     as_app_user "${app_name}" bash -c 'umask 077 && mkdir -p ~/.config/appmotel/"$1" && cat > ~/.config/appmotel/"$1"/.env.backup' _ "${app_name}" < "${env_backup}"
-    rm -f "${env_backup}"
   fi
 
-  if ! run_appmo_as_app "${app_name}" add "${app_name}" "${url}" "${branch}" "${subdir}"; then
+  if ! run_appmo_as_app "${app_name}" add "${app_name}" "${url}" "${branch}" "${subdir}" \
+     || ! sync_isolated_traefik "${app_name}"; then
     drop_app_user "${app_name}"
     die "Failed to deploy isolated app '${app_name}', user removed"
   fi
-  sync_isolated_traefik "${app_name}" || true
+  rm -f "${env_backup}"
   log_msg "INFO" "Isolated app '${app_name}' runs as ${APP_USER_PREFIX}${app_name}"
+  check_app_url "${app_name}" "${BASE_DOMAIN:-apps.example.edu}" \
+    "$(grep -m1 '^PORT=' "${APPS_CONFIG_DIR}/${app_name}/isolated.conf" | cut -d= -f2 | tr -d '"')"
 }
 
 # appmo isolate <app>: move an existing app to its own user
@@ -910,12 +921,14 @@ cmd_isolate() {
   [[ ${#app_name} -le 30 ]] || die "Isolated app names can have at most 30 characters"
 
   load_app_metadata "${app_name}"
-  local url="${GITHUB_URL}" branch="${BRANCH}" subdir="${SUBDIR:-}"
+  local url="${GITHUB_URL}" branch="${BRANCH}" subdir="${SUBDIR:-}" old_port="${PORT}"
   local data_dir="${APPS_DATA_DIR}/${app_name}"
   local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+  local app_dir="${data_dir}/repo${subdir:+/${subdir}}"
 
   log_msg "INFO" "Creating backup before isolating..."
-  create_backup "${app_name}" >/dev/null || die "Backup failed, nothing was changed"
+  local backup_id
+  backup_id=$(create_backup "${app_name}") || die "Backup failed, nothing was changed"
 
   local -a services
   get_all_services "${app_name}" services
@@ -929,7 +942,10 @@ cmd_isolate() {
     fi
   done
 
-  url=$(prepare_app_user "${app_name}" "${url}")
+  if ! url=$(prepare_app_user "${app_name}" "${url}"); then
+    drop_app_user "${app_name}"
+    die "Could not prepare user ${APP_USER_PREFIX}${app_name}, nothing was changed"
+  fi
 
   # Stop the old services so the new ones can take over the same port
   local unit
@@ -937,29 +953,29 @@ cmd_isolate() {
     systemctl_stop "${unit}"
   done
 
-  # Copy repo (with untracked data, without any venv: venvs hold absolute paths)
-  # and the app .env into the app user's home
+  # Copy repo (with untracked data, without any venv: venvs hold absolute
+  # paths) and the app .env into the app user's home, then deploy there.
+  # One chain, so any failure (for example a full disk) rolls back.
   local home
   home=$(app_user_home "${app_name}")
-  as_app_user "${app_name}" mkdir -p "${home}/.local/share/appmotel/${app_name}" "${home}/.config/appmotel/${app_name}"
-  tar --exclude=.venv -C "${data_dir}" -cf - ./repo \
-    | as_app_user "${app_name}" tar -C "${home}/.local/share/appmotel/${app_name}" -xf -
-  if [[ -f "${config_dir}/.env" ]]; then
-    as_app_user "${app_name}" bash -c 'umask 077 && cat > "$1"' _ "${home}/.config/appmotel/${app_name}/.env" < "${config_dir}/.env"
-  fi
-
-  if ! APPMO_KEEP_REPO=1 run_appmo_as_app "${app_name}" add "${app_name}" "${url}" "${branch}" "${subdir}"; then
-    log_msg "ERROR" "Deploy as ${APP_USER_PREFIX}${app_name} failed, restoring the old app"
-    sudo -n /usr/local/bin/appmotel-user delete "${app_name}" || true
-    rm -f "${config_dir}/isolated.conf"
+  if ! { [[ -n "${home}" ]] \
+      && as_app_user "${app_name}" mkdir -p "${home}/.local/share/appmotel/${app_name}" "${home}/.config/appmotel/${app_name}" \
+      && tar --exclude=.venv -C "${data_dir}" -cf - ./repo \
+           | as_app_user "${app_name}" tar -C "${home}/.local/share/appmotel/${app_name}" -xf - \
+      && { [[ ! -f "${config_dir}/.env" ]] \
+           || as_app_user "${app_name}" bash -c 'umask 077 && cat > "$1"' _ "${home}/.config/appmotel/${app_name}/.env" < "${config_dir}/.env"; } \
+      && APPMO_KEEP_REPO=1 run_appmo_as_app "${app_name}" add "${app_name}" "${url}" "${branch}" "${subdir}" \
+      && sync_isolated_traefik "${app_name}"; }; then
+    log_msg "ERROR" "Isolating '${app_name}' failed, restoring the old app"
+    drop_app_user "${app_name}"
+    create_traefik_config "${app_name}" "${old_port}" "${BASE_DOMAIN:-apps.example.edu}" "${app_dir}/.env" || true
     for unit in "${units[@]}"; do
       systemctl --user start "${unit}" || true
     done
     die "appmo isolate failed; '${app_name}' runs as appmotel again"
   fi
 
-  # New app is live: switch the route, then remove the old copy
-  sync_isolated_traefik "${app_name}" || true
+  # New app is live: remove the old copy
   for unit in "${units[@]}"; do
     systemctl --user disable "${unit}" 2>/dev/null || true
     rm -f "${SYSTEMD_USER_DIR}/${unit}.service"
@@ -969,7 +985,11 @@ cmd_isolate() {
   find "${config_dir}" -mindepth 1 -maxdepth 1 ! -name isolated.conf -exec rm -rf {} +
 
   log_msg "INFO" "App '${app_name}' now runs as ${APP_USER_PREFIX}${app_name}"
-  log_msg "INFO" "Old backups stay in ${BACKUPS_DIR}/${app_name}"
+  # appmo restore now looks in the app user's backups, so say where this one is
+  log_msg "INFO" "The backup made before isolating is ${BACKUPS_DIR}/${app_name}/${backup_id}"
+  log_msg "INFO" "To go back to the old app: appmo remove ${app_name}, then appmo add it again and copy the"
+  log_msg "INFO" "  .env from that backup (appmo restore cannot use it, it runs as the app user)"
+  check_app_url "${app_name}" "${BASE_DOMAIN:-apps.example.edu}" "$(grep -m1 '^PORT=' "${config_dir}/isolated.conf" | cut -d= -f2 | tr -d '"')"
 }
 
 # appmo remove for an isolated app
@@ -2115,7 +2135,11 @@ create_traefik_config() {
         certResolver: myresolver"
   fi
 
-  cat > "${config_file}" <<EOF
+  # Write a temp file and move it in place: Traefik watches this dir and must
+  # never read a half-written file. Unchanged content is not rewritten, so
+  # the autopull sync of isolated apps causes no reloads.
+  local tmp_file="${config_file}.tmp"
+  cat > "${tmp_file}" <<EOF
 http:
   routers:
     ${app_name}:
@@ -2140,6 +2164,15 @@ http:
         burst: ${rate_limit_burst}
 EOF
 
+  if cmp -s "${tmp_file}" "${config_file}"; then
+    rm -f "${tmp_file}"
+    return 0
+  fi
+  if ! mv -f "${tmp_file}" "${config_file}"; then
+    rm -f "${tmp_file}"
+    log_msg "ERROR" "Could not write Traefik config ${config_file}"
+    return 1
+  fi
   log_msg "INFO" "Traefik config created: ${app_url} -> localhost:${port}"
 }
 
@@ -2211,11 +2244,13 @@ create_venv() {
   local request
   request=$(python_version_request "${PWD}")
 
+  # Without uv, keep the old behaviour (system python3) instead of failing
+  if [[ -n "${request}" ]] && ! command -v uv >/dev/null 2>&1; then
+    log_msg "WARN" "App asks for Python ${request}, but uv is not installed (run appmo self-update); using system python3"
+    request=""
+  fi
+
   if [[ -n "${request}" ]]; then
-    if ! command -v uv >/dev/null 2>&1; then
-      log_msg "ERROR" "App asks for Python ${request}, but uv is not installed (run appmo self-update)"
-      return 1
-    fi
     log_msg "INFO" "Creating virtual environment with uv, Python ${request}"
     if ! uv venv --quiet --seed --python "${request}" .venv; then
       log_msg "ERROR" "uv could not create a Python ${request} virtual environment"
@@ -2606,6 +2641,77 @@ setup_zensical_env() {
   fi
 
   log_msg "INFO" "Zensical site built: $(find "${site_dir}" -type f | wc -l) files in ${site_dir}/"
+}
+
+# -----------------------------------------------------------------------------
+# Function: check_app_url
+# Description: Wait up to 15 s for https://<app>.<domain> to answer, and print
+#   DNS help if it does not. Used after add and after an isolated add.
+# -----------------------------------------------------------------------------
+check_app_url() {
+  local app_name="$1"
+  local base_domain="$2"
+  local port="$3"
+  local app_url="https://${app_name}.${base_domain}"
+
+  # Check if BASE_DOMAIN is still set to default
+  if [[ "${base_domain}" == "apps.example.edu" ]] || [[ "${base_domain}" == "apps.yourdomain.edu" ]]; then
+    log_msg "WARN" "⚠️  BASE_DOMAIN is set to default value: ${base_domain}"
+    log_msg "WARN" "   Please update BASE_DOMAIN in ~/.config/appmotel/.env"
+    log_msg "WARN" "   Then restart Traefik: sudo systemctl restart traefik-appmotel"
+    return
+  fi
+
+  # Check if the app URL is reachable (retry for 15 seconds)
+  log_msg "INFO" "Checking if app is accessible..."
+
+  local http_code
+  local response_body
+  local max_attempts=15
+  local attempt=1
+  local app_accessible=false
+
+  local curl_output
+  curl_output=$(create_temp_file "appmo_check")
+
+  while [[ ${attempt} -le ${max_attempts} ]]; do
+    http_code=$(curl -s -o "${curl_output}" -w '%{http_code}' --connect-timeout 2 --max-time 3 -k "${app_url}" 2>/dev/null || echo "000")
+    response_body=$(cat "${curl_output}" 2>/dev/null || echo "")
+
+    # Check for successful HTTP status (2xx or 3xx) and no "Bad Gateway" in response
+    if [[ "${http_code}" =~ ^[23] ]] && ! grep -qi "bad gateway" <<< "${response_body}"; then
+      app_accessible=true
+      break
+    fi
+
+    # Only wait and retry if not the last attempt
+    if [[ ${attempt} -lt ${max_attempts} ]]; then
+      sleep 1
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  if [[ "${app_accessible}" == "true" ]]; then
+    log_msg "INFO" "✓ App is accessible at ${app_url}"
+  else
+    if [[ "${http_code}" == "502" ]] || grep -qi "bad gateway" <<< "${response_body}"; then
+      log_msg "WARN" "App not accessible - received Bad Gateway error (app may not be running on port ${port})"
+    else
+      log_msg "WARN" "App not yet accessible - DNS may need configuration"
+    fi
+    log_msg "INFO" ""
+    log_msg "INFO" "DNS Configuration Required:"
+    log_msg "INFO" ""
+    log_msg "INFO" "   Configure DNS to route traffic to this app. Choose one option:"
+    log_msg "INFO" ""
+    log_msg "INFO" "   Option 1 (Recommended): Wildcard A record"
+    log_msg "INFO" "     *.${base_domain} IN A $(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
+    log_msg "INFO" "     → All subdomains automatically route to this server"
+    log_msg "INFO" ""
+    log_msg "INFO" "   Option 2: Individual A record"
+    log_msg "INFO" "     ${app_name}.${base_domain} IN A $(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
+    log_msg "INFO" "     → Requires manual DNS update for each new app"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -3104,64 +3210,7 @@ cmd_add() {
   # In app role the Traefik route does not exist yet; appmotel adds it next
   [[ "${APPMO_ROLE}" == "app" ]] && return 0
 
-  # Check if BASE_DOMAIN is still set to default
-  if [[ "${base_domain}" == "apps.example.edu" ]] || [[ "${base_domain}" == "apps.yourdomain.edu" ]]; then
-    log_msg "WARN" "⚠️  BASE_DOMAIN is set to default value: ${base_domain}"
-    log_msg "WARN" "   Please update BASE_DOMAIN in ~/.config/appmotel/.env"
-    log_msg "WARN" "   Then restart Traefik: sudo systemctl restart traefik-appmotel"
-    return
-  fi
-
-  # Check if the app URL is reachable (retry for 15 seconds)
-  log_msg "INFO" "Checking if app is accessible..."
-
-  local http_code
-  local response_body
-  local max_attempts=15
-  local attempt=1
-  local app_accessible=false
-
-  local curl_output
-  curl_output=$(create_temp_file "appmo_check")
-
-  while [[ ${attempt} -le ${max_attempts} ]]; do
-    http_code=$(curl -s -o "${curl_output}" -w '%{http_code}' --connect-timeout 2 --max-time 3 -k "${app_url}" 2>/dev/null || echo "000")
-    response_body=$(cat "${curl_output}" 2>/dev/null || echo "")
-
-    # Check for successful HTTP status (2xx or 3xx) and no "Bad Gateway" in response
-    if [[ "${http_code}" =~ ^[23] ]] && ! grep -qi "bad gateway" <<< "${response_body}"; then
-      app_accessible=true
-      break
-    fi
-
-    # Only wait and retry if not the last attempt
-    if [[ ${attempt} -lt ${max_attempts} ]]; then
-      sleep 1
-    fi
-    attempt=$((attempt + 1))
-  done
-
-  if [[ "${app_accessible}" == "true" ]]; then
-    log_msg "INFO" "✓ App is accessible at ${app_url}"
-  else
-    if [[ "${http_code}" == "502" ]] || grep -qi "bad gateway" <<< "${response_body}"; then
-      log_msg "WARN" "App not accessible - received Bad Gateway error (app may not be running on port ${port})"
-    else
-      log_msg "WARN" "App not yet accessible - DNS may need configuration"
-    fi
-    log_msg "INFO" ""
-    log_msg "INFO" "DNS Configuration Required:"
-    log_msg "INFO" ""
-    log_msg "INFO" "   Configure DNS to route traffic to this app. Choose one option:"
-    log_msg "INFO" ""
-    log_msg "INFO" "   Option 1 (Recommended): Wildcard A record"
-    log_msg "INFO" "     *.${base_domain} IN A $(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
-    log_msg "INFO" "     → All subdomains automatically route to this server"
-    log_msg "INFO" ""
-    log_msg "INFO" "   Option 2: Individual A record"
-    log_msg "INFO" "     ${app_name}.${base_domain} IN A $(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null || echo 'YOUR_SERVER_IP')"
-    log_msg "INFO" "     → Requires manual DNS update for each new app"
-  fi
+  check_app_url "${app_name}" "${base_domain}" "${port}"
 }
 
 # -----------------------------------------------------------------------------
@@ -4178,7 +4227,7 @@ cmd_autopull() {
   log_msg "INFO" "Starting autopull check"
 
   # Surface an expiring/expired TLS certificate (once a day) in the journal
-  [[ "${APPMO_ROLE}" == "admin" ]] && { check_tls_expiry || true; }
+  [[ "${APPMO_ROLE}" == "admin" ]] && { check_tls_expiry || true; secure_appmotel_files; }
 
   # Check if apps directory exists
   if [[ ! -d "${APPS_CONFIG_DIR}" ]]; then
@@ -4604,18 +4653,19 @@ cmd_self_update() {
 # -----------------------------------------------------------------------------
 # Function: secure_appmotel_files
 # Description: The appmotel home is world-traversable (751) for the appmo
-# symlink, and app paths are well known, so app .env files, AWS keys and
-# certs must be closed by directory mode, not only by obscurity. Isolated app
+# symlink, and app paths are well known, so app .env files, AWS keys,
+# certs and tool state must be closed by mode, not only by obscurity. Isolated app
 # users depend on this. Same code in install.sh and bin/appmo.
 # -----------------------------------------------------------------------------
 secure_appmotel_files() {
-  local dir
-  for dir in "${APPMOTEL_HOME}/.config" "${APPMOTEL_HOME}/.ssh" \
-             "${APPMOTEL_HOME}/.local/share/appmotel" \
-             "${APPMOTEL_HOME}/.local/share/appmotel-backups" \
-             "${APPMOTEL_HOME}/.local/share/traefik"; do
-    [[ -d "${dir}" ]] && chmod 700 "${dir}"
-  done
+  # Close everything in the home except ~/.local/bin (needed by the appmo
+  # symlink); tools such as Claude Code (auto-debug) create 644 files in 755
+  # dirs, so naming single dirs is not enough. Also run by autopull.
+  find "${APPMOTEL_HOME}" -mindepth 1 -maxdepth 1 ! -name .local -exec chmod go-rwx {} + 2>/dev/null || true
+  if [[ -d "${APPMOTEL_HOME}/.local" ]]; then
+    chmod 755 "${APPMOTEL_HOME}/.local"
+    find "${APPMOTEL_HOME}/.local" -mindepth 1 -maxdepth 1 ! -name bin -exec chmod go-rwx {} + 2>/dev/null || true
+  fi
   if [[ -d "${APPMOTEL_HOME}/.config/appmotel" ]]; then
     find "${APPMOTEL_HOME}/.config/appmotel" -type f \( -name '.env' -o -name '.env.*' \) -exec chmod 600 {} +
   fi

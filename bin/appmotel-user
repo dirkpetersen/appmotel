@@ -19,7 +19,6 @@ readonly SUDOERS_DIR="/etc/sudoers.d"
 
 die() { echo "appmotel-user: $1" >&2; exit 1; }
 
-[[ "${EUID}" -eq 0 ]] || die "must run as root"
 [[ $# -eq 2 ]] || die "usage: appmotel-user create|delete <app>"
 
 action="$1"
@@ -27,6 +26,7 @@ app="$2"
 # Same rule as appmo validate_app_name; 30 chars so "a-<app>" fits in 32
 [[ "${app}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || die "invalid app name: ${app}"
 [[ ${#app} -le 30 ]] || die "app name longer than 30 characters: ${app}"
+[[ "${EUID}" -eq 0 ]] || die "must run as root"
 
 user="${PREFIX}${app}"
 sudoers_file="${SUDOERS_DIR}/appmotel-${user}"

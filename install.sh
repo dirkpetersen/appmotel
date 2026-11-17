@@ -546,18 +546,19 @@ enable_linger() {
 # -----------------------------------------------------------------------------
 # Function: secure_appmotel_files
 # Description: The appmotel home is world-traversable (751) for the appmo
-# symlink, and app paths are well known, so app .env files, AWS keys and
-# certs must be closed by directory mode, not only by obscurity. Isolated app
+# symlink, and app paths are well known, so app .env files, AWS keys,
+# certs and tool state must be closed by mode, not only by obscurity. Isolated app
 # users depend on this. Same code in install.sh and bin/appmo.
 # -----------------------------------------------------------------------------
 secure_appmotel_files() {
-  local dir
-  for dir in "${APPMOTEL_HOME}/.config" "${APPMOTEL_HOME}/.ssh" \
-             "${APPMOTEL_HOME}/.local/share/appmotel" \
-             "${APPMOTEL_HOME}/.local/share/appmotel-backups" \
-             "${APPMOTEL_HOME}/.local/share/traefik"; do
-    [[ -d "${dir}" ]] && chmod 700 "${dir}"
-  done
+  # Close everything in the home except ~/.local/bin (needed by the appmo
+  # symlink); tools such as Claude Code (auto-debug) create 644 files in 755
+  # dirs, so naming single dirs is not enough. Also run by autopull.
+  find "${APPMOTEL_HOME}" -mindepth 1 -maxdepth 1 ! -name .local -exec chmod go-rwx {} + 2>/dev/null || true
+  if [[ -d "${APPMOTEL_HOME}/.local" ]]; then
+    chmod 755 "${APPMOTEL_HOME}/.local"
+    find "${APPMOTEL_HOME}/.local" -mindepth 1 -maxdepth 1 ! -name bin -exec chmod go-rwx {} + 2>/dev/null || true
+  fi
   if [[ -d "${APPMOTEL_HOME}/.config/appmotel" ]]; then
     find "${APPMOTEL_HOME}/.config/appmotel" -type f \( -name '.env' -o -name '.env.*' \) -exec chmod 600 {} +
   fi
@@ -1241,8 +1242,10 @@ install_as_root() {
 
   # Create system-wide symlink so any user can run 'appmo' or 'appmo skill'
   # directly without needing sudo -u appmotel.
+  # 'appmotel' is the same command under a longer name
   ln -sf "${APPMOTEL_HOME}/.local/bin/appmo" "/usr/local/bin/appmo"
-  log_msg "INFO" "System-wide symlink created: /usr/local/bin/appmo"
+  ln -sf "${APPMOTEL_HOME}/.local/bin/appmo" "/usr/local/bin/appmotel"
+  log_msg "INFO" "System-wide symlinks created: /usr/local/bin/appmo, /usr/local/bin/appmotel"
 
   # AWS hairpin NAT workaround: resolve *.BASE_DOMAIN locally via dnsmasq
   setup_local_dns
