@@ -228,6 +228,13 @@ AWS_SECRET_ACCESS_KEY="your-secret"
 AWS_REGION="us-west-2"
 ```
 
+**How the TLS certificate is chosen:**
+
+1. A wildcard certificate for exactly `*.BASE_DOMAIN` in `/etc/letsencrypt/live/` (for example one that a sysadmin issued with certbot) is used for all apps. Certificates for other domains are never used.
+2. Otherwise, with `USE_LETSENCRYPT=yes`, Traefik gets certificates from Let's Encrypt. With `LETSENCRYPT_MODE="http"` it gets one certificate for each app host name, and with `"dns"` (Route53) it gets a wildcard.
+
+On a new install with no such wildcard certificate, `install.sh` sets `USE_LETSENCRYPT=yes` by itself when no other program uses port 80, and an active ufw or firewalld allows it. It cannot see outside firewalls (such as an AWS security group). If those block port 80, Traefik only logs failed Let's Encrypt attempts. `LETSENCRYPT_EMAIL` is optional; Let's Encrypt rejects `example.com` addresses.
+
 ### Per-App Configuration
 
 Apps can override defaults in their `.env` file:

@@ -118,6 +118,38 @@ die() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: port80_usable
+# Description: Best local guess that Let's Encrypt HTTP-01 can reach Traefik:
+#   nothing else listens on port 80, and an active ufw/firewalld allows it.
+#   It cannot see outside firewalls (for example an AWS security group); if
+#   those block port 80, Traefik only logs failed ACME attempts.
+# -----------------------------------------------------------------------------
+port80_usable() {
+  local listeners
+  listeners=$(ss -Hltnp 'sport = :80' 2>/dev/null | grep -v '"traefik"' || true)
+  if [[ -n "${listeners}" ]]; then
+    log_msg "INFO" "Port 80 is used by another program: ${listeners}"
+    return 1
+  fi
+  local ufw_out
+  ufw_out=$(ufw status verbose 2>/dev/null || true)
+  if grep -q '^Status: active' <<< "${ufw_out}" && ! grep -q 'Default: allow (incoming)' <<< "${ufw_out}"; then
+    if ! grep -qE '^(80|80,443|443,80)(/tcp)?[[:space:]].*ALLOW|^(WWW|WWW Full|Nginx HTTP|Nginx Full|Apache|Apache Full)[[:space:]].*ALLOW' <<< "${ufw_out}"; then
+      log_msg "INFO" "ufw is active and does not allow port 80"
+      return 1
+    fi
+  fi
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    if ! firewall-cmd --list-services 2>/dev/null | grep -qw http && \
+       ! firewall-cmd --list-ports 2>/dev/null | grep -qw '80/tcp'; then
+      log_msg "INFO" "firewalld is active and does not allow port 80"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Function: load_env
 # Description: Loads configuration from .env file
 # Location: Uses fixed path /home/appmotel/.config/appmotel/.env
@@ -172,6 +204,19 @@ load_env() {
   set -o allexport
   source "${env_file}"
   set +o allexport
+
+  # New install: turn on Let's Encrypt (HTTP-01) when no wildcard cert for
+  # BASE_DOMAIN exists and port 80 looks usable; a matching cert added later
+  # still wins (see generate_traefik_config)
+  if [[ "${USE_LETSENCRYPT:-no}" != "yes" ]] && [[ -z "$(find_existing_wildcard_cert)" ]]; then
+    if port80_usable; then
+      sed -i 's|^USE_LETSENCRYPT=.*|USE_LETSENCRYPT=yes      # set by install.sh: no wildcard cert found, port 80 usable|' "${env_file}"
+      USE_LETSENCRYPT="yes"
+      log_msg "INFO" "No wildcard certificate found and port 80 is usable: USE_LETSENCRYPT=yes"
+    else
+      log_msg "WARN" "Let's Encrypt not turned on (port 80 not usable); set USE_LETSENCRYPT=yes in ${env_file} when it is"
+    fi
+  fi
 
   # Auto-detect timezone from IP geolocation if TZ is not set
   if ! grep -q "^TZ=" "${env_file}" 2>/dev/null; then
@@ -717,21 +762,9 @@ find_existing_wildcard_cert() {
     done
   fi
 
-  # If no match with BASE_DOMAIN, find any wildcard certificate
-  for domain_dir in "${cert_dir}"/*; do
-    if [[ ! -d "${domain_dir}" ]]; then
-      continue
-    fi
-    local domain_name=$(basename "${domain_dir}")
-    if [[ -f "${domain_dir}/fullchain.pem" ]]; then
-      # Look for any wildcard certificate
-      if openssl x509 -in "${domain_dir}/fullchain.pem" -text -noout 2>/dev/null | \
-         grep -q "DNS:\*\."; then
-        echo "${domain_name}"
-        return
-      fi
-    fi
-  done
+  # No fallback to other wildcard certs: a cert for *.other.example.edu does
+  # not cover <app>.BASE_DOMAIN, and using it would also turn off Let's
+  # Encrypt, so every app would show a certificate error.
 }
 
 # -----------------------------------------------------------------------------
@@ -899,7 +932,25 @@ tls:
         keyFile: /etc/letsencrypt/live/${existing_cert}/privkey.pem
 EOF
     log_msg "INFO" "TLS configuration written to ${tls_config_file}"
-  elif [[ "${USE_LETSENCRYPT:-no}" == "yes" ]]; then
+  elif [[ -f "${tls_config_file}" ]]; then
+    # An older install.sh also picked wildcard certs for other domains. Drop
+    # such a config, but only when its cert is readable and provably wrong
+    # (an unreadable cert says nothing about the domain).
+    local old_cert
+    old_cert=$(awk '/certFile:/ {print $2; exit}' "${tls_config_file}")
+    if [[ -n "${old_cert}" ]] && [[ -r "${old_cert}" ]] && [[ -n "${BASE_DOMAIN:-}" ]] && \
+       ! openssl x509 -in "${old_cert}" -text -noout 2>/dev/null | grep -qE "DNS:\*\.${BASE_DOMAIN//./\\.}(,|\$| )"; then
+      rm -f "${tls_config_file}"
+      log_msg "WARN" "Removed ${tls_config_file}: ${old_cert} does not cover *.${BASE_DOMAIN}"
+    fi
+  fi
+
+  # Let's Encrypt rejects example.com addresses; no email is allowed
+  if [[ "${LETSENCRYPT_EMAIL:-}" == *@example.com ]]; then
+    LETSENCRYPT_EMAIL=""
+  fi
+
+  if [[ -z "${existing_cert}" ]] && [[ "${USE_LETSENCRYPT:-no}" == "yes" ]]; then
     # Use ACME for new certificates (ACME config stays in static config)
     if [[ "${LETSENCRYPT_MODE:-http}" == "dns" ]]; then
       # DNS-01 challenge with Route53

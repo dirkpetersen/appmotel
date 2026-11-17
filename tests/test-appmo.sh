@@ -70,6 +70,24 @@ for name in 'x;id' '../etc' 'A' 'a_b' "$(printf 'a%.0s' {1..31})"; do
   check "appmotel-user refuses '${name:0:12}'" "1" "$(grep -c -e 'invalid app name' -e 'longer than 30' <<< "${out}")"
 done
 
+# --- install.sh find_existing_wildcard_cert: only a cert for *.BASE_DOMAIN
+live="${work}/letsencrypt/live"
+make_cert() {
+  mkdir -p "${live}/$1"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$2" \
+    -addext "subjectAltName=DNS:$2" -keyout "${live}/$1/privkey.pem" \
+    -out "${live}/$1/fullchain.pem" 2>/dev/null
+}
+# shellcheck source=/dev/null
+source <(sed -n "/^find_existing_wildcard_cert() {/,/^}/p" "${repo_dir}/install.sh" | sed "s#/etc/letsencrypt/live#${live}#g")
+make_cert other '*.other.example.org'
+BASE_DOMAIN="apps.example.org"
+check "cert: other wildcard not used" "" "$(find_existing_wildcard_cert)"
+make_cert apps '*.apps.example.org'
+check "cert: matching wildcard used"  "apps" "$(find_existing_wildcard_cert)"
+BASE_DOMAIN="x.apps.example.org"
+check "cert: no parent-domain match"  "" "$(find_existing_wildcard_cert)"
+
 echo
 if [[ ${failures} -gt 0 ]]; then
   echo "${failures} check(s) failed"
