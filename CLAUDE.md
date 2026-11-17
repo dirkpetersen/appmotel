@@ -64,10 +64,19 @@ See `.claude/skills/bash/SKILL.md` for full coding standards (associative arrays
 |------|---------|
 | `install.sh` | Main installer (root + user-level setup) |
 | `install-aws.sh` | EC2 deployment with Route53 DNS (wraps install.sh) |
-| `bin/appmo` | CLI tool for managing apps (~3600 lines); commands are `cmd_<name>` functions |
-| `bin/appmo-completion.bash` | Shell completion for appmo |
+| `bin/appmo` | CLI tool for managing apps (~4200 lines); commands are `cmd_<name>` functions, dispatched by the `case` block at the end of the file |
+| `bin/appmo-completion.bash` | Shell completion for appmo (static command list) |
+| `bin/appmotel-fix-certs` | Root helper, installed to `/usr/local/bin`, that makes `/etc/letsencrypt` readable via the `ssl-cert` group; `appmotel` may run it via sudoers |
 | `templates/appmotel-autopull.*` | Systemd units for 2-minute git polling |
-| `examples/flask-hello/`, `examples/express-hello/` | Reference apps for testing |
+| `templates/github-workflow.yml` | Example SSH deploy workflow for app repos (not used by this repo) |
+| `.github/workflows/issue-auto-fix.yml` | Runs Claude Code (Bedrock) on each new issue and opens a `fix/issue-N` PR |
+| `examples/flask-hello/`, `examples/express-hello/`, `examples/zensical-wiki/` | Reference apps for testing |
+
+To add a CLI command: write `cmd_<name>`, add it to the dispatch `case` in `bin/appmo`, add it to `commands=` in `bin/appmo-completion.bash`, and add it to `APPMO_LOCAL_COMMANDS` only if it must not elevate to `appmotel`.
+
+### Testing
+
+There is no automated test suite. The only static check is `bash -n` on each changed script. Functional tests are manual, on a host with appmotel installed: deploy the example apps and follow `docs/TESTING.md` (clean install, idempotency re-run, per-runtime deploys, CLI commands).
 
 ### Directory Structure (appmotel user)
 

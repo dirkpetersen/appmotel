@@ -10,7 +10,7 @@ _appmo_completions() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   # Main commands (rm/ls are hidden aliases for remove/list)
-  local commands="add remove rm list ls status start stop restart update check autopull logs env exec backup restore backups self-update help"
+  local commands="add remove rm list ls status start stop restart update check autopull logs env exec backup restore backups self-update skill help"
 
   # Get list of apps for completion (exclude .env file, only list directories)
   local apps=""
