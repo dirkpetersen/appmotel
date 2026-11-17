@@ -19,7 +19,7 @@ Never commit secrets or credentials to the repository. Keep them in `.env` files
 
 ```bash
 # Secrets live here (not in repo)
-cat /home/appmotel/.config/appmotel/myapp/.env
+sudo -u appmotel cat /home/appmotel/.config/appmotel/myapp/.env
 # DATABASE_PASSWORD=secret123
 # API_KEY=abc123xyz
 ```

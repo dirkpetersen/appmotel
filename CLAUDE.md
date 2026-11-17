@@ -172,6 +172,15 @@ sudo -u appmotel sudo systemctl restart traefik-appmotel  # Traefik (system serv
 sudo -u appmotel systemctl --user restart appmotel-myapp   # Apps (user service)
 ```
 
+### Isolated apps (`appmo add --isolated`, `appmo isolate`)
+
+An isolated app runs as its own user `a-<app>` (group `appmotel-apps`, home mode 700). The root helper `bin/appmotel-user` (installed to `/usr/local/bin`) creates and deletes these users and writes `/etc/sudoers.d/appmotel-a-<app>` so that `appmotel` may run anything as that user. The app user has no sudo rights; the operator sudoers rules exclude `!%appmotel-apps`.
+
+- `bin/appmo` has two roles. Run as `appmotel` it is in **admin** role. Run as an `a-*` user it is in **app** role (`APPMO_ROLE=app`): all per-app paths (`APPS_CONFIG_DIR`, `APPS_DATA_DIR`, `SYSTEMD_USER_DIR`, `BACKUPS_DIR`) point into that user's home, it never elevates, and it does not write Traefik config.
+- In admin role, an isolated app has only `~/.config/appmotel/<app>/isolated.conf` (user, port). `main()` sends per-app commands to `run_appmo_as_app`, which runs `appmo` as the app user, then `sync_isolated_traefik` rebuilds the route. Values read from the app user's files are untrusted; `create_traefik_config` validates them.
+- `secure_appmotel_files` (in both `install.sh` and `bin/appmo`) keeps `~/.config` and the data dirs at mode 700. `/home/appmotel` is world-traversable (751) for the `/usr/local/bin/appmo` symlink, so these modes are what keeps app users out.
+- Open item: an app user can still connect to other apps' localhost ports directly (no network isolation yet).
+
 ## AWS Deployment
 
 `install-aws.sh` automates EC2 deployment with Route53 DNS. On AWS, `install.sh` automatically configures **dnsmasq** for local DNS resolution (hairpin NAT workaround) so the server can reach its own apps via `*.BASE_DOMAIN`.

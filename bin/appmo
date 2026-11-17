@@ -37,13 +37,27 @@ readonly APPMOTEL_USER="appmotel"
 readonly APPMOTEL_HOME="/home/${APPMOTEL_USER}"
 readonly APPMOTEL_CONFIG_DIR="${APPMOTEL_HOME}/.config/appmotel"
 readonly APPMOTEL_ENV_FILE="${APPMOTEL_CONFIG_DIR}/.env"
-readonly APPS_CONFIG_DIR="${APPMOTEL_CONFIG_DIR}"
-readonly APPS_DATA_DIR="${APPMOTEL_HOME}/.local/share/appmotel"
 readonly TRAEFIK_DYNAMIC_DIR="${APPMOTEL_HOME}/.config/traefik/dynamic"
-readonly SYSTEMD_USER_DIR="${APPMOTEL_HOME}/.config/systemd/user"
-readonly BACKUPS_DIR="${APPMOTEL_HOME}/.local/share/appmotel-backups"
 readonly MIN_PORT=10001
 readonly MAX_PORT=59999
+
+# Isolated apps run as their own Linux user "a-<app>" (created by the root
+# helper appmotel-user, member of APP_USERS_GROUP). Run by such a user, appmo
+# works in "app" role: it manages only the apps in that user's own home and
+# never elevates to appmotel. Traefik routes stay with appmotel.
+readonly APP_USER_PREFIX="a-"
+readonly APP_USERS_GROUP="appmotel-apps"
+APPMO_ROLE="admin"
+APPMO_HOME="${APPMOTEL_HOME}"
+if [[ "$(id -un)" == "${APP_USER_PREFIX}"* ]] && id -nG | grep -qw "${APP_USERS_GROUP}"; then
+  APPMO_ROLE="app"
+  APPMO_HOME=$(getent passwd "$(id -un)" | cut -d: -f6)
+fi
+readonly APPMO_ROLE APPMO_HOME
+readonly APPS_CONFIG_DIR="${APPMO_HOME}/.config/appmotel"
+readonly APPS_DATA_DIR="${APPMO_HOME}/.local/share/appmotel"
+readonly SYSTEMD_USER_DIR="${APPMO_HOME}/.config/systemd/user"
+readonly BACKUPS_DIR="${APPMO_HOME}/.local/share/appmotel-backups"
 
 # -----------------------------------------------------------------------------
 # Ensure appmotel's local bin dirs are on PATH regardless of how this script
@@ -67,7 +81,7 @@ export PATH
 # never need to type `sudo -u appmotel` themselves.
 # -----------------------------------------------------------------------------
 readonly APPMO_LOCAL_COMMANDS=(skill -h --help help)
-if [[ "$(id -un)" != "${APPMOTEL_USER}" ]]; then
+if [[ "$(id -un)" != "${APPMOTEL_USER}" ]] && [[ "${APPMO_ROLE}" != "app" ]]; then
   appmo_elevate=1
   if [[ $# -eq 0 ]]; then
     appmo_elevate=0
@@ -95,7 +109,7 @@ fi
 
 # Load appmotel configuration
 # Note: Temporarily reset IFS for proper .env parsing, then restore
-if [[ -f "${APPMOTEL_ENV_FILE}" ]]; then
+if [[ "${APPMO_ROLE}" == "admin" ]] && [[ -f "${APPMOTEL_ENV_FILE}" ]]; then
   _saved_ifs="${IFS}"
   IFS=$' \t\n'
   # shellcheck source=/dev/null
@@ -114,6 +128,15 @@ readonly DEFAULT_RATE_LIMIT_BURST=50
 
 # Ensure XDG_RUNTIME_DIR is set for systemd --user commands
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+# In app role appmotel's global .env is unreadable; appmotel writes
+# BASE_DOMAIN into the app user's own copy at isolate/add time
+if [[ "${APPMO_ROLE}" == "app" ]]; then
+  export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+  if [[ -f "${APPS_CONFIG_DIR}/.env" ]]; then
+    BASE_DOMAIN=$(grep -m1 '^BASE_DOMAIN=' "${APPS_CONFIG_DIR}/.env" | cut -d= -f2- | tr -d '"' || true)
+  fi
+fi
 
 # -----------------------------------------------------------------------------
 # Function: log_msg
@@ -196,9 +219,15 @@ check_disk_space() {
   local path="$1"
   local required_mb="${2:-100}"  # Default 100MB minimum
 
+  # The dir may not exist yet (new app user): measure its nearest parent.
+  # Under pipefail a failing df would otherwise abort the caller silently.
+  while [[ ! -d "${path}" ]] && [[ "${path}" != "/" ]]; do
+    path=$(dirname "${path}")
+  done
+
   # Get available space in MB
   local available_mb
-  available_mb=$(df -m "${path}" 2>/dev/null | awk 'NR==2 {print $4}')
+  available_mb=$(df -m "${path}" 2>/dev/null | awk 'NR==2 {print $4}' || true)
 
   if [[ -z "${available_mb}" ]]; then
     log_msg "WARN" "Could not check disk space for ${path}"
@@ -255,7 +284,7 @@ safe_rm_rf() {
   if [[ "${abs_target}" == "${APPS_DATA_DIR}" ]] || \
      [[ "${abs_target}" == "${APPS_CONFIG_DIR}" ]] || \
      [[ "${abs_target}" == "${BACKUPS_DIR}" ]] || \
-     [[ "${abs_target}" == "${APPMOTEL_HOME}" ]] || \
+     [[ "${abs_target}" == "${APPMO_HOME}" ]] || \
      [[ "${abs_target}" == "/" ]]; then
     die "safe_rm_rf: refusing to remove critical directory '${abs_target}' (${context})"
   fi
@@ -433,6 +462,8 @@ Usage: appmo <command> [arguments]
 
 Commands:
   add <app-name> <url|user/repo> [branch]  Add and deploy a new app (default: main)
+      --isolated                         Run the app as its own Linux user a-<app-name>
+  isolate <app-name>                     Move an existing app to its own user a-<app-name>
   remove <app-name>                      Remove an app (alias: rm)
   list                                   List all configured apps (alias: ls)
   status [app-name]                      Show app status
@@ -460,6 +491,7 @@ URL Formats:
 Examples:
   appmo add myapp https://github.com/user/repo main
   appmo add myapp https://github.com/user/repo/tree/main/apps/myapp
+  appmo add --isolated myapp user/repo
   appmo status myapp
   appmo autopull
   appmo logs myapp 50
@@ -683,7 +715,292 @@ validate_branch_name() {
 # -----------------------------------------------------------------------------
 app_exists() {
   local app_name="$1"
-  [[ -f "${APPS_CONFIG_DIR}/${app_name}/metadata.conf" ]]
+  [[ -f "${APPS_CONFIG_DIR}/${app_name}/metadata.conf" ]] || is_isolated "${app_name}"
+}
+
+# -----------------------------------------------------------------------------
+# Isolated apps (admin role only)
+# appmotel keeps only isolated.conf (ISOLATED_USER, PORT) for such an app; the
+# app itself lives in the home of its user and is managed by running appmo as
+# that user. Everything the app user wrote is untrusted input here.
+# -----------------------------------------------------------------------------
+is_isolated() {
+  [[ "${APPMO_ROLE}" == "admin" ]] && [[ -f "${APPS_CONFIG_DIR}/$1/isolated.conf" ]]
+}
+
+app_user_home() {
+  getent passwd "${APP_USER_PREFIX}$1" | cut -d: -f6
+}
+
+# Run a command as the app user, from a directory that user can reach
+as_app_user() {
+  local app_name="$1"
+  shift
+  (cd / && sudo -n -u "${APP_USER_PREFIX}${app_name}" "$@")
+}
+
+# Ports of all apps except $1, for port allocation in app role
+reserved_ports_except() {
+  local skip="$1" f
+  for f in "${APPS_CONFIG_DIR}"/*/metadata.conf "${APPS_CONFIG_DIR}"/*/isolated.conf; do
+    [[ -f "${f}" ]] || continue
+    [[ "$(basename "$(dirname "${f}")")" == "${skip}" ]] && continue
+    grep -h '^PORT=' "${f}" | cut -d= -f2 | tr -d '"'
+  done | tr '\n' ' '
+}
+
+# Run appmo as the app user (app role)
+run_appmo_as_app() {
+  local app_name="$1"
+  shift
+  as_app_user "${app_name}" env "PATH=${PATH}" \
+    "APPMO_RESERVED_PORTS=$(reserved_ports_except "${app_name}")" \
+    "EDITOR=${EDITOR:-${VISUAL:-vi}}" "GIT_TIMEOUT=${GIT_TIMEOUT:-120}" \
+    "APPMO_KEEP_REPO=${APPMO_KEEP_REPO:-0}" \
+    "$(command -v appmo 2>/dev/null || echo "$0")" "$@"
+}
+
+# Rebuild the Traefik route of an isolated app from its metadata and .env.
+# create_traefik_config validates every value, so the app user cannot inject
+# routing rules for other hosts.
+sync_isolated_traefik() {
+  local app_name="$1"
+  local home
+  home=$(app_user_home "${app_name}")
+  [[ -n "${home}" ]] || { log_msg "WARN" "${app_name}: app user not found"; return 1; }
+
+  local port
+  port=$(as_app_user "${app_name}" cat "${home}/.config/appmotel/${app_name}/metadata.conf" 2>/dev/null \
+    | grep -m1 '^PORT=' | cut -d= -f2 | tr -d '"' || true)
+  if [[ ! "${port}" =~ ^[0-9]+$ ]] || [[ ${port} -lt ${MIN_PORT} ]] || [[ ${port} -gt ${MAX_PORT} ]]; then
+    log_msg "WARN" "${app_name}: no valid PORT in app metadata, Traefik route not changed"
+    return 1
+  fi
+
+  local env_copy
+  env_copy=$(create_temp_file "isoenv")
+  chmod 600 "${env_copy}"
+  as_app_user "${app_name}" cat "${home}/.config/appmotel/${app_name}/.env" > "${env_copy}" 2>/dev/null || true
+
+  create_traefik_config "${app_name}" "${port}" "${BASE_DOMAIN:-apps.example.edu}" "${env_copy}"
+  rm -f "${env_copy}"
+  printf 'ISOLATED_USER="%s"\nPORT="%s"\n' "${APP_USER_PREFIX}${app_name}" "${port}" \
+    > "${APPS_CONFIG_DIR}/${app_name}/isolated.conf"
+}
+
+# Public GitHub repo? Unknown hosts and errors count as private.
+repo_is_public() {
+  local url="$1" slug=""
+  if [[ "${url}" =~ ^https://github\.com/([^/]+/[^/]+)$ ]] || \
+     [[ "${url}" =~ ^git@github\.com:([^/]+/[^/]+)$ ]] || \
+     [[ "${url}" =~ ^([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)$ ]]; then
+    slug="${BASH_REMATCH[1]%.git}"
+  fi
+  [[ -n "${slug}" ]] || return 1
+  [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://api.github.com/repos/${slug}" 2>/dev/null)" == "200" ]]
+}
+
+# Give the app user appmotel's GitHub SSH key(s), for private repos only
+copy_ssh_keys_to_app() {
+  local app_name="$1"
+  local key copied=0
+  local -a keys=()
+  mapfile -t keys < <(ssh -G github.com 2>/dev/null | awk '/^identityfile /{print $2}' | sed "s|^~|${HOME}|")
+
+  as_app_user "${app_name}" bash -c 'umask 077 && mkdir -p ~/.ssh'
+  for key in "${keys[@]:-}"; do
+    [[ -n "${key}" ]] && [[ -f "${key}" ]] || continue
+    local name
+    name=$(basename "${key}")
+    [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+    as_app_user "${app_name}" bash -c 'umask 077 && cat > ~/.ssh/"$1"' _ "${name}" < "${key}"
+    [[ -f "${key}.pub" ]] && as_app_user "${app_name}" bash -c 'umask 077 && cat > ~/.ssh/"$1"' _ "${name}.pub" < "${key}.pub"
+    printf 'Host github.com\n  IdentityFile ~/.ssh/%s\n' "${name}" \
+      | as_app_user "${app_name}" bash -c 'umask 077 && cat >> ~/.ssh/config'
+    copied=$((copied + 1))
+  done
+
+  # GitHub host key, so git over SSH does not stop at the host key prompt
+  { ssh-keygen -F github.com 2>/dev/null | grep -v '^#' || ssh-keyscan -t ed25519,rsa github.com 2>/dev/null; } \
+    | as_app_user "${app_name}" bash -c 'umask 077 && cat >> ~/.ssh/known_hosts'
+
+  if [[ ${copied} -eq 0 ]]; then
+    log_msg "WARN" "${app_name}: no SSH key of appmotel found to copy; private repo clone may fail"
+  else
+    log_msg "INFO" "${app_name}: copied ${copied} GitHub SSH key(s) to ${APP_USER_PREFIX}${app_name} (private repo)"
+  fi
+}
+
+# Create the app user and prepare its home. Echoes the clone URL to use.
+prepare_app_user() {
+  local app_name="$1"
+  local url="$2"
+
+  # An app user must not be able to read appmotel's files
+  secure_appmotel_files
+  sudo -n /usr/local/bin/appmotel-user create "${app_name}" >/dev/null \
+    || die "Could not create user ${APP_USER_PREFIX}${app_name} (is /usr/local/bin/appmotel-user installed? re-run 'sudo bash install.sh')"
+
+  mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
+  printf 'ISOLATED_USER="%s"\nPORT=""\n' "${APP_USER_PREFIX}${app_name}" > "${APPS_CONFIG_DIR}/${app_name}/isolated.conf"
+
+  printf 'BASE_DOMAIN="%s"\n' "${BASE_DOMAIN:-}" \
+    | as_app_user "${app_name}" bash -c 'umask 077 && mkdir -p ~/.config/appmotel && cat > ~/.config/appmotel/.env'
+
+  if repo_is_public "${url%%/tree/*}"; then
+    # The app user has no SSH key, so use HTTPS for public repos
+    if [[ "${url}" =~ ^git@github\.com:(.+)$ ]]; then
+      url="https://github.com/${BASH_REMATCH[1]%.git}"
+    fi
+  else
+    copy_ssh_keys_to_app "${app_name}"
+  fi
+  echo "${url}"
+}
+
+# Undo prepare_app_user after a failed deploy
+drop_app_user() {
+  local app_name="$1"
+  sudo -n /usr/local/bin/appmotel-user delete "${app_name}" || log_msg "WARN" "Could not delete user ${APP_USER_PREFIX}${app_name}"
+  rm -f "${APPS_CONFIG_DIR}/${app_name}/isolated.conf"
+  rm -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
+  rmdir "${APPS_CONFIG_DIR}/${app_name}" 2>/dev/null || true
+}
+
+# appmo add --isolated <app> <url> [branch] [subfolder]
+add_isolated() {
+  local app_name="$1"
+  local url="$2"
+  local branch="${3:-}"
+  local subdir="${4:-}"
+
+  [[ ${#app_name} -le 30 ]] || die "Isolated app names can have at most 30 characters"
+  if app_exists "${app_name}"; then
+    die "App '${app_name}' already exists"
+  fi
+  validate_github_url "${url%%/tree/*}"
+
+  log_msg "INFO" "Adding isolated app '${app_name}' as user ${APP_USER_PREFIX}${app_name}"
+  url=$(prepare_app_user "${app_name}" "${url}")
+
+  # A .env kept by an earlier 'appmo remove' goes to the app user, where
+  # cmd_add offers to restore it
+  local env_backup="${APPS_CONFIG_DIR}/${app_name}/.env.backup"
+  if [[ -f "${env_backup}" ]]; then
+    as_app_user "${app_name}" bash -c 'umask 077 && mkdir -p ~/.config/appmotel/"$1" && cat > ~/.config/appmotel/"$1"/.env.backup' _ "${app_name}" < "${env_backup}"
+    rm -f "${env_backup}"
+  fi
+
+  if ! run_appmo_as_app "${app_name}" add "${app_name}" "${url}" "${branch}" "${subdir}"; then
+    drop_app_user "${app_name}"
+    die "Failed to deploy isolated app '${app_name}', user removed"
+  fi
+  sync_isolated_traefik "${app_name}" || true
+  log_msg "INFO" "Isolated app '${app_name}' runs as ${APP_USER_PREFIX}${app_name}"
+}
+
+# appmo isolate <app>: move an existing app to its own user
+cmd_isolate() {
+  [[ $# -eq 1 ]] || die "Usage: appmo isolate <app-name>"
+  local app_name="$1"
+  [[ "${APPMO_ROLE}" == "admin" ]] || die "appmo isolate must be run by appmotel or an operator"
+  require_app_exists "${app_name}"
+  is_isolated "${app_name}" && die "App '${app_name}' is already isolated"
+  [[ ${#app_name} -le 30 ]] || die "Isolated app names can have at most 30 characters"
+
+  load_app_metadata "${app_name}"
+  local url="${GITHUB_URL}" branch="${BRANCH}" subdir="${SUBDIR:-}"
+  local data_dir="${APPS_DATA_DIR}/${app_name}"
+  local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+
+  log_msg "INFO" "Creating backup before isolating..."
+  create_backup "${app_name}" >/dev/null || die "Backup failed, nothing was changed"
+
+  local -a services
+  get_all_services "${app_name}" services
+  local -a units=()
+  local service
+  for service in "${services[@]}"; do
+    if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
+      units+=("appmotel-${app_name}")
+    else
+      units+=("appmotel-${app_name}-${service}")
+    fi
+  done
+
+  url=$(prepare_app_user "${app_name}" "${url}")
+
+  # Stop the old services so the new ones can take over the same port
+  local unit
+  for unit in "${units[@]}"; do
+    systemctl_stop "${unit}"
+  done
+
+  # Copy repo (with untracked data, without any venv: venvs hold absolute paths)
+  # and the app .env into the app user's home
+  local home
+  home=$(app_user_home "${app_name}")
+  as_app_user "${app_name}" mkdir -p "${home}/.local/share/appmotel/${app_name}" "${home}/.config/appmotel/${app_name}"
+  tar --exclude=.venv -C "${data_dir}" -cf - ./repo \
+    | as_app_user "${app_name}" tar -C "${home}/.local/share/appmotel/${app_name}" -xf -
+  if [[ -f "${config_dir}/.env" ]]; then
+    as_app_user "${app_name}" bash -c 'umask 077 && cat > "$1"' _ "${home}/.config/appmotel/${app_name}/.env" < "${config_dir}/.env"
+  fi
+
+  if ! APPMO_KEEP_REPO=1 run_appmo_as_app "${app_name}" add "${app_name}" "${url}" "${branch}" "${subdir}"; then
+    log_msg "ERROR" "Deploy as ${APP_USER_PREFIX}${app_name} failed, restoring the old app"
+    sudo -n /usr/local/bin/appmotel-user delete "${app_name}" || true
+    rm -f "${config_dir}/isolated.conf"
+    for unit in "${units[@]}"; do
+      systemctl --user start "${unit}" || true
+    done
+    die "appmo isolate failed; '${app_name}' runs as appmotel again"
+  fi
+
+  # New app is live: switch the route, then remove the old copy
+  sync_isolated_traefik "${app_name}" || true
+  for unit in "${units[@]}"; do
+    systemctl --user disable "${unit}" 2>/dev/null || true
+    rm -f "${SYSTEMD_USER_DIR}/${unit}.service"
+  done
+  systemctl --user daemon-reload
+  safe_rm_rf "${data_dir}" "cmd_isolate old app data"
+  find "${config_dir}" -mindepth 1 -maxdepth 1 ! -name isolated.conf -exec rm -rf {} +
+
+  log_msg "INFO" "App '${app_name}' now runs as ${APP_USER_PREFIX}${app_name}"
+  log_msg "INFO" "Old backups stay in ${BACKUPS_DIR}/${app_name}"
+}
+
+# appmo remove for an isolated app
+remove_isolated() {
+  local app_name="$1"
+  local home
+  home=$(app_user_home "${app_name}")
+  local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+
+  if [[ -n "${home}" ]]; then
+    run_appmo_as_app "${app_name}" remove "${app_name}" || log_msg "WARN" "App user could not remove all app files"
+
+    # Keep the .env and the backups: the user's home is deleted next
+    as_app_user "${app_name}" cat "${home}/.config/appmotel/${app_name}/.env.backup" > "${config_dir}/.env.backup" 2>/dev/null \
+      || rm -f "${config_dir}/.env.backup"
+    [[ -f "${config_dir}/.env.backup" ]] && chmod 600 "${config_dir}/.env.backup"
+    # Kept as one archive: appmotel never unpacks a tar the app user made
+    mkdir -p "${BACKUPS_DIR}"
+    local archive
+    archive="${BACKUPS_DIR}/${app_name}-isolated-$(date +%Y-%m-%d-%H%M%S).tar.gz"
+    if as_app_user "${app_name}" test -d "${home}/.local/share/appmotel-backups/${app_name}"; then
+      as_app_user "${app_name}" tar -C "${home}/.local/share/appmotel-backups" -czf - "${app_name}" > "${archive}" \
+        && log_msg "INFO" "App backups saved to ${archive}" \
+        || log_msg "WARN" "Could not save app backups"
+    fi
+  fi
+
+  rm -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
+  sudo -n /usr/local/bin/appmotel-user delete "${app_name}" || die "Could not delete user ${APP_USER_PREFIX}${app_name}"
+  rm -f "${config_dir}/isolated.conf"
+  rmdir "${config_dir}" 2>/dev/null || true
+  log_msg "INFO" "Isolated app '${app_name}' and user ${APP_USER_PREFIX}${app_name} removed"
 }
 
 # -----------------------------------------------------------------------------
@@ -1022,7 +1339,10 @@ port_available() {
   fi
 
   local allocated_ports
-  allocated_ports=$(grep -h "^PORT=" "${APPS_CONFIG_DIR}"/*/metadata.conf 2>/dev/null | cut -d'=' -f2 || true)
+  # isolated.conf holds the ports of isolated apps; in app role appmotel passes
+  # the ports of all other apps in APPMO_RESERVED_PORTS
+  allocated_ports=$(grep -h "^PORT=" "${APPS_CONFIG_DIR}"/*/metadata.conf "${APPS_CONFIG_DIR}"/*/isolated.conf 2>/dev/null | cut -d'=' -f2 | tr -d '"' || true)
+  allocated_ports="${allocated_ports} ${APPMO_RESERVED_PORTS:-}"
   if echo "${allocated_ports}" | grep -qw "${port}" 2>/dev/null; then
     return 1
   fi
@@ -1524,6 +1844,7 @@ create_systemd_service() {
     service_name="${service_name}-${component_name}"
   fi
   local service_file="${SYSTEMD_USER_DIR}/${service_name}.service"
+  mkdir -p "${SYSTEMD_USER_DIR}"
   local env_file="${repo_dir}/.env"
 
   # Detect app type and get start command
@@ -1609,8 +1930,8 @@ WorkingDirectory=${repo_dir}
 ${env_directive}
 ${path_directive}
 Environment="PORT=${port}"
-Environment="HOME=${APPMOTEL_HOME}"
-Environment="USER=appmotel"
+Environment="HOME=${APPMO_HOME}"
+Environment="USER=$(id -un)"
 ExecStart=/bin/bash -c '${start_cmd}'
 Restart=always
 RestartSec=10
@@ -1645,6 +1966,7 @@ create_systemd_service_procfile() {
   local start_cmd="$5"
 
   local service_file="${SYSTEMD_USER_DIR}/appmotel-${app_name}-${proc_name}.service"
+  mkdir -p "${SYSTEMD_USER_DIR}"
   local env_file="${repo_dir}/.env"
 
   # For Python apps, use the venv python directly
@@ -1685,8 +2007,8 @@ Type=simple
 WorkingDirectory=${repo_dir}
 ${env_directive}
 Environment="PORT=${port}"
-Environment="HOME=${APPMOTEL_HOME}"
-Environment="USER=appmotel"
+Environment="HOME=${APPMO_HOME}"
+Environment="USER=$(id -un)"
 ExecStart=/bin/bash -c '${start_cmd}'
 Restart=always
 RestartSec=10
@@ -1714,7 +2036,12 @@ create_traefik_config() {
   local app_name="$1"
   local port="$2"
   local base_domain="${3:-apps.example.edu}"
-  local repo_dir="${4:-}"
+  local env_file="${4:-}"
+
+  if [[ "${APPMO_ROLE}" == "app" ]]; then
+    log_msg "INFO" "Traefik route is managed by appmotel (updated on its next autopull or appmo command)"
+    return 0
+  fi
 
   local config_file="${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
   local app_url="${app_name}.${base_domain}"
@@ -1725,9 +2052,9 @@ create_traefik_config() {
   local health_check_path=""  # No health check by default - only if app explicitly sets it
   local enable_rate_limit="true"
 
-  if [[ -n "${repo_dir}" ]] && [[ -f "${repo_dir}/.env" ]]; then
+  if [[ -n "${env_file}" ]] && [[ -f "${env_file}" ]]; then
     local parsed_env
-    parsed_env=$(parse_env_file "${repo_dir}/.env")
+    parsed_env=$(parse_env_file "${env_file}")
     if echo "${parsed_env}" | grep -q "^RATE_LIMIT_AVG="; then
       rate_limit_avg=$(echo "${parsed_env}" | grep "^RATE_LIMIT_AVG=" | cut -d= -f2-)
     fi
@@ -1740,6 +2067,24 @@ create_traefik_config() {
     if echo "${parsed_env}" | grep -q "^DISABLE_RATE_LIMIT="; then
       enable_rate_limit="false"
     fi
+  fi
+
+  # These values come from the app's .env and go into Traefik's YAML
+  if [[ ! "${port}" =~ ^[0-9]+$ ]]; then
+    log_msg "WARN" "Invalid port '${port}', Traefik config not written"
+    return 1
+  fi
+  if [[ ! "${rate_limit_avg}" =~ ^[0-9]+$ ]]; then
+    log_msg "WARN" "Invalid RATE_LIMIT_AVG, using default"
+    rate_limit_avg="${DEFAULT_RATE_LIMIT_AVG}"
+  fi
+  if [[ ! "${rate_limit_burst}" =~ ^[0-9]+$ ]]; then
+    log_msg "WARN" "Invalid RATE_LIMIT_BURST, using default"
+    rate_limit_burst="${DEFAULT_RATE_LIMIT_BURST}"
+  fi
+  if [[ -n "${health_check_path}" ]] && [[ ! "${health_check_path}" =~ ^/[A-Za-z0-9._~/-]*$ ]]; then
+    log_msg "WARN" "Invalid HEALTH_CHECK_PATH, health check disabled"
+    health_check_path=""
   fi
 
   # Build middleware list
@@ -2220,17 +2565,34 @@ setup_zensical_env() {
 # Supports subfolder URLs: https://github.com/user/repo/tree/branch/path/to/folder
 # -----------------------------------------------------------------------------
 cmd_add() {
+  local isolated=false
+  local -a args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --isolated) isolated=true ;;
+      *) args+=("$1") ;;
+    esac
+    shift
+  done
+  set -- "${args[@]:-}"
+
   if [[ $# -lt 2 ]]; then
-    die "Usage: appmo add <app-name> <github-url|user/repo> [branch]"
+    die "Usage: appmo add [--isolated] <app-name> <github-url|user/repo> [branch] [subfolder]"
   fi
 
   local app_name="$1"
   local github_url="$2"
   local branch="${3:-}"
-  local subdir=""
+  local subdir="${4:-}"
 
   # Validate app name first
   validate_app_name "${app_name}"
+
+  if [[ "${isolated}" == "true" ]]; then
+    [[ "${APPMO_ROLE}" == "admin" ]] || die "--isolated must be run by appmotel or an operator"
+    add_isolated "$@"
+    return
+  fi
 
   # Parse the URL to extract repo, branch, and subfolder
   parse_github_url "${github_url}"
@@ -2254,7 +2616,9 @@ cmd_add() {
   fi
 
   # Use subfolder from URL if present
-  if [[ -n "${url_subdir}" ]]; then
+  if [[ -n "${url_subdir}" ]] && [[ -n "${subdir}" ]] && [[ "${url_subdir}" != "${subdir}" ]]; then
+    die "Conflicting subfolder: URL contains '${url_subdir}' but you also specified '${subdir}'"
+  elif [[ -n "${url_subdir}" ]]; then
     subdir="${url_subdir}"
     log_msg "INFO" "Deploying from subfolder: ${subdir}"
   fi
@@ -2265,6 +2629,9 @@ cmd_add() {
   # Validate the clean URL and branch
   validate_github_url "${github_url}"
   validate_branch_name "${branch}"
+  if [[ "${subdir}" =~ \.\. ]] || [[ "${subdir}" == /* ]]; then
+    die "Invalid subfolder: ${subdir}"
+  fi
 
   # Auto-expand short GitHub URLs (e.g., "user/repo" -> git@github.com:user/repo.git or https://github.com/user/repo)
   if [[ ! "${github_url}" =~ ^(https?://|git@) ]] && [[ "${github_url}" =~ ^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$ ]]; then
@@ -2295,7 +2662,9 @@ cmd_add() {
 
   # Clean up any leftover directories from failed deployments
   # If app doesn't exist in metadata but directory exists, it's a leftover
-  if [[ -d "${app_data_dir}" ]] && ! app_exists "${app_name}"; then
+  # appmo isolate copies the old repo here first (APPMO_KEEP_REPO=1) so
+  # untracked app data survives the move
+  if [[ -d "${app_data_dir}" ]] && ! app_exists "${app_name}" && [[ "${APPMO_KEEP_REPO:-0}" != "1" ]]; then
     log_msg "WARN" "Cleaning up leftover directory from previous failed deployment"
     safe_rm_rf "${app_data_dir}" "cmd_add cleanup leftover"
   fi
@@ -2613,7 +2982,7 @@ cmd_add() {
     fi
 
     # Create Traefik config only for frontend (public port)
-    create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}"
+    create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}/.env"
 
     # Save metadata with services list and subdir
     services_str=$(echo "${services_to_deploy[@]}" | tr ' ' '\n' | sort | tr '\n' ' ' | xargs)
@@ -2658,13 +3027,13 @@ cmd_add() {
       done < <(parse_procfile "${procfile}")
 
       # Create Traefik config (only routes to web process on main port)
-      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}"
+      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}/.env"
     else
       # Single process app
       create_systemd_service "${app_name}" "${app_dir}" "${port}"
 
       # Create Traefik config with app_dir for settings
-      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}"
+      create_traefik_config "${app_name}" "${port}" "${base_domain}" "${app_dir}/.env"
 
       # Start service
       systemctl --user enable "appmotel-${app_name}"
@@ -2682,6 +3051,9 @@ cmd_add() {
   log_msg "INFO" "Status: appmo status ${app_name}"
   log_msg "INFO" "Logs: appmo logs ${app_name}"
   log_msg "INFO" ""
+
+  # In app role the Traefik route does not exist yet; appmotel adds it next
+  [[ "${APPMO_ROLE}" == "app" ]] && return 0
 
   # Check if BASE_DOMAIN is still set to default
   if [[ "${base_domain}" == "apps.example.edu" ]] || [[ "${base_domain}" == "apps.yourdomain.edu" ]]; then
@@ -2794,8 +3166,10 @@ cmd_remove() {
   done
   systemctl --user daemon-reload
 
-  # Remove Traefik config
-  rm -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
+  # Remove Traefik config (in app role appmotel does this)
+  if [[ "${APPMO_ROLE}" == "admin" ]]; then
+    rm -f "${TRAEFIK_DYNAMIC_DIR}/${app_name}.yaml"
+  fi
 
   # Remove app data
   safe_rm_rf "${APPS_DATA_DIR}/${app_name}" "cmd_remove app data"
@@ -2843,8 +3217,8 @@ cmd_list() {
     return
   fi
 
-  printf "%-22s %-10s %-35s %s\n" "APP NAME" "STATUS" "REPO" "URL"
-  printf "%-22s %-10s %-35s %s\n" "--------" "------" "----" "---"
+  printf "%-22s %-10s %-35s %-45s %s\n" "APP NAME" "STATUS" "REPO" "URL" "USER"
+  printf "%-22s %-10s %-35s %-45s %s\n" "--------" "------" "----" "---" "----"
 
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
@@ -2857,23 +3231,37 @@ cmd_list() {
     found_apps=$((found_apps + 1))
 
     local status="stopped"
-    if systemctl --user is-active --quiet "appmotel-${app}"; then
-      status="running"
+    local user
+    user=$(id -un)
+    local metadata_file="${APPS_CONFIG_DIR}/${app}/metadata.conf"
+    local metadata=""
+    if is_isolated "${app}"; then
+      user="${APP_USER_PREFIX}${app}"
+      local uid
+      uid=$(id -u "${user}" 2>/dev/null || echo 0)
+      if as_app_user "${app}" env "XDG_RUNTIME_DIR=/run/user/${uid}" systemctl --user is-active --quiet "appmotel-${app}" 2>/dev/null; then
+        status="running"
+      fi
+      metadata=$(as_app_user "${app}" cat "$(app_user_home "${app}")/.config/appmotel/${app}/metadata.conf" 2>/dev/null || true)
+    else
+      if systemctl --user is-active --quiet "appmotel-${app}"; then
+        status="running"
+      fi
+      [[ -f "${metadata_file}" ]] && metadata=$(<"${metadata_file}")
     fi
 
     local url="https://${app}.${base_domain}"
 
     # Get repo from metadata (extract user/repo from GitHub URL)
     local repo=""
-    local metadata_file="${APPS_CONFIG_DIR}/${app}/metadata.conf"
-    if [[ -f "${metadata_file}" ]]; then
+    if [[ -n "${metadata}" ]]; then
       local github_url
-      github_url=$(grep "^GITHUB_URL=" "${metadata_file}" | cut -d'"' -f2)
+      github_url=$(grep "^GITHUB_URL=" <<< "${metadata}" | cut -d'"' -f2 || true)
       # Extract user/repo from URL (handles https://github.com/user/repo or git@github.com:user/repo)
       repo=$(echo "${github_url}" | sed -E 's|^https?://github\.com/||; s|^git@github\.com:||; s|\.git$||')
     fi
 
-    printf "%-22s %-10s %-35s %s\n" "${app}" "${status}" "${repo}" "${url}"
+    printf "%-22s %-10s %-35s %-45s %s\n" "${app}" "${status}" "${repo}" "${url}" "${user}"
   done
 
   if [[ ${found_apps} -eq 0 ]]; then
@@ -2889,6 +3277,9 @@ cmd_status() {
   local base_domain="${BASE_DOMAIN:-apps.example.edu}"
 
   if [[ $# -eq 0 ]]; then
+    if [[ "${APPMO_ROLE}" == "app" ]]; then
+      die "Usage: appmo status <app-name> (Traefik status is only shown to appmotel)"
+    fi
     # Show Traefik service status
     sudo /bin/systemctl status traefik-appmotel || true
 
@@ -3122,7 +3513,7 @@ cmd_update() {
 
         # Update Traefik config with new port
         local base_domain="${BASE_DOMAIN:-apps.example.edu}"
-        create_traefik_config "${app_name}" "${assigned_port}" "${base_domain}" "${app_dir}"
+        create_traefik_config "${app_name}" "${assigned_port}" "${base_domain}" "${app_dir}/.env"
       fi
     fi
 
@@ -3475,6 +3866,11 @@ cmd_check() {
 
     app_count=$((app_count + 1))
 
+    if is_isolated "${app_name}"; then
+      run_appmo_as_app "${app_name}" check "${app_name}" | grep "^${app_name} " || true
+      continue
+    fi
+
     local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
 
     if [[ ! -d "${repo_dir}" ]]; then
@@ -3733,7 +4129,7 @@ cmd_autopull() {
   log_msg "INFO" "Starting autopull check"
 
   # Surface an expiring/expired TLS certificate (once a day) in the journal
-  check_tls_expiry || true
+  [[ "${APPMO_ROLE}" == "admin" ]] && { check_tls_expiry || true; }
 
   # Check if apps directory exists
   if [[ ! -d "${APPS_CONFIG_DIR}" ]]; then
@@ -3759,6 +4155,13 @@ cmd_autopull() {
     fi
 
     app_count=$((app_count + 1))
+
+    # An isolated app pulls as its own user; then refresh its route
+    if is_isolated "${app_name}"; then
+      run_appmo_as_app "${app_name}" autopull || log_msg "WARN" "${app_name}: autopull as ${APP_USER_PREFIX}${app_name} failed"
+      sync_isolated_traefik "${app_name}" || true
+      continue
+    fi
 
     # Check app for updates
     local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
@@ -4104,6 +4507,7 @@ cmd_self_update() {
   local install_url="${github_base}/install.sh?$(date +%s)"
 
   log_msg "INFO" "Updating appmotel components..."
+  secure_appmotel_files
 
   # Download latest install.sh to temp file
   local tmp_install
@@ -4149,6 +4553,27 @@ cmd_self_update() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: secure_appmotel_files
+# Description: The appmotel home is world-traversable (751) for the appmo
+# symlink, and app paths are well known, so app .env files, AWS keys and
+# certs must be closed by directory mode, not only by obscurity. Isolated app
+# users depend on this. Same code in install.sh and bin/appmo.
+# -----------------------------------------------------------------------------
+secure_appmotel_files() {
+  local dir
+  for dir in "${APPMOTEL_HOME}/.config" "${APPMOTEL_HOME}/.ssh" \
+             "${APPMOTEL_HOME}/.local/share/appmotel" \
+             "${APPMOTEL_HOME}/.local/share/appmotel-backups" \
+             "${APPMOTEL_HOME}/.local/share/traefik"; do
+    [[ -d "${dir}" ]] && chmod 700 "${dir}"
+  done
+  if [[ -d "${APPMOTEL_HOME}/.config/appmotel" ]]; then
+    find "${APPMOTEL_HOME}/.config/appmotel" -type f \( -name '.env' -o -name '.env.*' \) -exec chmod 600 {} +
+  fi
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Function: main
 # Description: Main CLI dispatcher
 # -----------------------------------------------------------------------------
@@ -4160,8 +4585,34 @@ main() {
   local command="$1"
   shift
 
+  # Commands for an isolated app run as its user; then appmotel rebuilds the
+  # Traefik route, as the app user may have changed PORT or rate limits
+  if [[ $# -ge 1 ]] && is_isolated "$1"; then
+    case "${command}" in
+      remove|rm)
+        remove_isolated "$1"
+        return
+        ;;
+      status|start|stop|restart|update|check|logs|env|exec|backup|restore|backups)
+        local rc=0
+        run_appmo_as_app "$1" "${command}" "$@" || rc=$?
+        case "${command}" in
+          start|restart|update|env|restore) sync_isolated_traefik "$1" || true ;;
+        esac
+        return "${rc}"
+        ;;
+    esac
+  fi
+
+  if [[ "${APPMO_ROLE}" == "app" ]]; then
+    case "${command}" in
+      self-update|isolate) die "'appmo ${command}' must be run by appmotel or an operator" ;;
+    esac
+  fi
+
   case "${command}" in
     add) cmd_add "$@" ;;
+    isolate) cmd_isolate "$@" ;;
     remove|rm) cmd_remove "$@" ;;
     list|ls) cmd_list "$@" ;;
     status) cmd_status "$@" ;;

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -o errexit -o nounset -o pipefail
+IFS=$'\n\t'
+# Create or delete the Linux user of an isolated appmotel app.
+# Called by: appmo add --isolated, appmo isolate, appmo remove (via sudo)
+# Installed to: /usr/local/bin/appmotel-user
+#
+# Usage: appmotel-user create <app>
+#        appmotel-user delete <app>
+#
+# The user is "a-<app>", member of group appmotel-apps, home mode 700, linger
+# on. appmotel may run any command as that user (one sudoers file per app).
+# The app user itself must have no sudo rights at all, so it cannot reach
+# appmotel or other app users. "create" checks this and undoes itself if not.
+
+readonly PREFIX="a-"
+readonly GROUP="appmotel-apps"
+readonly SUDOERS_DIR="/etc/sudoers.d"
+
+die() { echo "appmotel-user: $1" >&2; exit 1; }
+
+[[ "${EUID}" -eq 0 ]] || die "must run as root"
+[[ $# -eq 2 ]] || die "usage: appmotel-user create|delete <app>"
+
+action="$1"
+app="$2"
+# Same rule as appmo validate_app_name; 30 chars so "a-<app>" fits in 32
+[[ "${app}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || die "invalid app name: ${app}"
+[[ ${#app} -le 30 ]] || die "app name longer than 30 characters: ${app}"
+
+user="${PREFIX}${app}"
+sudoers_file="${SUDOERS_DIR}/appmotel-${user}"
+
+is_our_user() {
+  id -nG "${user}" 2>/dev/null | tr ' ' '\n' | grep -qx "${GROUP}"
+}
+
+case "${action}" in
+  create)
+    getent group "${GROUP}" >/dev/null || groupadd --system "${GROUP}"
+    if id "${user}" >/dev/null 2>&1; then
+      # Never take over an account that appmotel did not create
+      is_our_user || die "user ${user} exists and is not an appmotel app user"
+    else
+      useradd --create-home --user-group --shell /bin/bash --groups "${GROUP}" --comment "appmotel app ${app}" "${user}"
+    fi
+    home=$(getent passwd "${user}" | cut -d: -f6)
+    chmod 700 "${home}"
+
+    tmp=$(mktemp)
+    printf '%s\n' "appmotel ALL=(${user}) NOPASSWD: ALL" > "${tmp}"
+    if ! visudo -cqf "${tmp}"; then
+      rm -f "${tmp}"
+      die "generated sudoers file is invalid"
+    fi
+    install -m 0440 -o root -g root "${tmp}" "${sudoers_file}"
+    rm -f "${tmp}"
+
+    # The isolation holds only if the app user cannot sudo (for example an
+    # OPERATOR_USERS=ALL rule without the !%appmotel-apps exclusion)
+    if ! sudo -l -U "${user}" 2>/dev/null | grep -q "not allowed to run sudo"; then
+      userdel --remove "${user}" 2>/dev/null || true
+      rm -f "${sudoers_file}"
+      die "user ${user} would get sudo rights; re-run 'sudo bash install.sh' to update /etc/sudoers.d/appmotel, then retry"
+    fi
+
+    loginctl enable-linger "${user}"
+    echo "${user}"
+    ;;
+  delete)
+    if id "${user}" >/dev/null 2>&1; then
+      is_our_user || die "user ${user} is not an appmotel app user"
+      loginctl disable-linger "${user}" 2>/dev/null || true
+      loginctl terminate-user "${user}" 2>/dev/null || true
+      pkill -KILL -u "${user}" 2>/dev/null || true
+      # The user's systemd manager can take a moment to exit
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        pgrep -u "${user}" >/dev/null || break
+        sleep 0.5
+      done
+      userdel --remove "${user}" 2>/dev/null || userdel --remove --force "${user}"
+    fi
+    rm -f "${sudoers_file}"
+    ;;
+  *)
+    die "unknown action: ${action}"
+    ;;
+esac

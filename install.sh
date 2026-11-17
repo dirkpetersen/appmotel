@@ -382,7 +382,7 @@ resolve_operator_users() {
 
   if [[ -z "${raw}" ]]; then
     if [[ -f "${existing_file}" ]] && \
-       grep -qE '^ALL[[:space:]]+ALL=\(appmotel\)' "${existing_file}" 2>/dev/null; then
+       grep -qE '^ALL(,[[:space:]]*!%appmotel-apps)?[[:space:]]+ALL=\(appmotel\)' "${existing_file}" 2>/dev/null; then
       echo "ALL"
     else
       echo "apps"
@@ -427,7 +427,9 @@ resolve_operator_users() {
 render_sudoers() {
   local operators="$1"
 
-  sed "s|__OPERATOR_USERS__|${operators}|g" <<'EOF'
+  # Isolated app users (group appmotel-apps) must never reach appmotel, even
+  # when OPERATOR_USERS=ALL
+  sed "s|__OPERATOR_USERS__|${operators}, !%appmotel-apps|g" <<'EOF'
 # Appmotel Sudoers Configuration
 # See DEV-SETUP.md for complete execution model documentation
 
@@ -451,6 +453,9 @@ appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/j
 # Allow appmotel to fix TLS certificate permissions (needed by self-update)
 appmotel ALL=(ALL) NOPASSWD: /usr/local/bin/appmotel-fix-certs
 
+# Allow appmotel to create and delete isolated app users a-<app> (appmo add --isolated)
+appmotel ALL=(ALL) NOPASSWD: /usr/local/bin/appmotel-user
+
 # Note: App services use systemctl --user (no sudo needed)
 # Traefik config changes are auto-reloaded (no restart needed for config updates)
 EOF
@@ -465,6 +470,9 @@ configure_sudoers() {
   log_msg "INFO" "Configuring sudoers"
 
   local sudoers_file="/etc/sudoers.d/appmotel"
+
+  # Group of isolated app users; the sudoers rules below exclude it
+  getent group appmotel-apps >/dev/null || groupadd --system appmotel-apps
 
   local operators
   operators=$(resolve_operator_users "${sudoers_file}")
@@ -506,6 +514,20 @@ configure_sudoers() {
   if [[ -f "${fix_certs_dest}" ]]; then
     chmod 755 "${fix_certs_dest}"
   fi
+
+  # Install helper that creates/deletes isolated app users (via sudo by appmotel)
+  local app_user_src="${SCRIPT_DIR}/bin/appmotel-user"
+  local app_user_dest="/usr/local/bin/appmotel-user"
+  if [[ -f "${app_user_src}" ]]; then
+    install -m 0755 -o root -g root "${app_user_src}" "${app_user_dest}"
+  else
+    local app_user_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmotel-user?$(date +%s)"
+    if curl -fsSL "${app_user_url}" -o "${app_user_dest}"; then
+      chmod 755 "${app_user_dest}"
+    else
+      log_msg "WARN" "Could not download appmotel-user (appmo add --isolated will not work)"
+    fi
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -520,6 +542,27 @@ enable_linger() {
 # =============================================================================
 # USER-LEVEL INSTALLATION (can run as appmotel user)
 # =============================================================================
+
+# -----------------------------------------------------------------------------
+# Function: secure_appmotel_files
+# Description: The appmotel home is world-traversable (751) for the appmo
+# symlink, and app paths are well known, so app .env files, AWS keys and
+# certs must be closed by directory mode, not only by obscurity. Isolated app
+# users depend on this. Same code in install.sh and bin/appmo.
+# -----------------------------------------------------------------------------
+secure_appmotel_files() {
+  local dir
+  for dir in "${APPMOTEL_HOME}/.config" "${APPMOTEL_HOME}/.ssh" \
+             "${APPMOTEL_HOME}/.local/share/appmotel" \
+             "${APPMOTEL_HOME}/.local/share/appmotel-backups" \
+             "${APPMOTEL_HOME}/.local/share/traefik"; do
+    [[ -d "${dir}" ]] && chmod 700 "${dir}"
+  done
+  if [[ -d "${APPMOTEL_HOME}/.config/appmotel" ]]; then
+    find "${APPMOTEL_HOME}/.config/appmotel" -type f \( -name '.env' -o -name '.env.*' \) -exec chmod 600 {} +
+  fi
+  return 0
+}
 
 # -----------------------------------------------------------------------------
 # Function: create_directory_structure
@@ -550,6 +593,7 @@ create_directory_structure() {
     chmod 600 "${acme_file}"
   fi
 
+  secure_appmotel_files
   log_msg "INFO" "Directory structure created"
 }
 
