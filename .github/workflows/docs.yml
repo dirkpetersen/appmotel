@@ -1,0 +1,55 @@
+name: Publish docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "zensical.toml"
+      - "README.md"
+      - "examples/README.md"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-gh-pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # docs/index.md and docs/examples.md are copies; refresh them so the
+      # site never drifts from README.md and examples/README.md
+      - name: Refresh copied pages
+        run: |
+          cp README.md docs/index.md
+          sed -i -e 's#](docs/#](#g' \
+            -e 's#](LICENSE)#](https://github.com/${{ github.repository }}/blob/main/LICENSE)#' \
+            docs/index.md
+          cp examples/README.md docs/examples.md
+
+      - name: Build site
+        run: |
+          pip install zensical
+          zensical build --clean
+          touch site/.nojekyll
+
+      - name: Push to gh-pages
+        run: |
+          cd site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Publish docs from ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
