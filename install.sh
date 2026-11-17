@@ -382,7 +382,7 @@ resolve_operator_users() {
 
   if [[ -z "${raw}" ]]; then
     if [[ -f "${existing_file}" ]] && \
-       grep -qE '^ALL[[:space:]]+ALL=\(appmotel\)' "${existing_file}" 2>/dev/null; then
+       grep -qE '^ALL(,[[:space:]]*!%appmotel-apps)?[[:space:]]+ALL=\(appmotel\)' "${existing_file}" 2>/dev/null; then
       echo "ALL"
     else
       echo "apps"
@@ -427,7 +427,9 @@ resolve_operator_users() {
 render_sudoers() {
   local operators="$1"
 
-  sed "s|__OPERATOR_USERS__|${operators}|g" <<'EOF'
+  # Isolated app users (group appmotel-apps) must never reach appmotel, even
+  # when OPERATOR_USERS=ALL
+  sed "s|__OPERATOR_USERS__|${operators}, !%appmotel-apps|g" <<'EOF'
 # Appmotel Sudoers Configuration
 # See DEV-SETUP.md for complete execution model documentation
 
@@ -451,6 +453,9 @@ appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/j
 # Allow appmotel to fix TLS certificate permissions (needed by self-update)
 appmotel ALL=(ALL) NOPASSWD: /usr/local/bin/appmotel-fix-certs
 
+# Allow appmotel to create and delete isolated app users a-<app> (appmo add --isolated)
+appmotel ALL=(ALL) NOPASSWD: /usr/local/bin/appmotel-user
+
 # Note: App services use systemctl --user (no sudo needed)
 # Traefik config changes are auto-reloaded (no restart needed for config updates)
 EOF
@@ -465,6 +470,9 @@ configure_sudoers() {
   log_msg "INFO" "Configuring sudoers"
 
   local sudoers_file="/etc/sudoers.d/appmotel"
+
+  # Group of isolated app users; the sudoers rules below exclude it
+  getent group appmotel-apps >/dev/null || groupadd --system appmotel-apps
 
   local operators
   operators=$(resolve_operator_users "${sudoers_file}")
@@ -506,6 +514,20 @@ configure_sudoers() {
   if [[ -f "${fix_certs_dest}" ]]; then
     chmod 755 "${fix_certs_dest}"
   fi
+
+  # Install helper that creates/deletes isolated app users (via sudo by appmotel)
+  local app_user_src="${SCRIPT_DIR}/bin/appmotel-user"
+  local app_user_dest="/usr/local/bin/appmotel-user"
+  if [[ -f "${app_user_src}" ]]; then
+    install -m 0755 -o root -g root "${app_user_src}" "${app_user_dest}"
+  else
+    local app_user_url="https://raw.githubusercontent.com/dirkpetersen/appmotel/main/bin/appmotel-user?$(date +%s)"
+    if curl -fsSL "${app_user_url}" -o "${app_user_dest}"; then
+      chmod 755 "${app_user_dest}"
+    else
+      log_msg "WARN" "Could not download appmotel-user (appmo add --isolated will not work)"
+    fi
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -520,6 +542,28 @@ enable_linger() {
 # =============================================================================
 # USER-LEVEL INSTALLATION (can run as appmotel user)
 # =============================================================================
+
+# -----------------------------------------------------------------------------
+# Function: secure_appmotel_files
+# Description: The appmotel home is world-traversable (751) for the appmo
+# symlink, and app paths are well known, so app .env files, AWS keys,
+# certs and tool state must be closed by mode, not only by obscurity. Isolated app
+# users depend on this. Same code in install.sh and bin/appmo.
+# -----------------------------------------------------------------------------
+secure_appmotel_files() {
+  # Close everything in the home except ~/.local/bin (needed by the appmo
+  # symlink); tools such as Claude Code (auto-debug) create 644 files in 755
+  # dirs, so naming single dirs is not enough. Also run by autopull.
+  find "${APPMOTEL_HOME}" -mindepth 1 -maxdepth 1 ! -name .local -exec chmod go-rwx {} + 2>/dev/null || true
+  if [[ -d "${APPMOTEL_HOME}/.local" ]]; then
+    chmod 755 "${APPMOTEL_HOME}/.local"
+    find "${APPMOTEL_HOME}/.local" -mindepth 1 -maxdepth 1 ! -name bin -exec chmod go-rwx {} + 2>/dev/null || true
+  fi
+  if [[ -d "${APPMOTEL_HOME}/.config/appmotel" ]]; then
+    find "${APPMOTEL_HOME}/.config/appmotel" -type f \( -name '.env' -o -name '.env.*' \) -exec chmod 600 {} +
+  fi
+  return 0
+}
 
 # -----------------------------------------------------------------------------
 # Function: create_directory_structure
@@ -550,6 +594,7 @@ create_directory_structure() {
     chmod 600 "${acme_file}"
   fi
 
+  secure_appmotel_files
   log_msg "INFO" "Directory structure created"
 }
 
@@ -606,6 +651,37 @@ download_traefik() {
   rm -rf "${temp_dir}"
 
   log_msg "INFO" "Traefik binary installed to ${traefik_bin}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: download_uv
+# Description: Installs the uv binary. appmo uses it only for Python apps that
+#   ask for a Python version (PYTHON_VERSION, .python-version, requires-python);
+#   uv then installs that Python into the home of the user that runs the app.
+#   Not fatal: without uv, such apps fail to deploy with a clear error.
+# -----------------------------------------------------------------------------
+download_uv() {
+  local uv_bin="${APPMOTEL_HOME}/.local/bin/uv"
+
+  local target
+  case "$(uname -m)" in
+    x86_64) target="x86_64-unknown-linux-gnu" ;;
+    aarch64) target="aarch64-unknown-linux-gnu" ;;
+    *) log_msg "WARN" "No uv build for $(uname -m), skipping uv"; return 0 ;;
+  esac
+
+  local temp_dir
+  temp_dir=$(mktemp -d)
+  local url="https://github.com/astral-sh/uv/releases/latest/download/uv-${target}.tar.gz"
+  log_msg "INFO" "Downloading uv from: ${url}"
+  if curl -fsSL -o "${temp_dir}/uv.tar.gz" "${url}" && \
+     tar -xzf "${temp_dir}/uv.tar.gz" -C "${temp_dir}"; then
+    install -m 0755 "${temp_dir}/uv-${target}/uv" "${uv_bin}"
+    log_msg "INFO" "uv installed to ${uv_bin}"
+  else
+    log_msg "WARN" "Could not install uv; Python apps that need a specific Python version will not deploy"
+  fi
+  rm -rf "${temp_dir}"
 }
 
 # -----------------------------------------------------------------------------
@@ -1166,8 +1242,10 @@ install_as_root() {
 
   # Create system-wide symlink so any user can run 'appmo' or 'appmo skill'
   # directly without needing sudo -u appmotel.
+  # 'appmotel' is the same command under a longer name
   ln -sf "${APPMOTEL_HOME}/.local/bin/appmo" "/usr/local/bin/appmo"
-  log_msg "INFO" "System-wide symlink created: /usr/local/bin/appmo"
+  ln -sf "${APPMOTEL_HOME}/.local/bin/appmo" "/usr/local/bin/appmotel"
+  log_msg "INFO" "System-wide symlinks created: /usr/local/bin/appmo, /usr/local/bin/appmotel"
 
   # AWS hairpin NAT workaround: resolve *.BASE_DOMAIN locally via dnsmasq
   setup_local_dns
@@ -1222,6 +1300,7 @@ run_as_appmotel_user() {
   load_env
   create_directory_structure
   download_traefik
+  download_uv
   generate_traefik_config
   install_appmo_cli
   install_autopull

@@ -5,8 +5,8 @@
 ```bash
 sudo -u appmotel systemctl --user status appmotel-myapp
 sudo -u appmotel journalctl --user -u appmotel-myapp -n 100
-cat /home/appmotel/.config/appmotel/myapp/metadata.conf
-cat /home/appmotel/.config/appmotel/myapp/.env
+sudo -u appmotel cat /home/appmotel/.config/appmotel/myapp/metadata.conf
+sudo -u appmotel cat /home/appmotel/.config/appmotel/myapp/.env
 ss -tlnp | grep <port>
 appmo restart myapp
 ```
@@ -14,8 +14,8 @@ appmo restart myapp
 ## Traefik 404 Errors
 
 ```bash
-ls -la /home/appmotel/.config/traefik/dynamic/
-cat /home/appmotel/.config/traefik/dynamic/myapp.yaml
+sudo -u appmotel ls -la /home/appmotel/.config/traefik/dynamic/
+sudo -u appmotel cat /home/appmotel/.config/traefik/dynamic/myapp.yaml
 sudo -u appmotel sudo journalctl -u traefik-appmotel -f
 curl http://localhost:<port>
 sudo -u appmotel sudo systemctl restart traefik-appmotel
@@ -24,8 +24,8 @@ sudo -u appmotel sudo systemctl restart traefik-appmotel
 ## Permission Issues
 
 ```bash
-ls -la /home/appmotel/.config/appmotel/myapp/
-ls -la /home/appmotel/.local/share/appmotel/myapp/
+sudo -u appmotel ls -la /home/appmotel/.config/appmotel/myapp/
+sudo -u appmotel ls -la /home/appmotel/.local/share/appmotel/myapp/
 ps aux | grep appmotel
 sudo cat /etc/sudoers.d/appmotel
 sudo -u appmotel whoami                              # Should output: appmotel

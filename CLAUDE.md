@@ -76,7 +76,7 @@ To add a CLI command: write `cmd_<name>`, add it to the dispatch `case` in `bin/
 
 ### Testing
 
-There is no automated test suite. The only static check is `bash -n` on each changed script. Functional tests are manual, on a host with appmotel installed: deploy the example apps and follow `docs/TESTING.md` (clean install, idempotency re-run, per-runtime deploys, CLI commands).
+There is no full test suite. Run `bash -n` on each changed script, and `bash tests/test-appmo.sh` (no root needed) for the input checks that guard isolated apps (Traefik values, Python version requests, `appmotel-user` names). Functional tests are manual, on a host with appmotel installed: deploy the example apps and follow `docs/TESTING.md` (clean install, idempotency re-run, per-runtime deploys, CLI commands).
 
 ### Directory Structure (appmotel user)
 
@@ -171,6 +171,17 @@ See `.claude/skills/traefik/SKILL.md` for configuration details.
 sudo -u appmotel sudo systemctl restart traefik-appmotel  # Traefik (system service)
 sudo -u appmotel systemctl --user restart appmotel-myapp   # Apps (user service)
 ```
+
+### Isolated apps (`appmo add --isolated`, `appmo isolate`)
+
+User-facing docs: `docs/ISOLATED-APPS.md`.
+
+An isolated app runs as its own user `a-<app>` (group `appmotel-apps`, home mode 700). The root helper `bin/appmotel-user` (installed to `/usr/local/bin`) creates and deletes these users and writes `/etc/sudoers.d/appmotel-a-<app>` so that `appmotel` may run anything as that user. The app user has no sudo rights; the operator sudoers rules exclude `!%appmotel-apps`.
+
+- `bin/appmo` has two roles. Run as `appmotel` it is in **admin** role. Run as an `a-*` user it is in **app** role (`APPMO_ROLE=app`): all per-app paths (`APPS_CONFIG_DIR`, `APPS_DATA_DIR`, `SYSTEMD_USER_DIR`, `BACKUPS_DIR`) point into that user's home, it never elevates, and it does not write Traefik config.
+- In admin role, an isolated app has only `~/.config/appmotel/<app>/isolated.conf` (user, port). `main()` sends per-app commands to `run_appmo_as_app`, which runs `appmo` as the app user, then `sync_isolated_traefik` rebuilds the route. Values read from the app user's files are untrusted; `create_traefik_config` validates them.
+- `secure_appmotel_files` (same code in `install.sh` and `bin/appmo`, also run by autopull) removes group/other access from everything in `/home/appmotel` except `~/.local/bin`. `/home/appmotel` is world-traversable (751) for the `/usr/local/bin/appmo` symlink, so these modes are what keeps app users out.
+- Open item: an app user can still connect to other apps' localhost ports directly (no network isolation yet).
 
 ## AWS Deployment
 

@@ -152,7 +152,7 @@ appmo self-update
 
 **Non-interactive:** Commands run non-interactively via NOPASSWD. Never use `git rebase -i`, `git add -i`, etc.
 
-**Reading files:** Read directly — `cat /home/appmotel/.config/appmotel/myapp/.env` (no sudo needed).
+**Reading files:** appmotel config and data dirs are mode 700, so read them as appmotel: `sudo -u appmotel cat /home/appmotel/.config/appmotel/myapp/.env`. For an isolated app (user `a-myapp`) the files are in `/home/a-myapp`; use `appmo exec myapp cat .env` or `sudo -u appmotel sudo -u a-myapp cat ...`.
 
 **Writing files:** Use Claude Code's Write/Edit tools (handle permissions automatically), or:
 ```bash

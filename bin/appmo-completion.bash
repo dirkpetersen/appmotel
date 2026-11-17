@@ -10,7 +10,7 @@ _appmo_completions() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   # Main commands (rm/ls are hidden aliases for remove/list)
-  local commands="add remove rm list ls status start stop restart update check autopull logs env exec backup restore backups self-update skill help"
+  local commands="add isolate remove rm list ls status start stop restart update check autopull logs env exec backup restore backups self-update skill help"
 
   # Get list of apps for completion (exclude .env file, only list directories)
   local apps=""
@@ -29,7 +29,7 @@ _appmo_completions() {
         add)
           # No completion for add (needs app-name, github-url, branch)
           ;;
-        remove|rm|status|start|stop|restart|update|check|logs|env|exec|backup|restore|backups)
+        isolate|remove|rm|status|start|stop|restart|update|check|logs|env|exec|backup|restore|backups)
           # Complete with app names
           COMPREPLY=($(compgen -W "${apps}" -- "${cur}"))
           ;;
