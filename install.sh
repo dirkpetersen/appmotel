@@ -1192,28 +1192,33 @@ install_autopull() {
 }
 
 # -----------------------------------------------------------------------------
-# Function: enable_traefik_service
-# Description: Enables and starts Traefik service (requires root)
+# Function: start_traefik_service
+# Description: Start Traefik if it is not running. Runs at the end of the
+#   user-level install, because only that part installs the Traefik binary
+#   and config; the root part only enables the service. A running Traefik is
+#   left alone (self-update restarts it itself).
 # -----------------------------------------------------------------------------
-enable_traefik_service() {
-  log_msg "INFO" "Enabling Traefik service"
+start_traefik_service() {
+  if systemctl is-active --quiet traefik-appmotel; then
+    return 0
+  fi
 
-  systemctl enable traefik-appmotel
-  systemctl restart traefik-appmotel
+  log_msg "INFO" "Starting Traefik service"
+  if ! sudo -n systemctl start traefik-appmotel; then
+    log_msg "ERROR" "Could not start Traefik; run: sudo systemctl start traefik-appmotel"
+    return 1
+  fi
 
-  # Poll for service to become active instead of hard-coded sleep
-  local max_attempts=10
-  local attempt=1
-  while [[ ${attempt} -le ${max_attempts} ]]; do
+  local attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
     if systemctl is-active --quiet traefik-appmotel; then
       log_msg "INFO" "Traefik service is running"
       return 0
     fi
     sleep 1
-    attempt=$((attempt + 1))
   done
 
-  log_msg "ERROR" "Traefik service failed to start within ${max_attempts} seconds"
+  log_msg "ERROR" "Traefik service failed to start within 10 seconds"
   systemctl status traefik-appmotel --no-pager || true
   return 1
 }
@@ -1221,48 +1226,6 @@ enable_traefik_service() {
 # =============================================================================
 # MAIN INSTALLATION FLOW
 # =============================================================================
-
-# -----------------------------------------------------------------------------
-# Function: verify_system_setup
-# Description: Verifies system-level setup is complete
-# -----------------------------------------------------------------------------
-verify_system_setup() {
-  log_msg "INFO" "Verifying system-level setup"
-
-  local all_good=true
-
-  # Check if traefik-appmotel service exists
-  if ! systemctl list-unit-files | grep -q "traefik-appmotel.service"; then
-    log_msg "ERROR" "Traefik systemd service not found"
-    all_good=false
-  else
-    log_msg "INFO" "Traefik service exists"
-  fi
-
-  # Check if we can restart traefik service
-  if ! sudo systemctl restart traefik-appmotel 2>/dev/null; then
-    log_msg "ERROR" "Cannot restart Traefik service (check sudoers configuration)"
-    all_good=false
-  else
-    log_msg "INFO" "Can manage Traefik service"
-  fi
-
-  # Check if service is running
-  if ! systemctl is-active --quiet traefik-appmotel; then
-    log_msg "WARN" "Traefik service is not running"
-    all_good=false
-  else
-    log_msg "INFO" "Traefik service is running"
-  fi
-
-  if [[ "${all_good}" == "false" ]]; then
-    log_msg "ERROR" "System-level setup is incomplete"
-    log_msg "ERROR" "Please run this script as root: sudo bash install.sh"
-    exit 1
-  fi
-
-  log_msg "INFO" "System-level setup verified successfully"
-}
 
 # -----------------------------------------------------------------------------
 # Function: install_as_root
@@ -1356,6 +1319,7 @@ run_as_appmotel_user() {
   install_appmo_cli
   install_autopull
   setup_path
+  start_traefik_service
 
   log_msg "INFO" "User-level installation complete"
 }
