@@ -18,6 +18,21 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 - Simple, transparent operation
 - Easily auditable Bash scripts
 
+## ⚠️ Sysadmins: read this first, app isolation
+
+**By default, all apps run as the same Linux user, `appmotel`.** Every app can read the files of every other app, including their `.env` files with passwords and API keys. If one app has a security hole, an attacker can read the secrets of all apps on the server.
+
+Use **isolated apps** for any app that holds secrets, or that you do not fully trust:
+
+```bash
+appmo add --isolated myapp user/repo      # new app, runs as its own user a-myapp
+appmo isolate myapp                       # move an existing app to its own user
+```
+
+An isolated app runs as its own Linux user `a-<app>`. It cannot read appmotel's files, the files of other apps, or the TLS keys, and it has no `sudo` rights. `appmotel` and the operator still control it with the same `appmo` commands. Isolated apps can still connect to the local ports of other apps (no network isolation yet).
+
+Read **[Isolated Apps](docs/ISOLATED-APPS.md)** before you use it: it explains what is protected, what is not, and how to upgrade an existing server.
+
 ## Features
 
 ### 🚀 Core Features
@@ -35,16 +50,17 @@ Appmotel is a minimalist PaaS that makes deploying and managing web applications
 - **Resource Limits**: CPU and memory limits per app (default: 512M memory, 100% CPU)
 - **Automatic Backups**: Every update creates a timestamped backup
 - **SSL/TLS**: Automatic HTTPS with Let's Encrypt or existing wildcard certificates
+- **Isolated Apps**: `appmo add --isolated` runs an app as its own Linux user (see [Isolated Apps](docs/ISOLATED-APPS.md))
 
 ### 🎯 Developer Experience
-- **Simple CLI**: Intuitive `appmo` command with shell completion
+- **Simple CLI**: Intuitive `appmo` command (also installed as `appmotel`) with shell completion
 - **Environment Variables**: `.env` file support with proper quote handling
 - **Real-Time Logs**: `appmo logs <app>` shows live application logs
 - **Exec Commands**: Run commands in app environment with `appmo exec`
 - **Backup/Restore**: One-command backup and restore functionality
 
 ### 🔧 Supported Platforms
-- **Python**: Virtual environment setup with `requirements.txt` or `pyproject.toml`
+- **Python**: Virtual environment setup with `requirements.txt` or `pyproject.toml`; a Python version asked for with `PYTHON_VERSION` (app `.env`), `.python-version` or `requires-python` is installed with [uv](https://docs.astral.sh/uv/)
 - **Node.js**: Auto-builds Next.js static export and Vite+TypeScript apps
 - **Go**: Automatic build with `go.mod` (supports `cmd/` directory structure)
 - **Multi-Component**: Frontend/backend in `{component}/` or `src/{component}/` directories
@@ -106,6 +122,8 @@ sudo -u appmotel appmo logs myapp
 # Application Management
 appmo add <app-name> <url|user/repo> [branch] # Deploy a new app
 appmo add <app-name> <github-tree-url>        # Deploy from subfolder
+appmo add --isolated <app-name> <url>         # Deploy as its own Linux user a-<app-name>
+appmo isolate <app-name>                      # Move an existing app to its own user
 appmo remove <app-name>                       # Remove an app (alias: rm)
 appmo list                                    # List all apps (alias: ls)
 appmo status [app-name]                       # Show app status
@@ -768,7 +786,8 @@ myapp/
 
 ## Security Considerations
 
-- All apps run as the `appmotel` user (no per-app isolation)
+- By default all apps run as the `appmotel` user and can read each other's files. Use `appmo add --isolated` or `appmo isolate` to run an app as its own user (see [Isolated Apps](docs/ISOLATED-APPS.md))
+- appmotel's config and data folders are mode 700, `.env` files mode 600
 - Traefik runs with minimal privileges using `CAP_NET_BIND_SERVICE`
 - Apps are isolated by systemd resource limits
 - HTTPS enforced via automatic redirect
@@ -786,6 +805,7 @@ myapp/
 
 For detailed information about development, implementation, and testing:
 
+- **[Isolated Apps](docs/ISOLATED-APPS.md)** - Run apps as their own Linux user: security model, commands, upgrade steps
 - **[Development Setup](docs/DEV-SETUP.md)** - Complete development environment setup and execution model
 - **[Implementation Details](docs/IMPLEMENTATION.md)** - Architecture, design decisions, and technical details
 - **[Testing Guide](docs/TESTING.md)** - Comprehensive testing procedures and validation steps
