@@ -653,6 +653,37 @@ download_traefik() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: download_uv
+# Description: Installs the uv binary. appmo uses it only for Python apps that
+#   ask for a Python version (PYTHON_VERSION, .python-version, requires-python);
+#   uv then installs that Python into the home of the user that runs the app.
+#   Not fatal: without uv, such apps fail to deploy with a clear error.
+# -----------------------------------------------------------------------------
+download_uv() {
+  local uv_bin="${APPMOTEL_HOME}/.local/bin/uv"
+
+  local target
+  case "$(uname -m)" in
+    x86_64) target="x86_64-unknown-linux-gnu" ;;
+    aarch64) target="aarch64-unknown-linux-gnu" ;;
+    *) log_msg "WARN" "No uv build for $(uname -m), skipping uv"; return 0 ;;
+  esac
+
+  local temp_dir
+  temp_dir=$(mktemp -d)
+  local url="https://github.com/astral-sh/uv/releases/latest/download/uv-${target}.tar.gz"
+  log_msg "INFO" "Downloading uv from: ${url}"
+  if curl -fsSL -o "${temp_dir}/uv.tar.gz" "${url}" && \
+     tar -xzf "${temp_dir}/uv.tar.gz" -C "${temp_dir}"; then
+    install -m 0755 "${temp_dir}/uv-${target}/uv" "${uv_bin}"
+    log_msg "INFO" "uv installed to ${uv_bin}"
+  else
+    log_msg "WARN" "Could not install uv; Python apps that need a specific Python version will not deploy"
+  fi
+  rm -rf "${temp_dir}"
+}
+
+# -----------------------------------------------------------------------------
 # Function: find_existing_wildcard_cert
 # Description: Checks for existing wildcard certificate in /etc/letsencrypt
 # Returns: Domain name if found, empty string otherwise
@@ -1266,6 +1297,7 @@ run_as_appmotel_user() {
   load_env
   create_directory_structure
   download_traefik
+  download_uv
   generate_traefik_config
   install_appmo_cli
   install_autopull

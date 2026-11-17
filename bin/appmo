@@ -135,6 +135,7 @@ if [[ "${APPMO_ROLE}" == "app" ]]; then
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   if [[ -f "${APPS_CONFIG_DIR}/.env" ]]; then
     BASE_DOMAIN=$(grep -m1 '^BASE_DOMAIN=' "${APPS_CONFIG_DIR}/.env" | cut -d= -f2- | tr -d '"' || true)
+    PYTHON_VERSION=$(grep -m1 '^PYTHON_VERSION=' "${APPS_CONFIG_DIR}/.env" | cut -d= -f2- | tr -d '"' || true)
   fi
 fi
 
@@ -844,7 +845,7 @@ prepare_app_user() {
   mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
   printf 'ISOLATED_USER="%s"\nPORT=""\n' "${APP_USER_PREFIX}${app_name}" > "${APPS_CONFIG_DIR}/${app_name}/isolated.conf"
 
-  printf 'BASE_DOMAIN="%s"\n' "${BASE_DOMAIN:-}" \
+  printf 'BASE_DOMAIN="%s"\nPYTHON_VERSION="%s"\n' "${BASE_DOMAIN:-}" "${PYTHON_VERSION:-}" \
     | as_app_user "${app_name}" bash -c 'umask 077 && mkdir -p ~/.config/appmotel && cat > ~/.config/appmotel/.env'
 
   if repo_is_public "${url%%/tree/*}"; then
@@ -2173,6 +2174,66 @@ run_install_script() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: python_version_request
+# Description: Python version the app in dir $1 asks for, or empty for the
+#   system python3. Order: PYTHON_VERSION in the app .env, .python-version,
+#   requires-python in pyproject.toml, global PYTHON_VERSION.
+# -----------------------------------------------------------------------------
+python_version_request() {
+  local dir="$1"
+  local v=""
+  if [[ -f "${dir}/.env" ]]; then
+    v=$(grep -m1 '^PYTHON_VERSION=' "${dir}/.env" | cut -d= -f2- | tr -d "\"' " || true)
+  fi
+  if [[ -z "${v}" ]] && [[ -f "${dir}/.python-version" ]]; then
+    v=$(head -1 "${dir}/.python-version" | tr -d '[:space:]')
+  fi
+  if [[ -z "${v}" ]] && [[ -f "${dir}/pyproject.toml" ]]; then
+    v=$(grep -m1 -E '^[[:space:]]*requires-python[[:space:]]*=' "${dir}/pyproject.toml" | cut -d= -f2- | tr -d "\"' " || true)
+  fi
+  [[ -n "${v}" ]] || v="${PYTHON_VERSION:-}"
+  # The value comes from the repo; allow only version request characters
+  if [[ -n "${v}" ]] && [[ ! "${v}" =~ ^[0-9A-Za-z.,\<\>=~!*+-]+$ ]]; then
+    log_msg "WARN" "Ignoring invalid Python version request: ${v}"
+    v=""
+  fi
+  echo "${v}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: create_venv
+# Description: Create .venv in the current dir. With a version request, uv
+#   creates it and installs that Python into the user's home if needed.
+# shortcut: an existing .venv is kept when the request changes; delete .venv
+#   (or redeploy) to switch Python versions.
+# -----------------------------------------------------------------------------
+create_venv() {
+  local request
+  request=$(python_version_request "${PWD}")
+
+  if [[ -n "${request}" ]]; then
+    if ! command -v uv >/dev/null 2>&1; then
+      log_msg "ERROR" "App asks for Python ${request}, but uv is not installed (run appmo self-update)"
+      return 1
+    fi
+    log_msg "INFO" "Creating virtual environment with uv, Python ${request}"
+    if ! uv venv --quiet --seed --python "${request}" .venv; then
+      log_msg "ERROR" "uv could not create a Python ${request} virtual environment"
+      return 1
+    fi
+    return 0
+  fi
+
+  if ! python3 -m venv .venv 2>/dev/null; then
+    log_msg "ERROR" "Failed to create Python virtual environment"
+    log_msg "ERROR" "Install the required system packages and retry:"
+    log_msg "ERROR" "  sudo apt install python3-venv python3-pip   # Debian/Ubuntu"
+    log_msg "ERROR" "  sudo dnf install python3-pip                # RHEL/Amazon Linux"
+    return 1
+  fi
+}
+
+# -----------------------------------------------------------------------------
 # Function: setup_python_env
 # Description: Sets up Python virtual environment
 # -----------------------------------------------------------------------------
@@ -2188,13 +2249,7 @@ setup_python_env() {
   safe_cd "${repo_dir}" "setting up Python environment"
 
   if [[ ! -d ".venv" ]]; then
-    if ! python3 -m venv .venv 2>/dev/null; then
-      log_msg "ERROR" "Failed to create Python virtual environment"
-      log_msg "ERROR" "Install the required system packages and retry:"
-      log_msg "ERROR" "  sudo apt install python3-venv python3-pip   # Debian/Ubuntu"
-      log_msg "ERROR" "  sudo dnf install python3-pip                # RHEL/Amazon Linux"
-      return 1
-    fi
+    create_venv || return 1
   fi
 
   source .venv/bin/activate
@@ -2508,13 +2563,7 @@ setup_zensical_env() {
   safe_cd "${site_root}" "setting up Zensical site"
 
   if [[ ! -d ".venv" ]]; then
-    if ! python3 -m venv .venv 2>/dev/null; then
-      log_msg "ERROR" "Failed to create Python virtual environment"
-      log_msg "ERROR" "Install the required system packages and retry:"
-      log_msg "ERROR" "  sudo apt install python3-venv python3-pip   # Debian/Ubuntu"
-      log_msg "ERROR" "  sudo dnf install python3-pip                # RHEL/Amazon Linux"
-      return 1
-    fi
+    create_venv || return 1
   fi
 
   if ! .venv/bin/pip install --quiet --upgrade pip; then
