@@ -231,7 +231,7 @@ AWS_REGION="us-west-2"
 **How the TLS certificate is chosen:**
 
 1. A wildcard certificate for exactly `*.BASE_DOMAIN` in `/etc/letsencrypt/live/` (for example one that a sysadmin issued with certbot) is used for all apps. Certificates for other domains are never used.
-2. Otherwise, with `USE_LETSENCRYPT=yes`, Traefik gets certificates from Let's Encrypt. It gets one certificate for each app host name, with `LETSENCRYPT_MODE="http"` (port 80) or `"dns"` (Route53). See [TLS Certificates](docs/TLS-CERTIFICATES.md).
+2. Otherwise, with `USE_LETSENCRYPT=yes`, Traefik gets certificates from Let's Encrypt. With `LETSENCRYPT_MODE="http"` (port 80) it gets one certificate for each app, and with `"dns"` (Route53) one wildcard certificate for all apps. See [TLS Certificates](docs/TLS-CERTIFICATES.md).
 
 On a new install with no such wildcard certificate, `install.sh` sets `USE_LETSENCRYPT=yes` by itself when no other program uses port 80, and an active ufw or firewalld allows it. It cannot see outside firewalls (such as an AWS security group). If those block port 80, Traefik only logs failed Let's Encrypt attempts. `LETSENCRYPT_EMAIL` is optional; Let's Encrypt rejects `example.com` addresses.
 
@@ -347,7 +347,7 @@ myapp.apps.yourdomain.edu.  IN  CNAME  server.yourdomain.edu.
 
 #### Option 4: On-Premises with Route53 DNS-01
 
-> **Status:** `LETSENCRYPT_MODE="dns"` works with Route53, but Traefik gets one certificate per app, not a wildcard. Automatic setup for on-premises servers is planned.
+> **Status:** `LETSENCRYPT_MODE="dns"` works with Route53 and gets one wildcard certificate for all apps. Automatic setup for on-premises servers is planned.
 
 **When to use:**
 - Your server is on-premises or in a non-AWS datacenter
@@ -367,7 +367,7 @@ With Route53 DNS-01 support, Traefik can:
 3. Work entirely behind a firewall with no inbound port 80 required
 4. Only requires outbound HTTPS access to Let's Encrypt and Route53 APIs
 
-**Planned Setup:**
+**Setup:**
 
 ```bash
 # Install appmotel on your on-premises server
@@ -388,7 +388,7 @@ AWS_ACCESS_KEY_ID="AKIA..."
 AWS_SECRET_ACCESS_KEY="..."
 ```
 
-**Planned Advantages:**
+**Advantages:**
 - ✅ Works behind firewalls (no inbound port 80 needed)
 - ✅ Automatic wildcard certificates for all apps
 - ✅ Certificate renewal without service interruption
@@ -409,12 +409,7 @@ Outbound only (no inbound ports required):
 └── HTTPS (443) → sts.amazonaws.com (AWS STS for auth)
 ```
 
-**Current Workaround:**
-
-Until this feature is implemented, you can manually configure Traefik for DNS-01:
-1. Set up AWS credentials on your server
-2. Manually edit `~/.config/traefik/traefik.yaml` to use Route53 DNS-01 resolver
-3. See [Traefik DNS-01 documentation](https://doc.traefik.io/traefik/https/acme/#dnschallenge)
+Set the values above, then run `appmo self-update`. See [TLS Certificates](docs/TLS-CERTIFICATES.md) for the IAM permissions and how to switch a running server.
 
 ---
 

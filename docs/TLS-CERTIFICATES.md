@@ -35,7 +35,27 @@ You select how Let's Encrypt checks that you control the domain with `LETSENCRYP
 | `http` (default) | It fetches a token from `http://<app>.BASE_DOMAIN/.well-known/acme-challenge/` on port 80 | Port 80 open from the internet |
 | `dns` | Traefik writes a TXT record in Route53 | Route53 zone, AWS credentials or an EC2 instance role. No inbound port is needed |
 
-In both modes appmotel gets **one certificate for each app host name**, not a wildcard. Let's Encrypt issues wildcard certificates only with the DNS-01 challenge, and appmotel does not ask for one yet.
+What you get depends on the mode. Let's Encrypt issues wildcard certificates only with the DNS-01 challenge:
+
+- **`http`:** one certificate for each app host name. A new app has Traefik's default certificate for a few seconds, until its own certificate arrives.
+- **`dns`:** one wildcard certificate, `*.BASE_DOMAIN` plus `BASE_DOMAIN`, for all apps. Every app route asks for the same certificate, and Traefik gets it only once. A new app has a valid certificate at once.
+
+### DNS mode (Route53)
+
+Traefik needs Route53 access, from an EC2 instance role or from `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the `.env`. The role needs `route53:ListHostedZonesByName`, `route53:ChangeResourceRecordSets` and `route53:GetChange`.
+
+Route53 is a global service, but the AWS SDK in Traefik needs a region. If `AWS_REGION` is not set, `install.sh` adds `AWS_REGION="us-east-1"` to the `.env`.
+
+The first wildcard can take about 3 minutes, because Let's Encrypt waits until the TXT record is visible.
+
+**Switching an existing server from `http` to `dns`:** set `LETSENCRYPT_MODE="dns"` and run `appmo self-update`. This rebuilds all app routes, and new apps get the wildcard. Existing apps keep their own certificates, because Traefik prefers a certificate for the exact host name. To move all apps to the wildcard at once, move the old certificates away:
+
+```bash
+sudo -u appmotel mv /home/appmotel/.local/share/traefik/acme.json /home/appmotel/.local/share/traefik/acme.json.old
+sudo -u appmotel sudo systemctl restart traefik-appmotel
+```
+
+Until the wildcard arrives (about 3 minutes), clients see Traefik's default certificate. Do it at a quiet time.
 
 ### Turned on by default for new installs
 
@@ -58,7 +78,7 @@ appmo self-update
 
 ### Rate limits
 
-Let's Encrypt allows 50 new certificates for each registered domain per week. With one certificate per app this is enough for most servers. If you add and remove many apps, use a wildcard certificate (section 1).
+Let's Encrypt allows 50 new certificates for each registered domain per week. In `http` mode each app uses one, which is enough for most servers. If you add and remove many apps, use `dns` mode or a wildcard certificate from section 1.
 
 ## Check which certificate an app gets
 
@@ -69,8 +89,9 @@ echo | openssl s_client -connect myapp.apps.example.edu:443 -servername myapp.ap
 
 | Issuer | Meaning |
 |---|---|
-| `O=Let's Encrypt` and subject `CN=*.apps.example.edu` | Your wildcard certificate (section 1) |
-| `O=Let's Encrypt` and subject `CN=myapp.apps.example.edu` | Traefik's ACME certificate for this app (section 2) |
+| `O=Let's Encrypt` and subject `CN=*.apps.example.edu` | Your certbot wildcard certificate (section 1) |
+| `O=Let's Encrypt` and subject `CN=apps.example.edu` | Traefik's wildcard certificate in `dns` mode (section 2) |
+| `O=Let's Encrypt` and subject `CN=myapp.apps.example.edu` | Traefik's certificate for this app in `http` mode (section 2) |
 | `CN=TRAEFIK DEFAULT CERT` | No certificate yet. Wait a few seconds, then look at the Traefik log |
 
 ```bash

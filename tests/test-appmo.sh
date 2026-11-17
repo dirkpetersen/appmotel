@@ -62,6 +62,10 @@ create_traefik_config demo 12345 example.org "${work}/good.env"
 check "traefik: good avg kept"     "1" "$(grep -c 'average: 7$' "${yaml}")"
 check "traefik: good health path"  "1" "$(grep -c 'path: /health$' "${yaml}")"
 check "traefik: no temp file left" "0" "$(find "${TRAEFIK_DYNAMIC_DIR}" -name '*.tmp' | wc -l)"
+check "traefik: http mode, no wildcard" "0" "$(grep -c 'sans:' "${yaml}")"
+LETSENCRYPT_MODE=dns create_traefik_config demo 12345 example.org "${work}/good.env"
+check "traefik: dns mode wildcard"  "1" "$(grep -c '\- "\*\.example\.org"$' "${yaml}")"
+check "traefik: dns mode main"      "1" "$(grep -c 'main: "example\.org"$' "${yaml}")"
 check "traefik: bad port refused"  "1" "$(create_traefik_config demo '1;x' example.org "${work}/good.env" && echo 0 || echo 1)"
 
 # --- appmotel-user: names are checked before anything else (also as non-root)

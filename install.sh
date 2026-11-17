@@ -954,6 +954,16 @@ EOF
     # Use ACME for new certificates (ACME config stays in static config)
     if [[ "${LETSENCRYPT_MODE:-http}" == "dns" ]]; then
       # DNS-01 challenge with Route53
+      # Route53 is global, but the AWS SDK in Traefik refuses to work without
+      # a region ("Missing Region"); Traefik reads it from this .env
+      if [[ -z "${AWS_REGION:-}" ]]; then
+        local env_file="${APPMOTEL_HOME}/.config/appmotel/.env"
+        sed -i '/^AWS_REGION=/d' "${env_file}"
+        # No comment after the value: systemd's EnvironmentFile keeps it
+        printf '# Set by install.sh for Route53 (any region works)\nAWS_REGION="us-east-1"\n' >> "${env_file}"
+        AWS_REGION="us-east-1"
+        log_msg "INFO" "Set AWS_REGION=us-east-1 in ${env_file} for Route53"
+      fi
       acme_config="certificatesResolvers:
   myresolver:
     acme:
