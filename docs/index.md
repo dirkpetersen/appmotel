@@ -2,7 +2,7 @@
 
 > A no-frills PaaS (Platform as a Service) system using ubiquitous components like systemd, GitHub, and Traefik.
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/dirkpetersen/appmotel/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Bash](https://img.shields.io/badge/bash-4.4%2B-green.svg)](https://www.gnu.org/software/bash/)
 [![Traefik](https://img.shields.io/badge/traefik-3.0%2B-blue.svg)](https://traefik.io/)
 
@@ -228,6 +228,13 @@ AWS_SECRET_ACCESS_KEY="your-secret"
 AWS_REGION="us-west-2"
 ```
 
+**How the TLS certificate is chosen:**
+
+1. A wildcard certificate for exactly `*.BASE_DOMAIN` in `/etc/letsencrypt/live/` (for example one that a sysadmin issued with certbot) is used for all apps. Certificates for other domains are never used.
+2. Otherwise, with `USE_LETSENCRYPT=yes`, Traefik gets certificates from Let's Encrypt. It gets one certificate for each app host name, with `LETSENCRYPT_MODE="http"` (port 80) or `"dns"` (Route53). See [TLS Certificates](TLS-CERTIFICATES.md).
+
+On a new install with no such wildcard certificate, `install.sh` sets `USE_LETSENCRYPT=yes` by itself when no other program uses port 80, and an active ufw or firewalld allows it. It cannot see outside firewalls (such as an AWS security group). If those block port 80, Traefik only logs failed Let's Encrypt attempts. `LETSENCRYPT_EMAIL` is optional; Let's Encrypt rejects `example.com` addresses.
+
 ### Per-App Configuration
 
 Apps can override defaults in their `.env` file:
@@ -338,9 +345,9 @@ myapp.apps.yourdomain.edu.  IN  CNAME  server.yourdomain.edu.
 - ⚠️ More maintenance overhead
 - ⚠️ DNS propagation delay for new apps
 
-#### Option 4: On-Premises with Route53 DNS-01 (TBD)
+#### Option 4: On-Premises with Route53 DNS-01
 
-> **Status:** Planned feature - not yet implemented
+> **Status:** `LETSENCRYPT_MODE="dns"` works with Route53, but Traefik gets one certificate per app, not a wildcard. Automatic setup for on-premises servers is planned.
 
 **When to use:**
 - Your server is on-premises or in a non-AWS datacenter
