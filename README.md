@@ -96,20 +96,50 @@ This installs everything under `/home/appmotel` and starts the necessary service
 
 > **Alternative:** If you have the repository cloned locally, you can run `sudo bash install.sh` (Step 1) and `bash install.sh` (Step 2) from the repo directory instead.
 
+**Step 3: Allow people to use `appmo` (as root)**
+
+Step 1 creates the group `appmotel-users`. Its members may run the `appmo` command, and nothing else, as the `appmotel` user. They type `appmo ...` directly; `sudo -u appmotel` is not needed. Add each person once:
+
+```bash
+sudo usermod -aG appmotel-users joe
+```
+
+Joe must log in again, so that the new group is active. Then Joe can run:
+
+```bash
+appmo list
+appmo add --isolated myapp joe/myrepo main
+```
+
+To remove the access again: `sudo gpasswd -d joe appmotel-users`.
+
+> ⚠️ A member controls **all** apps, not only the apps that this person added. For example, `appmo exec` runs any command in any app, and `appmo env` shows its secrets. Add only people that you trust with every app on this server. Members get no root rights, and no shell as `appmotel`.
+
+**Who did what:** every `appmo` command of a member is written to syslog with the real user name. Two records are kept:
+
+```bash
+journalctl -t appmo                      # from appmo:  user=joe as=appmotel cmd=appmo add --isolated myapp ...
+journalctl _COMM=sudo | grep appmo       # from sudo:   joe : ... USER=appmotel ; COMMAND=/home/appmotel/.local/bin/appmo add ...
+```
+
+On systems that write syslog files, the same lines are in `/var/log/auth.log` (Debian, Ubuntu) or `/var/log/secure` (RHEL).
+
+`OPERATOR_USERS` in `/home/appmotel/.config/appmotel/.env` (default `apps`) is a separate, wider right: those users may run any command as `appmotel` and get a shell with `sudo su - appmotel`. Their `appmo` commands are logged too, but other commands that they run as `appmotel` are only in the sudo log. Use the group for normal users, and keep `OPERATOR_USERS` for the admins of appmotel itself.
+
 ### Deploy Your First App
 
 ```bash
 # Add and deploy an app
-sudo -u appmotel appmo add myapp https://github.com/username/myrepo main
+appmo add myapp https://github.com/username/myrepo main
 
 # Or deploy from a subfolder (GitHub tree URL)
-sudo -u appmotel appmo add myapp https://github.com/username/myrepo/tree/main/apps/myapp
+appmo add myapp https://github.com/username/myrepo/tree/main/apps/myapp
 
 # Check status
-sudo -u appmotel appmo status myapp
+appmo status myapp
 
 # View logs
-sudo -u appmotel appmo logs myapp
+appmo logs myapp
 
 # Your app is now live at: https://myapp.apps.yourdomain.edu
 ```
@@ -601,12 +631,12 @@ This project follows strict Bash 4.4+ standards:
 
 ### Check App Status
 ```bash
-sudo -u appmotel appmo status myapp
+appmo status myapp
 ```
 
 ### View Logs
 ```bash
-sudo -u appmotel appmo logs myapp 100
+appmo logs myapp 100
 ```
 
 ### Manual Service Control
@@ -621,10 +651,10 @@ journalctl --user -u appmotel-myapp -f
 ### Restore from Backup
 ```bash
 # List backups
-sudo -u appmotel appmo backups myapp
+appmo backups myapp
 
 # Restore specific backup
-sudo -u appmotel appmo restore myapp 2025-12-03-120000
+appmo restore myapp 2025-12-03-120000
 ```
 
 ### Check Traefik

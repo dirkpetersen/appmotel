@@ -76,9 +76,9 @@ appmo list
 appmo add myapp https://github.com/user/repo main
 appmo status myapp
 
-# Also still works (explicit form, e.g. from scripts)
-sudo -u appmotel appmo list
 ```
+
+Who may run `appmo`: members of the group `appmotel-users` (sudo rule for exactly `/home/appmotel/.local/bin/appmo`), the `OPERATOR_USERS` from appmotel's `.env`, and root. Every command is logged with the real user: `journalctl -t appmo`.
 
 A small set of user-specific commands are exempt from elevation and always run as the invoking user: `skill`, `help`, `-h`, `--help`.
 

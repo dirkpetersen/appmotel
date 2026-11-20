@@ -474,7 +474,8 @@ render_sudoers() {
 
   # Isolated app users (group appmotel-apps) must never reach appmotel, even
   # when OPERATOR_USERS=ALL
-  sed "s|__OPERATOR_USERS__|${operators}, !%appmotel-apps|g" <<'EOF'
+  sed -e "s|__OPERATOR_USERS__|${operators}, !%appmotel-apps|g" \
+      -e "s|__APPMO_BIN__|${APPMOTEL_HOME}/.local/bin/appmo|g" <<'EOF'
 # Appmotel Sudoers Configuration
 # See DEV-SETUP.md for complete execution model documentation
 
@@ -484,6 +485,13 @@ render_sudoers() {
 __OPERATOR_USERS__ ALL=(ALL) NOPASSWD: /bin/su - appmotel
 # Non-interactive command execution (required for automation tools like Claude Code)
 __OPERATOR_USERS__ ALL=(appmotel) NOPASSWD: ALL
+
+# appmo users: members of the group appmotel-users may run the appmo command
+# (and nothing else) as appmotel. appmo re-runs itself through this rule, so
+# they just type `appmo ...`. sudo and appmo both log the real user to syslog.
+# Note: `appmo exec` runs any command in an app, so this is still full
+# control over all apps; add only people you trust with every app.
+%appmotel-users, !%appmotel-apps ALL=(appmotel) NOPASSWD: __APPMO_BIN__
 
 # TIER 2 -> TIER 3: Allow appmotel to manage ONLY the Traefik system service
 # This is needed because Traefik runs as a system service to bind ports 80/443
@@ -518,6 +526,8 @@ configure_sudoers() {
 
   # Group of isolated app users; the sudoers rules below exclude it
   getent group appmotel-apps >/dev/null || groupadd --system appmotel-apps
+  # Group of people who may run appmo (sudoers rule in render_sudoers)
+  getent group appmotel-users >/dev/null || groupadd --system appmotel-users
 
   local operators
   operators=$(resolve_operator_users "${sudoers_file}")

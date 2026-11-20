@@ -116,9 +116,9 @@ sudo -u appmotel systemctl --user stop appmotel-myapp
 sudo -u appmotel systemctl --user status appmotel-myapp
 
 # Or use the appmo CLI (preferred)
-sudo -u appmotel appmo start myapp
-sudo -u appmotel appmo stop myapp
-sudo -u appmotel appmo status myapp
+appmo start myapp
+appmo stop myapp
+appmo status myapp
 ```
 
 ### Running General Commands as appmotel
@@ -126,8 +126,8 @@ sudo -u appmotel appmo status myapp
 ```bash
 sudo -u appmotel whoami                           # Returns: appmotel
 sudo -u appmotel bash /path/to/install.sh         # Run installation
-sudo -u appmotel appmo list                       # Use appmo CLI
-sudo -u appmotel appmo add myapp https://... main # Add an app
+appmo list                                        # appmo switches to appmotel by itself
+appmo add myapp https://... main                  # Add an app
 ```
 
 ## Required Permissions for appmotel User

@@ -92,6 +92,18 @@ check "cert: matching wildcard used"  "apps" "$(find_existing_wildcard_cert)"
 BASE_DOMAIN="x.apps.example.org"
 check "cert: no parent-domain match"  "" "$(find_existing_wildcard_cert)"
 
+# --- install.sh render_sudoers: the appmotel-users group may run only appmo
+# shellcheck source=/dev/null
+source <(sed -n "/^render_sudoers() {/,/^}/p" "${repo_dir}/install.sh")
+APPMOTEL_HOME="/home/appmotel"
+rules=$(render_sudoers "apps")
+check "sudoers: group runs only appmo" "1" "$(grep -cxF '%appmotel-users, !%appmotel-apps ALL=(appmotel) NOPASSWD: /home/appmotel/.local/bin/appmo' <<< "${rules}")"
+check "sudoers: app users excluded"    "0" "$(grep -E '^[^#].*NOPASSWD' <<< "${rules}" | grep -E '^(apps|%appmotel-users)' | grep -vc '!%appmotel-apps')"
+if command -v visudo >/dev/null 2>&1 && visudo -cf /dev/null >/dev/null 2>&1; then
+  printf '%s\n' "${rules}" > "${work}/sudoers"
+  check "sudoers: visudo accepts it" "0" "$(visudo -cf "${work}/sudoers" >/dev/null 2>&1; echo $?)"
+fi
+
 echo
 if [[ ${failures} -gt 0 ]]; then
   echo "${failures} check(s) failed"

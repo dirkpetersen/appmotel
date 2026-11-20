@@ -68,7 +68,7 @@ readonly BACKUPS_DIR="${APPMO_HOME}/.local/share/appmotel-backups"
 # -----------------------------------------------------------------------------
 case ":${PATH}:" in
   *":${APPMOTEL_HOME}/.local/bin:"*) ;;
-  *) PATH="${APPMOTEL_HOME}/.local/bin:${APPMOTEL_HOME}/bin:${PATH}" ;;
+  *) PATH="${APPMOTEL_HOME}/.local/bin:${APPMOTEL_HOME}/bin:${PATH}:/usr/local/go/bin" ;;
 esac
 export PATH
 
@@ -96,15 +96,26 @@ if [[ "$(id -un)" != "${APPMOTEL_USER}" ]] && [[ "${APPMO_ROLE}" != "app" ]]; th
   fi
 
   if [[ "${appmo_elevate}" -eq 1 ]]; then
-    appmo_self=$(command -v appmo 2>/dev/null || echo "$0")
+    # Use the installed path: the sudoers rule for appmotel-users allows
+    # exactly this file, so no `env PATH=...` in front (PATH is set again
+    # above after the switch)
+    appmo_self="${APPMOTEL_HOME}/.local/bin/appmo"
+    [[ -x "${appmo_self}" ]] || appmo_self=$(command -v appmo 2>/dev/null || echo "$0")
     # The re-exec'd process inherits our cwd, not appmotel's. If the caller's
     # cwd (e.g. their home dir) isn't reachable by appmotel, commands like
     # `find` fail to restore it on exit and print a spurious warning. Move
     # somewhere appmotel is guaranteed to reach before switching users.
     cd "${APPMOTEL_HOME}" 2>/dev/null || cd /tmp
-    exec sudo -u "${APPMOTEL_USER}" env "PATH=${PATH}" "${appmo_self}" "$@"
+    exec sudo -u "${APPMOTEL_USER}" "${appmo_self}" "$@"
   fi
   unset appmo_elevate appmo_self
+fi
+
+# Audit: log who ran which appmo command (journalctl -t appmo). appmotel's
+# own calls (timer, isolated-app relay) have no human caller and are skipped.
+if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "${APPMOTEL_USER}" ]] && [[ $# -gt 0 ]]; then
+  # IFS is $'\n\t' in this script; join the words with spaces for one log line
+  logger -t appmo -p auth.notice -- "user=${SUDO_USER} as=$(id -un) cmd=appmo $(IFS=' '; echo "$*")" 2>/dev/null || true
 fi
 
 # Load appmotel configuration

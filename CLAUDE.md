@@ -8,7 +8,7 @@ Appmotel is a no-frills PaaS system using Systemd, Traefik (reverse proxy), and 
 
 ## Running from Operator Account (apps user)
 
-`appmo` auto-elevates: any user (including `apps` or root) can run `appmo <command>` directly and it transparently re-execs as `sudo -u appmotel` internally, since app files and `systemctl --user` services are owned by `appmotel`. The `sudo -u appmotel` prefix is no longer required but still works if used explicitly:
+`appmo` auto-elevates: it re-execs itself as `sudo -u appmotel /home/appmotel/.local/bin/appmo` (exact path, no `env` in front), since app files and `systemctl --user` services are owned by `appmotel`. Allowed are members of the group `appmotel-users` (a sudoers rule for exactly that file, created by `sudo bash install.sh`), the `OPERATOR_USERS`, and root. After the switch, `appmo` logs `user=<SUDO_USER> cmd=...` to syslog (`journalctl -t appmo`). Do not prefix `sudo -u appmotel`:
 
 ```bash
 appmo add myapp user/repo main
@@ -37,8 +37,8 @@ sudo -u appmotel sudo systemctl status traefik-appmotel
 sudo -u appmotel systemctl --user status appmotel-autopull.timer
 
 # App testing
-sudo -u appmotel appmo add flask-test https://github.com/dirkpetersen/appmotel main examples/flask-hello
-sudo -u appmotel appmo status flask-test
+appmo add flask-test https://github.com/dirkpetersen/appmotel main examples/flask-hello
+appmo status flask-test
 ```
 
 ## Code Language and Style

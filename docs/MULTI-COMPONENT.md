@@ -121,10 +121,10 @@ Deploy multi-component apps the same way as single-component apps:
 
 ```bash
 # Deploy from GitHub
-sudo -u appmotel appmo add myshop https://github.com/username/myshop main
+appmo add myshop https://github.com/username/myshop main
 
 # Deploy from subfolder
-sudo -u appmotel appmo add myshop https://github.com/username/monorepo/tree/main/apps/myshop
+appmo add myshop https://github.com/username/monorepo/tree/main/apps/myshop
 ```
 
 Appmotel will:
@@ -139,23 +139,23 @@ All `appmo` commands affect **ALL** services in the app namespace:
 
 ```bash
 # Check status (shows all components)
-sudo -u appmotel appmo status myshop
+appmo status myshop
 # Output:
 # myshop (frontend): active
 # myshop-backend: active
 
 # Restart all components
-sudo -u appmotel appmo restart myshop
+appmo restart myshop
 # Restarts both frontend and backend
 
 # View logs (shows all components)
-sudo -u appmotel appmo logs myshop
+appmo logs myshop
 
 # Stop all components
-sudo -u appmotel appmo stop myshop
+appmo stop myshop
 
 # Remove all components
-sudo -u appmotel appmo remove myshop
+appmo remove myshop
 ```
 
 ## Unified App View
@@ -163,7 +163,7 @@ sudo -u appmotel appmo remove myshop
 Multi-component apps appear as a **single app** in listings:
 
 ```bash
-$ sudo -u appmotel appmo list
+$ appmo list
 myshop      https://myshop.apps.yourdomain.edu    active
 otherapp    https://otherapp.apps.yourdomain.edu  active
 ```
@@ -171,7 +171,7 @@ otherapp    https://otherapp.apps.yourdomain.edu  active
 Use `appmo status` to see individual component details:
 
 ```bash
-$ sudo -u appmotel appmo status myshop
+$ appmo status myshop
 App: myshop
 URL: https://myshop.apps.yourdomain.edu
 Branch: main
@@ -277,7 +277,7 @@ ecommerce/
 
 **Deployment:**
 ```bash
-sudo -u appmotel appmo add ecommerce https://github.com/username/ecommerce main
+appmo add ecommerce https://github.com/username/ecommerce main
 ```
 
 **Result:**
@@ -287,7 +287,7 @@ sudo -u appmotel appmo add ecommerce https://github.com/username/ecommerce main
 
 **Status:**
 ```bash
-$ sudo -u appmotel appmo status ecommerce
+$ appmo status ecommerce
 App: ecommerce
 URL: https://ecommerce.apps.yourdomain.edu
 Services:
@@ -303,7 +303,7 @@ Services:
 Check individual service logs:
 ```bash
 # View all component logs
-sudo -u appmotel appmo logs myshop
+appmo logs myshop
 
 # View specific component logs
 sudo -u appmotel journalctl --user -u appmotel-myshop-backend -n 100

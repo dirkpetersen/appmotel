@@ -25,7 +25,7 @@ This separation provides several benefits:
 When you deploy an app with `appmo add`:
 
 ```bash
-sudo -u appmotel appmo add myapp https://github.com/username/repo main
+appmo add myapp https://github.com/username/repo main
 ```
 
 Appmotel:
@@ -40,14 +40,14 @@ Appmotel:
 Edit the `.env` file using the `appmo env` command:
 
 ```bash
-sudo -u appmotel appmo env myapp
+appmo env myapp
 ```
 
 This opens the **physical file** in `~/.config/appmotel/myapp/.env` using your default editor (`$EDITOR` or `nano`).
 
 **After editing, restart the app:**
 ```bash
-sudo -u appmotel appmo restart myapp
+appmo restart myapp
 ```
 
 ### 3. Backup on Removal
@@ -55,7 +55,7 @@ sudo -u appmotel appmo restart myapp
 When you remove an app with `appmo remove`:
 
 ```bash
-sudo -u appmotel appmo remove myapp
+appmo remove myapp
 ```
 
 Appmotel:
@@ -69,7 +69,7 @@ Appmotel:
 When re-adding a previously removed app:
 
 ```bash
-sudo -u appmotel appmo add myapp https://github.com/username/repo main
+appmo add myapp https://github.com/username/repo main
 ```
 
 Appmotel detects the existing `.env.backup` and prompts:
@@ -247,7 +247,7 @@ echo "NEW_VAR=value" >> ~/.config/appmotel/myapp/.env
 
 **Note**: Always restart the app after modifying `.env`:
 ```bash
-sudo -u appmotel appmo restart myapp
+appmo restart myapp
 ```
 
 ## Environment Variable Precedence
@@ -294,7 +294,7 @@ Generate secure random secrets:
 openssl rand -hex 32
 
 # Add to .env
-sudo -u appmotel appmo env myapp
+appmo env myapp
 # Then add: SECRET_KEY=<generated-value>
 ```
 
@@ -314,7 +314,7 @@ chmod 600 ~/.config/appmotel/myapp/.env
 Create manual backups of important configuration:
 ```bash
 # Backup all app configs
-sudo -u appmotel appmo backup myapp
+appmo backup myapp
 
 # Or manually
 sudo -u appmotel tar -czf ~/myapp-env-backup.tar.gz ~/.config/appmotel/myapp/.env
@@ -350,11 +350,11 @@ sudo -u appmotel ss -tlnp | grep 8000
 **Assign new port:**
 ```bash
 # Edit .env
-sudo -u appmotel appmo env myapp
+appmo env myapp
 # Change PORT=8000 to PORT=8001
 
 # Restart
-sudo -u appmotel appmo restart myapp
+appmo restart myapp
 ```
 
 ### Lost Configuration After Update
@@ -369,7 +369,7 @@ ls -la ~/.config/appmotel/myapp/.env.backup
 **Restore backup:**
 ```bash
 sudo -u appmotel cp ~/.config/appmotel/myapp/.env.backup ~/.config/appmotel/myapp/.env
-sudo -u appmotel appmo restart myapp
+appmo restart myapp
 ```
 
 ### Permission Denied Editing .env
@@ -377,7 +377,7 @@ sudo -u appmotel appmo restart myapp
 **From apps user (operator):**
 ```bash
 # Use appmo env command (handles permissions)
-sudo -u appmotel appmo env myapp
+appmo env myapp
 ```
 
 **From appmotel user:**
@@ -420,7 +420,7 @@ Deploy with appropriate template:
 ```bash
 # Copy production config before deploying
 sudo -u appmotel cp .env.prod ~/.config/appmotel/myapp/.env
-sudo -u appmotel appmo add myapp https://github.com/username/repo main
+appmo add myapp https://github.com/username/repo main
 ```
 
 ### Dynamic Configuration with Scripts
