@@ -98,7 +98,9 @@ This installs everything under `/home/appmotel` and starts the necessary service
 
 **Step 3: Allow people to use `appmo` (as root)**
 
-Step 1 creates two groups: `appmotel-users` for people who deploy apps, and `appmotel-ops` for the admins of appmotel itself (see [Users and operators](#users-and-operators-who-is-who) below). Members of `appmotel-users` may run the `appmo` command, and nothing else, as the `appmotel` user. They type `appmo ...` directly; `sudo -u appmotel` is not needed. Add each person once:
+> 👉 Which group is right for a person? See the table **[Users and operators: who is who](#users-and-operators-who-is-who)**.
+
+Step 1 creates two groups: `appmotel-users` for people who deploy apps, and `appmotel-ops` for the admins of appmotel itself. Members of `appmotel-users` may run the `appmo` command, and nothing else, as the `appmotel` user. They type `appmo ...` directly; `sudo -u appmotel` is not needed. Add each person once:
 
 ```bash
 sudo usermod -aG appmotel-users joe
