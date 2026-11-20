@@ -1,42 +1,38 @@
-# Appmotel Security Best Practices
+# Appmotel Security
 
-## Never Run as Root
+## Use the smallest right
 
-The `apps` user should never run commands directly as root — the three-tier model provides all necessary access:
+- Use `appmo`. It works with the group `appmotel-users`, needs no root, and is logged with your name (`journalctl -t appmo`).
+- Do not use root for apps. `sudo systemctl restart appmotel-myapp` does not work: apps are systemd **user** services. Use `appmo restart myapp`.
+- Commands as `appmotel` other than `appmo` need operator rights, and only the sudo log records them.
 
-```bash
-# ❌ WRONG
-sudo systemctl restart appmotel-myapp
+## Isolate apps that hold secrets
 
-# ✅ CORRECT
-sudo -u appmotel systemctl --user restart appmotel-myapp
-sudo -u appmotel sudo systemctl restart traefik-appmotel
-```
+By default all apps run as `appmotel` and can read each other's `.env`. Deploy with `--isolated`, or move an app with `appmo isolate myapp`. Then the app runs as `a-myapp`, and it cannot read:
 
-## Protect Secrets
+- other apps' files
+- appmotel's `.env`
+- `acme.json` (the TLS keys)
 
-Never commit secrets or credentials to the repository. Keep them in `.env` files:
+Open item: an app user can still connect to other apps' localhost ports. See `docs/ISOLATED-APPS.md`.
 
-```bash
-# Secrets live here (not in repo)
-sudo -u appmotel cat /home/appmotel/.config/appmotel/myapp/.env
-# DATABASE_PASSWORD=secret123
-# API_KEY=abc123xyz
-```
+## Protect secrets
 
-## Validate Scripts Before Execution
+- Secrets belong in the app's `.env`, never in the repo.
+- Read only what you need: `appmo exec myapp grep '^DATABASE_URL=' .env`. Do not paste `.env` content into issues, PRs, commits or chat.
+- For a private repo of an isolated app, appmotel copies its own GitHub SSH key into the app user's home. That key can read every repo that appmotel can read. Prefer a deploy key for each repo.
+
+## Check scripts before you run them
 
 ```bash
-bash -n script.sh                             # Syntax check
-cat script.sh                                 # Review content
-sudo -u appmotel bash -x script.sh            # Debug execution (-x traces each command)
+bash -n script.sh        # syntax check
+cat script.sh            # read it
 ```
 
-## Use Backups Before Major Changes
+## Back up before big changes
 
 ```bash
 appmo backup myapp
 appmo update myapp
-# If something breaks:
-appmo restore myapp
+appmo restore myapp      # if something breaks
 ```

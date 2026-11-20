@@ -71,7 +71,7 @@ An existing `.env` is never changed. To turn Let's Encrypt on later:
 ```bash
 sudo -u appmotel nano /home/appmotel/.config/appmotel/.env
 #   USE_LETSENCRYPT=yes
-#   LETSENCRYPT_EMAIL=""         # optional; example.com addresses are rejected
+#   LETSENCRYPT_EMAIL=""         # optional (example.com addresses are rejected)
 #   LETSENCRYPT_MODE="http"      # or "dns"
 appmo self-update
 ```

@@ -1,59 +1,65 @@
 # Appmotel Troubleshooting
 
-## App Not Starting
+## `appmo` says "I'm sorry ... I can't do that" or asks for a password
+
+You are not allowed to switch to `appmotel`. Check with `id`. If `appmotel-users` is missing, ask an admin to run `sudo usermod -aG appmotel-users <you>`, then log in again. If the group is listed but `appmo` still fails, the server needs `sudo bash install.sh` (the group rule came with a newer appmotel).
+
+## App does not start
 
 ```bash
-sudo -u appmotel systemctl --user status appmotel-myapp
-sudo -u appmotel journalctl --user -u appmotel-myapp -n 100
-sudo -u appmotel cat /home/appmotel/.config/appmotel/myapp/metadata.conf
-sudo -u appmotel cat /home/appmotel/.config/appmotel/myapp/.env
-ss -tlnp | grep <port>
+appmo status myapp                       # systemd state and last log lines
+appmo logs myapp 100
+appmo exec myapp grep '^PORT=' .env      # the port the app must listen on
+appmo exec myapp ls -la                  # repo, .venv, node_modules?
 appmo restart myapp
 ```
 
-## Traefik 404 Errors
+- The app must listen on `$PORT` from its `.env`, on `127.0.0.1` or `0.0.0.0`.
+- A Python app that wants another Python version: set `PYTHON_VERSION=3.12` in the `.env` (uv installs it), then run `appmo exec myapp rm -rf .venv` and `appmo update myapp`.
+
+## 404 or 502 from Traefik
+
+- **404 right after a deploy:** Traefik loads a new route about 1 second after it is written. Try again.
+- **404 later:** the route is missing. `appmo list` must show the app. Run `appmo restart myapp`, which rebuilds the route of an isolated app.
+- **502 Bad Gateway:** Traefik has the route, but the app does not answer on its port. See "App does not start".
+
+## Wrong or missing TLS certificate
 
 ```bash
-sudo -u appmotel ls -la /home/appmotel/.config/traefik/dynamic/
-sudo -u appmotel cat /home/appmotel/.config/traefik/dynamic/myapp.yaml
-sudo -u appmotel sudo journalctl -u traefik-appmotel -f
-curl http://localhost:<port>
-sudo -u appmotel sudo systemctl restart traefik-appmotel
+echo | openssl s_client -connect myapp.<BASE_DOMAIN>:443 -servername myapp.<BASE_DOMAIN> 2>/dev/null \
+  | openssl x509 -noout -issuer -subject -dates
 ```
 
-## Permission Issues
+| Subject | Meaning |
+|---|---|
+| `CN=TRAEFIK DEFAULT CERT` | no certificate yet. With Let's Encrypt in `http` mode, wait a few seconds. If it stays, port 80 is probably closed from the internet |
+| `CN=myapp.<BASE_DOMAIN>` | Traefik's Let's Encrypt certificate for this app (`http` mode) |
+| `CN=<BASE_DOMAIN>` with `*.<BASE_DOMAIN>` | Traefik's wildcard certificate (`dns` mode, Route53) |
+| `CN=*.<BASE_DOMAIN>` | a certbot wildcard certificate from the sysadmin |
+
+- `appmo status` shows the expiry of a certbot certificate in its last line. Traefik renews its own certificates.
+- The Traefik log (operators only): `sudo -u appmotel sudo journalctl -u traefik-appmotel -n 50 | grep -i acme`
+- A certbot certificate is only used if it is for exactly `*.<BASE_DOMAIN>`. Renewal is certbot's job (`sudo certbot certificates`, `sudo journalctl -u certbot`); a hook restarts Traefik after each renewal.
+- Full details: `docs/TLS-CERTIFICATES.md`.
+
+## Git problems
 
 ```bash
-sudo -u appmotel ls -la /home/appmotel/.config/appmotel/myapp/
-sudo -u appmotel ls -la /home/appmotel/.local/share/appmotel/myapp/
-ps aux | grep appmotel
-sudo cat /etc/sudoers.d/appmotel
-sudo -u appmotel whoami                              # Should output: appmotel
-sudo -u appmotel sudo systemctl status traefik-appmotel  # Should work
+appmo exec myapp git remote -v
+appmo exec myapp git status
+appmo check myapp
 ```
 
-## Git Issues
+Force the repo to the remote state (discards local changes in the repo, not the `.env`):
 
 ```bash
-sudo -u appmotel bash -c 'cd /home/appmotel/.local/share/appmotel/myapp/repo && git remote -v'
-sudo -u appmotel bash -c 'cd /home/appmotel/.local/share/appmotel/myapp/repo && git branch'
-sudo -u appmotel bash -c 'cd /home/appmotel/.local/share/appmotel/myapp/repo && git status'
-
-# Force pull (discard local changes)
-sudo -u appmotel bash -c 'cd /home/appmotel/.local/share/appmotel/myapp/repo && git fetch && git reset --hard origin/main'
+appmo backup myapp
+appmo exec myapp sh -c 'git fetch && git reset --hard origin/main'
+appmo update myapp
 ```
 
-## Expired or Expiring TLS Certificate
-
-Browsers reject every app when the wildcard cert expires. `appmo status` (no app name) prints `TLS certificate: expires in N day(s)` / `EXPIRED ...`, and autopull logs a WARN 14 days out (`TLS_EXPIRY_WARN_DAYS`) and an ERROR once expired, at most once a day.
+## Who changed something?
 
 ```bash
-appmo status                                  # last line: TLS certificate expiry
-sudo certbot certificates                     # which cert, which domains, expiry
-sudo journalctl -u certbot --since "-3 days"  # why renewal is failing
-sudo certbot renew --force-renewal --cert-name <name>
+journalctl -t appmo --since "-1 day"      # user=<name> cmd=appmo ...
 ```
-
-- Traefik reads the cert files once and never reloads them. `install.sh` (root pass) installs `/etc/letsencrypt/renewal-hooks/deploy/appmotel-restart-traefik`, which fixes permissions and restarts Traefik after each successful renewal. If that file is missing, restart by hand after renewing: `sudo -u appmotel sudo systemctl restart traefik-appmotel`.
-- `The account is currently suspended` (InCommon/Sectigo ACME) cannot be fixed locally: the certificate admin must reactivate the ACME account or issue new EAB credentials.
-- Certs from a `*.dev-ai...` + `*.arcs...` lineage may share one ACME account with a second cert, so a suspended account eventually breaks both.

@@ -1,197 +1,102 @@
 ---
 name: appmotel
-description: Managing Appmotel PaaS from a developer account (apps user) for 24x7 automation with Claude Code
+description: Managing Appmotel PaaS (apps on systemd + Traefik, deployed from GitHub) from a user account with the appmo command, for 24x7 automation with Claude Code
 ---
 
-# Appmotel Management for Developer Accounts
+# Appmotel Management with appmo
 
-## Overview
+## Rule 1: use `appmo`, without a prefix
 
-A developer account (e.g., `apps` user) manages Appmotel via a three-tier permission model that allows secure, delegated control without root access.
+Run `appmo <command>` directly. It switches to the `appmotel` user by itself (`sudo -u appmotel /home/appmotel/.local/bin/appmo ...`). Do not type `sudo -u appmotel appmo`.
 
-## Permission Model
+`appmo` works the same way for normal apps and for isolated apps (apps that run as their own Linux user `a-<app>`). Raw commands such as `sudo -u appmotel systemctl --user ...` or `sudo -u appmotel cat ...` do not: they need operator rights and miss isolated apps, whose files are in `/home/a-<app>`. Use them only if no `appmo` command does the job.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  TIER 1: Operator User (apps)                                   │
-│  - Runs Claude Code or other automation tools                   │
-│  - Has full control over the appmotel user                      │
-└───────────────────────┬─────────────────────────────────────────┘
-                        │ sudo -u appmotel
-                        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  TIER 2: Service User (appmotel)                                │
-│  - Owns all Appmotel files and services                         │
-│  - Manages user-level systemd services (no root needed)         │
-│  - Has LIMITED sudo access for Traefik system service only      │
-└───────────────────────┬─────────────────────────────────────────┘
-                        │ sudo systemctl (limited)
-                        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  TIER 3: Root (strictly limited)                                │
-│  - Only for Traefik service management                          │
-└─────────────────────────────────────────────────────────────────┘
-```
+## Who may do what
 
-## Sudoers Configuration
+| Who | How set up | May do |
+|---|---|---|
+| Members of the group `appmotel-users` | `sudo usermod -aG appmotel-users <user>`, then log in again | run `appmo` (and nothing else) as `appmotel` |
+| `OPERATOR_USERS` (default `apps`) | in `/home/appmotel/.config/appmotel/.env`, then `sudo bash install.sh` | run any command as `appmotel`, `sudo su - appmotel` |
+| root | | everything |
+| isolated app users `a-<app>` | created by `appmo add --isolated` | nothing outside their own home |
 
-**Location:** `/etc/sudoers.d/appmotel`
+- A member of `appmotel-users` controls **all** apps, because `appmo exec` runs any command in any app. Only trusted people belong in the group.
+- To find your own rights, run `id` (is `appmotel-users` listed?) and `sudo -n -l`.
+- Every `appmo` command is logged with the real user name: `journalctl -t appmo` shows `user=joe as=appmotel cmd=appmo add ...`. sudo logs the same call too.
+- `appmo skill`, `appmo help`, `-h` and `--help` run as yourself and do not switch users.
 
-```bash
-# TIER 1 -> TIER 2: Allow operator user to control appmotel user
-apps ALL=(ALL) NOPASSWD: /bin/su - appmotel
-apps ALL=(appmotel) NOPASSWD: ALL
-
-# TIER 2 -> TIER 3: Allow appmotel to manage ONLY the Traefik system service
-appmotel ALL=(ALL) NOPASSWD: /bin/systemctl restart traefik-appmotel, /bin/systemctl stop traefik-appmotel, /bin/systemctl start traefik-appmotel, /bin/systemctl status traefik-appmotel
-appmotel ALL=(ALL) NOPASSWD: /usr/bin/journalctl -u traefik-appmotel, /usr/bin/journalctl -u traefik-appmotel *
-```
-
-### Multi-User Access Option
-
-Who may control the appmotel user is a setting, not something to hand-edit in sudoers. Set `OPERATOR_USERS` in `/home/appmotel/.config/appmotel/.env` and re-run `sudo bash install.sh`:
-
-```bash
-OPERATOR_USERS="apps"            # default: just the apps user
-OPERATOR_USERS="apps alice"      # named users (comma or space separated)
-OPERATOR_USERS="apps %devs"      # a group
-OPERATOR_USERS="ALL"             # every user on the machine
-```
-
-`ALL` writes `ALL ALL=(ALL) NOPASSWD: /bin/su - appmotel` and `ALL ALL=(appmotel) NOPASSWD: ALL`, so any local user can run `appmo <command>` without a password. That includes reading app secrets and deploying code, so use it only where every login is trusted. New users then run `appmo skill` to install this skill into their own `~/.claude`.
-
-- If `OPERATOR_USERS` is unset, an existing `ALL` grant is kept (reinstalling never silently revokes access); otherwise the default is `apps`.
-- Entries are validated (names, `%groups`, `ALL` only) and the generated file is checked with `visudo -c` before it replaces `/etc/sudoers.d/appmotel`; on failure the old file stays.
-- The system-wide symlink `/usr/local/bin/appmo → /home/appmotel/.local/bin/appmo` makes `appmo` available to all users directly.
-
-## Command Execution Patterns
-
-### `appmo` Auto-Elevates — No Prefix Needed
-
-`appmo` detects when it's not running as the `appmotel` user and transparently re-execs itself via `sudo -u appmotel`, since app files and services are owned by `appmotel`. Run it directly as any user:
-
-```bash
-# ✅ CORRECT — appmo elevates internally
-appmo list
-appmo add myapp https://github.com/user/repo main
-appmo status myapp
-
-```
-
-Who may run `appmo`: members of the group `appmotel-users` (sudo rule for exactly `/home/appmotel/.local/bin/appmo`), the `OPERATOR_USERS` from appmotel's `.env`, and root. Every command is logged with the real user: `journalctl -t appmo`.
-
-A small set of user-specific commands are exempt from elevation and always run as the invoking user: `skill`, `help`, `-h`, `--help`.
-
-### Traefik Management (Two-Level Sudo)
-
-```bash
-# ✅ CORRECT: Traefik system service
-sudo -u appmotel sudo systemctl status traefik-appmotel
-sudo -u appmotel sudo systemctl restart traefik-appmotel
-sudo -u appmotel sudo journalctl -u traefik-appmotel -f
-
-# ❌ WRONG
-sudo systemctl status traefik-appmotel       # Wrong user context
-sudo -u appmotel systemctl status traefik-appmotel  # Permission denied
-```
-
-### App Service Management (Single Sudo)
-
-```bash
-# ✅ CORRECT: App user services
-sudo -u appmotel systemctl --user status appmotel-myapp
-sudo -u appmotel systemctl --user restart appmotel-myapp
-sudo -u appmotel journalctl --user -u appmotel-myapp -f
-```
-
-## Installing the Claude Code Skill
-
-Any user on the machine can install the Appmotel Claude Code skill with a single command:
-
-```bash
-appmo skill
-```
-
-This downloads the latest skill files from GitHub and installs them to `~/.claude/skills/appmotel/`. Restart Claude Code afterward to load the skill.
-
-When invoked as the appmotel user via sudo, the skill is installed into the real caller's home:
-
-```bash
-sudo -u appmotel appmo skill   # installs to $SUDO_USER's ~/.claude/skills/appmotel/
-```
-
-## Common Operations
+## Common operations
 
 ```bash
 # Deploy
+appmo add --isolated myapp username/repo main          # recommended: own user a-myapp
 appmo add myapp https://github.com/username/repo main
-appmo add myapp https://github.com/username/repo/tree/main/apps/myapp
-appmo add myapp username/repo main  # short form
-appmo add mywiki username/my-zensical-wiki  # Zensical site: zensical.toml + docs/ is enough
+appmo add myapp https://github.com/username/repo/tree/main/apps/myapp   # subfolder
+appmo add mywiki username/my-zensical-wiki             # Zensical site
+appmo isolate myapp                                    # move an existing app to its own user
 
-# Manage
-appmo list
-appmo status [myapp]
+# Look
+appmo list                    # USER column: appmotel or a-<app>
+appmo status                  # all apps, Traefik, TLS certificate expiry
+appmo status myapp
 appmo logs myapp 100
-appmo restart myapp
-appmo update myapp
-appmo env myapp
-appmo exec myapp python manage.py migrate
-appmo remove myapp
+appmo check [myapp]           # are there new commits? (no deploy)
 
-# Backup/restore
+# Change
+appmo restart myapp           # also after every .env change
+appmo update myapp            # pull and deploy now (autopull does this every 2 min)
+appmo stop|start myapp
+appmo remove myapp            # keeps the .env as .env.backup for a later add
+
+# Inside the app (works for isolated apps too; runs in the repo folder, venv active)
+appmo exec myapp cat .env
+appmo exec myapp git status
+appmo exec myapp python manage.py migrate
+
+# Backups
 appmo backup myapp
 appmo backups myapp
-appmo restore myapp [2025-01-10-120000]
+appmo restore myapp [2026-01-10-120000]
 
-# Self-update CLI, Traefik binary, and configs
+# Appmotel itself (CLI, Traefik binary, configs, all routes)
 appmo self-update
 ```
 
-## Key Patterns for Claude Code
+## Key patterns for Claude Code
 
-**Non-interactive:** Commands run non-interactively via NOPASSWD. Never use `git rebase -i`, `git add -i`, etc.
+- **Non-interactive:** all of this runs without a password. `appmo env myapp` opens an editor, so do not use it in automation. Change the `.env` like this:
+  ```bash
+  appmo exec myapp sh -c 'echo "NEW_VAR=value" >> .env'
+  appmo restart myapp
+  ```
+  To change an existing value, use `appmo exec myapp sed -i 's/^OLD=.*/OLD=new/' .env`.
+- **Secrets:** `.env` files hold secrets. Do not print them into logs, issues or commits. Read only the line you need: `appmo exec myapp grep '^PORT=' .env`.
+- **Multi-component apps:** `appmo restart myapp` restarts all components.
+- **Never** `git rebase -i`, `git add -i` or other interactive commands.
 
-**Reading files:** appmotel config and data dirs are mode 700, so read them as appmotel: `sudo -u appmotel cat /home/appmotel/.config/appmotel/myapp/.env`. For an isolated app (user `a-myapp`) the files are in `/home/a-myapp`; use `appmo exec myapp cat .env` or `sudo -u appmotel sudo -u a-myapp cat ...`.
-
-**Writing files:** Use Claude Code's Write/Edit tools (handle permissions automatically), or:
-```bash
-sudo -u appmotel bash -c 'echo "NEW_VAR=value" >> /home/appmotel/.config/appmotel/myapp/.env'
-```
-
-**Multi-component apps:** `appmo restart myapp` restarts all components (frontend + backend).
-
-**After .env changes:** Always restart the app: `appmo restart myapp`
-
-## Quick Reference
+## Install this skill for yourself
 
 ```bash
-# Install skill for the current user (run as yourself, no sudo needed)
-appmo skill
-
-# System status
-appmo status
-sudo -u appmotel sudo systemctl status traefik-appmotel
-sudo -u appmotel systemctl --user status appmotel-autopull.timer
-
-# File locations
-/home/appmotel/.config/appmotel/.env          # Main config
-/home/appmotel/.config/appmotel/<app>/.env    # App environment
-/home/appmotel/.config/traefik/traefik.yaml   # Traefik static config
-/home/appmotel/.config/traefik/dynamic/       # Per-app routing YAML
-/home/appmotel/.local/share/appmotel/<app>/repo/  # App git repos
+appmo skill        # downloads the latest skill to ~/.claude/skills/appmotel/
 ```
 
-## Summary
+Restart Claude Code afterwards.
 
-1. ✅ Run `appmo <command>` directly — it auto-elevates to `sudo -u appmotel` internally (except `skill`/`help`)
-2. ✅ Double sudo for Traefik: `sudo -u appmotel sudo systemctl`
-3. ✅ Single sudo for apps: `sudo -u appmotel systemctl --user`
-4. ✅ Read files directly, use Write/Edit tools for modifications
-5. ✅ Avoid interactive commands
+## Where things are
+
+```
+/home/appmotel/.config/appmotel/.env              # global config (BASE_DOMAIN, TLS, OPERATOR_USERS)
+/home/appmotel/.config/appmotel/<app>/            # normal app: .env, metadata.conf
+/home/appmotel/.config/appmotel/<app>/isolated.conf   # isolated app: only user and port
+/home/a-<app>/.config/appmotel/<app>/             # isolated app: .env, metadata.conf
+/home/appmotel/.config/traefik/dynamic/<app>.yaml # route of every app (written by appmotel only)
+/home/appmotel/.local/share/traefik/acme.json     # Let's Encrypt certificates (Traefik)
+```
+
+These folders are mode 700. Reach them with `appmo exec` or `appmo status`, not with `cat`.
 
 **See also:**
-- [troubleshooting.md](troubleshooting.md) — App not starting, Traefik 404s, permission/git issues
-- [security.md](security.md) — Security best practices, backup workflows
-- [automation.md](automation.md) — 24x7 autopull, monitoring, log rotation
-- [testing.md](testing.md) — Clean install testing, syntax validation, test apps
+- [troubleshooting.md](troubleshooting.md): app does not start, 404, certificates, git problems
+- [automation.md](automation.md): autopull, monitoring, recovery
+- [security.md](security.md): rights, secrets, isolation, backups
+- [testing.md](testing.md): clean install, syntax checks, test apps
