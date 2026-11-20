@@ -155,6 +155,17 @@ Being a user does not make anyone an operator. A person in both groups is an ope
 
 More operators without the group: `OPERATOR_USERS` in `/home/appmotel/.config/appmotel/.env` (default `apps`) takes user names and other `%groups`, then run `sudo bash install.sh`. `appmotel-ops` is always added. `OPERATOR_USERS="ALL"` makes every account on the machine an operator; use it only where every login is trusted.
 
+#### Upgrading an existing server
+
+`appmo self-update` updates the `appmo` command, Traefik and the configs, but it cannot change the sudo rules or create groups, because it does not run as root. After an upgrade that changes rights (for example the groups `appmotel-users` and `appmotel-ops`), run both parts, from a checkout of the new version:
+
+```bash
+sudo bash install.sh        # part 1 (root): groups and sudo rules
+appmo self-update           # part 2: the new appmo, Traefik and configs
+```
+
+The order does not matter. Until part 2 is done, operators keep working, but members of `appmotel-users` are refused: they need the new `appmo`.
+
 ### Deploy Your First App
 
 ```bash

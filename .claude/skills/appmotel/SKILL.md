@@ -63,6 +63,8 @@ appmo restore myapp [2026-01-10-120000]
 appmo self-update
 ```
 
+`appmo self-update` does not change sudo rules or groups. If an upgrade adds rights, a sysadmin must also run `sudo bash install.sh` from a checkout of the new version.
+
 ## Key patterns for Claude Code
 
 - **Non-interactive:** all of this runs without a password. `appmo env myapp` opens an editor, so do not use it in automation. Change the `.env` like this:

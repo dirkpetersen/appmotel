@@ -77,7 +77,7 @@ operator (apps) --sudo--> appmotel --sudo -u a-<app>--> a-<app>
 
 Do this once, from a checkout of the new appmotel version.
 
-1. Run the system part as root. It creates the group `appmotel-apps`, installs `/usr/local/bin/appmotel-user` and writes the new sudoers rules:
+1. Run the system part as root. It creates the groups `appmotel-apps`, `appmotel-users` and `appmotel-ops`, installs `/usr/local/bin/appmotel-user` and writes the new sudoers rules:
    ```bash
    sudo bash install.sh
    ```
