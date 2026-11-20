@@ -419,6 +419,7 @@ EOF
 #     unset -> keep ALL if the existing sudoers file already grants it to
 #              everyone (reinstalling must never silently revoke access),
 #              otherwise "apps"
+#   The group %appmotel-ops is always added (unless the result is ALL).
 # Parameters: $1 = existing sudoers file (consulted only when unset)
 # -----------------------------------------------------------------------------
 resolve_operator_users() {
@@ -430,7 +431,7 @@ resolve_operator_users() {
        grep -qE '^ALL(,[[:space:]]*!%appmotel-apps)?[[:space:]]+ALL=\(appmotel\)' "${existing_file}" 2>/dev/null; then
       echo "ALL"
     else
-      echo "apps"
+      echo "apps,%appmotel-ops"
     fi
     return 0
   fi
@@ -458,6 +459,8 @@ resolve_operator_users() {
   if [[ ${#users[@]} -eq 0 ]]; then
     die "OPERATOR_USERS is set but contains no users"
   fi
+  # The group appmotel-ops (made by configure_sudoers) is always an operator
+  [[ " ${users[*]} " == *" %appmotel-ops "* ]] || users+=("%appmotel-ops")
 
   local joined
   joined=$(IFS=,; echo "${users[*]}")
@@ -526,8 +529,10 @@ configure_sudoers() {
 
   # Group of isolated app users; the sudoers rules below exclude it
   getent group appmotel-apps >/dev/null || groupadd --system appmotel-apps
-  # Group of people who may run appmo (sudoers rule in render_sudoers)
+  # Groups of people: appmotel-users may run appmo, appmotel-ops may run
+  # anything as appmotel (sudoers rules in render_sudoers)
   getent group appmotel-users >/dev/null || groupadd --system appmotel-users
+  getent group appmotel-ops >/dev/null || groupadd --system appmotel-ops
 
   local operators
   operators=$(resolve_operator_users "${sudoers_file}")

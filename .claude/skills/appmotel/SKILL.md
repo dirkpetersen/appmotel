@@ -16,12 +16,13 @@ Run `appmo <command>` directly. It switches to the `appmotel` user by itself (`s
 | Who | How set up | May do |
 |---|---|---|
 | Members of the group `appmotel-users` | `sudo usermod -aG appmotel-users <user>`, then log in again | run `appmo` (and nothing else) as `appmotel` |
-| `OPERATOR_USERS` (default `apps`) | in `/home/appmotel/.config/appmotel/.env`, then `sudo bash install.sh` | run any command as `appmotel`, `sudo su - appmotel` |
+| Operators: members of the group `appmotel-ops`, and the user `apps` | `sudo usermod -aG appmotel-ops <user>`, then log in again (more names: `OPERATOR_USERS` in `/home/appmotel/.config/appmotel/.env`, then `sudo bash install.sh`) | run any command as `appmotel`, `sudo su - appmotel` |
 | root | | everything |
 | isolated app users `a-<app>` | created by `appmo add --isolated` | nothing outside their own home |
 
 - A member of `appmotel-users` controls **all** apps, because `appmo exec` runs any command in any app. Only trusted people belong in the group.
-- To find your own rights, run `id` (is `appmotel-users` listed?) and `sudo -n -l`.
+- In plain words: users deploy and manage apps through `appmo`; operators are the admins of appmotel itself and have the master key. A person in both groups is an operator.
+- To find your own rights, run `id` (is `appmotel-users` or `appmotel-ops` listed?) and `sudo -n -l`.
 - Every `appmo` command is logged with the real user name: `journalctl -t appmo` shows `user=joe as=appmotel cmd=appmo add ...`. sudo logs the same call too.
 - `appmo skill`, `appmo help`, `-h` and `--help` run as yourself and do not switch users.
 

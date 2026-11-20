@@ -9,7 +9,7 @@ appmo check            # which apps have new commits (no deploy)
 appmo autopull         # run one cycle now
 ```
 
-Operators only (`OPERATOR_USERS`):
+Operators only (group `appmotel-ops` or `OPERATOR_USERS`):
 
 ```bash
 sudo -u appmotel systemctl --user status appmotel-autopull.timer

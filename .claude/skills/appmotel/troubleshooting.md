@@ -38,7 +38,7 @@ echo | openssl s_client -connect myapp.<BASE_DOMAIN>:443 -servername myapp.<BASE
 | `CN=*.<BASE_DOMAIN>` | a certbot wildcard certificate from the sysadmin |
 
 - `appmo status` shows the expiry of a certbot certificate in its last line. Traefik renews its own certificates.
-- The Traefik log (operators only): `sudo -u appmotel sudo journalctl -u traefik-appmotel -n 50 | grep -i acme`
+- The Traefik log (operators only, group `appmotel-ops`): `sudo -u appmotel sudo journalctl -u traefik-appmotel -n 50 | grep -i acme`
 - A certbot certificate is only used if it is for exactly `*.<BASE_DOMAIN>`. Renewal is certbot's job (`sudo certbot certificates`, `sudo journalctl -u certbot`); a hook restarts Traefik after each renewal.
 - Full details: `docs/TLS-CERTIFICATES.md`.
 

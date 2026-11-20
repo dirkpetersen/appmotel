@@ -59,7 +59,7 @@ operator (apps) --sudo--> appmotel --sudo -u a-<app>--> a-<app>
   - never takes over a user that it did not create
   - refuses to finish if the new user would get any sudo rights
 - **The control path:** `/etc/sudoers.d/appmotel-a-<app>` contains one line, `appmotel ALL=(a-<app>) NOPASSWD: ALL`. So `appmotel` can run anything as that user, and nothing in the other direction.
-- **The operator rules:** the rules in `/etc/sudoers.d/appmotel` for `OPERATOR_USERS` and for the group `appmotel-users` exclude the app users, `<operators>, !%appmotel-apps`. This also holds when `OPERATOR_USERS=ALL`, or when an app user is put into `appmotel-users` by mistake.
+- **The operator rules:** the rules in `/etc/sudoers.d/appmotel` for the operators (`appmotel-ops`, `OPERATOR_USERS`) and for the group `appmotel-users` exclude the app users, `<operators>, !%appmotel-apps`. This also holds when `OPERATOR_USERS=ALL`, or when an app user is put into `appmotel-users` by mistake.
 - **Two roles of `appmo`:** run as `appmotel`, it is in admin role. Run as an `a-*` user, it is in app role: it manages only the apps in that user's home, never switches to `appmotel`, and never writes Traefik config.
 - **What appmotel keeps:** for an isolated app, appmotel keeps only `~/.config/appmotel/<app>/isolated.conf` (the user and the port). For each command, `appmo` runs itself as the app user. After the command, appmotel rebuilds the Traefik route from the app's port and `.env`. It checks every value first, so a changed `.env` cannot add routes for other host names.
 

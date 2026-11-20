@@ -92,6 +92,16 @@ check "cert: matching wildcard used"  "apps" "$(find_existing_wildcard_cert)"
 BASE_DOMAIN="x.apps.example.org"
 check "cert: no parent-domain match"  "" "$(find_existing_wildcard_cert)"
 
+# --- install.sh resolve_operator_users: appmotel-ops is always an operator
+# shellcheck source=/dev/null
+source <(sed -n "/^resolve_operator_users() {/,/^}/p" "${repo_dir}/install.sh")
+die() { echo "DIE"; }
+ops() { OPERATOR_USERS="$1" resolve_operator_users /nonexistent; }
+check "ops: default"           "apps,%appmotel-ops"       "$(ops '')"
+check "ops: list gets group"   "apps,joe,%appmotel-ops"   "$(ops 'apps joe')"
+check "ops: group not doubled" "%appmotel-ops"            "$(ops '%appmotel-ops')"
+check "ops: ALL stays ALL"     "ALL"                      "$(ops 'ALL')"
+
 # --- install.sh render_sudoers: the appmotel-users group may run only appmo
 # shellcheck source=/dev/null
 source <(sed -n "/^render_sudoers() {/,/^}/p" "${repo_dir}/install.sh")

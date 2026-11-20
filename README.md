@@ -98,7 +98,7 @@ This installs everything under `/home/appmotel` and starts the necessary service
 
 **Step 3: Allow people to use `appmo` (as root)**
 
-Step 1 creates the group `appmotel-users`. Its members may run the `appmo` command, and nothing else, as the `appmotel` user. They type `appmo ...` directly; `sudo -u appmotel` is not needed. Add each person once:
+Step 1 creates two groups: `appmotel-users` for people who deploy apps, and `appmotel-ops` for the admins of appmotel itself (see [Users and operators](#users-and-operators-who-is-who) below). Members of `appmotel-users` may run the `appmo` command, and nothing else, as the `appmotel` user. They type `appmo ...` directly; `sudo -u appmotel` is not needed. Add each person once:
 
 ```bash
 sudo usermod -aG appmotel-users joe
@@ -112,6 +112,12 @@ appmo add --isolated myapp joe/myrepo main
 ```
 
 To remove the access again: `sudo gpasswd -d joe appmotel-users`.
+
+An admin of appmotel goes into the operator group instead:
+
+```bash
+sudo usermod -aG appmotel-ops alice
+```
 
 > ⚠️ A member controls **all** apps, not only the apps that this person added. For example, `appmo exec` runs any command in any app, and `appmo env` shows its secrets. Add only people that you trust with every app on this server. Members get no root rights, and no shell as `appmotel`.
 
@@ -129,7 +135,7 @@ On systems that write syslog files, the same lines are in `/var/log/auth.log` (D
 Think of appmotel as a building with many apartments, where each app is an apartment.
 
 - **Users** (the group `appmotel-users`) are like the front-desk staff. They use one tool, the `appmo` command, to move apps in and out, restart them and look at them. They cannot do anything else as appmotel. Every action is written to a log with their name.
-- **Operators** (`OPERATOR_USERS`, by default only the user `apps`) are the caretakers. They have the master key: they can do anything as appmotel, also without `appmo`. For example, they can open a shell as appmotel, change the Traefik settings by hand or read the TLS keys. Only their `appmo` commands are logged in detail.
+- **Operators** (the group `appmotel-ops`, and the user `apps`) are the caretakers. They have the master key: they can do anything as appmotel, also without `appmo`. For example, they can open a shell as appmotel, change the Traefik settings by hand or read the TLS keys. Only their `appmo` commands are logged in detail.
 - **Root** is the owner of the building and can do everything.
 
 | | User | Operator |
@@ -138,11 +144,16 @@ Think of appmotel as a building with many apartments, where each app is an apart
 | See and change the settings of every app | yes (`appmo exec`, `appmo env`) | yes |
 | Work as appmotel without `appmo` (shell, Traefik, TLS keys) | no | yes |
 | Everything logged with the person's name | yes | only `appmo` commands |
-| How to add a person | `sudo usermod -aG appmotel-users joe` | add the name to `OPERATOR_USERS` in `/home/appmotel/.config/appmotel/.env`, then `sudo bash install.sh` |
+| How to add a person | `sudo usermod -aG appmotel-users joe` | `sudo usermod -aG appmotel-ops alice` |
+| How to remove a person | `sudo gpasswd -d joe appmotel-users` | `sudo gpasswd -d alice appmotel-ops` |
+
+After a change, the person must log in again.
 
 Important: a user can still reach **every** app, not only their own apps. appmotel has no "my apps only" right. So both roles are for people you trust. Make developers users, and make only the admins of appmotel itself operators.
 
-You can also use a group for operators: `OPERATOR_USERS="apps, %my-admins"`. Being a user does not make anyone an operator, unless the person is also in `OPERATOR_USERS` or `OPERATOR_USERS="ALL"` (that makes every account on the machine an operator).
+Being a user does not make anyone an operator. A person in both groups is an operator.
+
+More operators without the group: `OPERATOR_USERS` in `/home/appmotel/.config/appmotel/.env` (default `apps`) takes user names and other `%groups`, then run `sudo bash install.sh`. `appmotel-ops` is always added. `OPERATOR_USERS="ALL"` makes every account on the machine an operator; use it only where every login is trusted.
 
 ### Deploy Your First App
 
