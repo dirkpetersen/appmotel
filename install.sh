@@ -72,6 +72,9 @@ install_required_packages() {
     || packages_needed+=(python3-venv)
   command -v pip3 >/dev/null 2>&1 \
     || packages_needed+=(python3-pip)
+  # nft: app ports may only be reached from this host (install_app_port_firewall)
+  command -v nft >/dev/null 2>&1 \
+    || packages_needed+=(nftables)
 
   if [[ ${#packages_needed[@]} -eq 0 ]]; then
     return 0
@@ -587,6 +590,69 @@ configure_sudoers() {
     else
       log_msg "WARN" "Could not download appmotel-user (appmo add --isolated will not work)"
     fi
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: install_app_port_firewall
+# Description: Apps listen on ports 10001-59999 and often on all addresses
+#   (e.g. Flask host='0.0.0.0'), so on a server with a second NIC they are
+#   reachable past Traefik. This nft table drops NEW connections to those
+#   ports from any interface except loopback; Traefik uses localhost, and
+#   replies to outgoing connections (ephemeral ports overlap this range) are
+#   not NEW, so they pass. A systemd unit loads it at boot. If an admin has
+#   disabled the unit, it stays disabled.
+# -----------------------------------------------------------------------------
+install_app_port_firewall() {
+  local nft_bin
+  if ! nft_bin=$(command -v nft); then
+    log_msg "WARN" "nft not found: app ports stay reachable from the network (install nftables, re-run)"
+    return 0
+  fi
+
+  mkdir -p /etc/appmotel
+  cat > /etc/appmotel/app-ports.nft <<'EOF'
+# Installed by Appmotel install.sh - overwritten on reinstall.
+# App ports (10001-59999) only from this host; Traefik on 80/443 is the way in.
+table inet appmotel
+delete table inet appmotel
+table inet appmotel {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    iifname "lo" accept
+    tcp dport 10001-59999 ct state new drop
+  }
+}
+EOF
+
+  local unit=/etc/systemd/system/appmotel-firewall.service
+  local first_time=false
+  [[ -f "${unit}" ]] || first_time=true
+  cat > "${unit}" <<EOF
+[Unit]
+Description=Appmotel: app ports only from localhost
+Wants=network-pre.target
+Before=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${nft_bin} -f /etc/appmotel/app-ports.nft
+ExecStop=${nft_bin} delete table inet appmotel
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+
+  if [[ "${first_time}" == "true" ]]; then
+    systemctl enable appmotel-firewall.service
+  fi
+  if systemctl is-enabled --quiet appmotel-firewall.service; then
+    systemctl restart appmotel-firewall.service
+    log_msg "INFO" "App ports 10001-59999 accept new connections only from localhost (appmotel-firewall.service)"
+  else
+    log_msg "WARN" "appmotel-firewall.service is disabled: app ports are reachable from the network"
   fi
 }
 
@@ -1344,6 +1410,7 @@ install_as_root() {
   # System-level operations
   configure_sudoers
   enable_linger
+  install_app_port_firewall
 
   # Create systemd service (requires root, but Traefik binary doesn't exist yet)
   create_traefik_service

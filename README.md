@@ -320,6 +320,7 @@ Then run `appmo self-update`. Traefik then listens only on `192.0.2.40:80` and `
 - **First install:** the installer cannot know which card is the primary one, so it does not guess. Give the IP to the user part of the install: `APPMOTEL_BIND_IP="192.0.2.40" bash install.sh`. It is saved in the `.env`. If the server has more than one IP and none is set, the installer warns and lists the addresses.
 - **Upgrades never undo a hand edit:** if `traefik.yaml` was changed by hand to listen on one IP and the `.env` has no `APPMOTEL_BIND_IP`, `install.sh` and `appmo self-update` keep that IP and save it in the `.env`.
 - Your DNS records for `BASE_DOMAIN` must point to that IP (or to a public IP that is forwarded to it).
+- The app ports themselves are already closed to other networks: they only accept connections from the server itself (see [Security Considerations](#security-considerations)).
 
 ### Per-App Configuration
 
@@ -877,6 +878,7 @@ myapp/
 - By default all apps run as the `appmotel` user and can read each other's files. Use `appmo add --isolated` or `appmo isolate` to run an app as its own user (see [Isolated Apps](docs/ISOLATED-APPS.md))
 - appmotel's config and data folders are mode 700, `.env` files mode 600
 - Traefik runs with minimal privileges using `CAP_NET_BIND_SERVICE`
+- App ports (10001-59999) accept new connections only from the server itself. Many apps listen on all addresses (for example Flask with `host='0.0.0.0'`), so without this rule they could be reached past Traefik, also from a second network. `sudo bash install.sh` installs the rule as `appmotel-firewall.service` (an nftables table `inet appmotel`). Replies to the server's own outgoing connections are not affected. To check: `sudo nft list table inet appmotel`. An admin who disables the service (`sudo systemctl disable --now appmotel-firewall`) keeps it disabled on reinstall.
 - Apps are isolated by systemd resource limits
 - HTTPS enforced via automatic redirect
 - Rate limiting prevents abuse

@@ -182,7 +182,8 @@ An isolated app runs as its own user `a-<app>` (group `appmotel-apps`, home mode
 - `bin/appmo` has two roles. Run as `appmotel` it is in **admin** role. Run as an `a-*` user it is in **app** role (`APPMO_ROLE=app`): all per-app paths (`APPS_CONFIG_DIR`, `APPS_DATA_DIR`, `SYSTEMD_USER_DIR`, `BACKUPS_DIR`) point into that user's home, it never elevates, and it does not write Traefik config.
 - In admin role, an isolated app has only `~/.config/appmotel/<app>/isolated.conf` (user, port). `main()` sends per-app commands to `run_appmo_as_app`, which runs `appmo` as the app user, then `sync_isolated_traefik` rebuilds the route. Values read from the app user's files are untrusted; `create_traefik_config` validates them.
 - `secure_appmotel_files` (same code in `install.sh` and `bin/appmo`, also run by autopull) removes group/other access from everything in `/home/appmotel` except `~/.local/bin`. `/home/appmotel` is world-traversable (751) for the `/usr/local/bin/appmo` symlink, so these modes are what keeps app users out.
-- Open item: an app user can still connect to other apps' localhost ports directly (no network isolation yet).
+- `install_app_port_firewall` (root part of `install.sh`) installs `appmotel-firewall.service`, which loads `/etc/appmotel/app-ports.nft`: new TCP connections to 10001-59999 are dropped unless they come in on `lo` (Traefik uses `http://localhost:<port>`). Keep `ct state new` in that rule: the ephemeral port range overlaps, and replies to outgoing connections must pass.
+- Open item: an app user can still connect to other apps' localhost ports directly (no network isolation between apps on the host yet).
 
 ## AWS Deployment
 
