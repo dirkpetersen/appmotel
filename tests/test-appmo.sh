@@ -92,6 +92,27 @@ check "cert: matching wildcard used"  "apps" "$(find_existing_wildcard_cert)"
 BASE_DOMAIN="x.apps.example.org"
 check "cert: no parent-domain match"  "" "$(find_existing_wildcard_cert)"
 
+# --- install.sh resolve_bind_ip: keep a hand-set IP, refuse bad values
+# shellcheck source=/dev/null
+source <(sed -n "/^resolve_bind_ip() {/,/^}/p" "${repo_dir}/install.sh")
+die() { echo "DIE"; exit 1; }
+b="${work}/bind"; mkdir -p "${b}"; : > "${b}/none.env"
+printf 'entryPoints:\n  web:\n    address: "192.0.2.40:80"\n' > "${b}/ip.yaml"
+printf 'entryPoints:\n  web:\n    address: 192.0.2.5:80\n' > "${b}/bare.yaml"
+printf 'entryPoints:\n  web:\n    address: ":80"\n' > "${b}/all.yaml"
+printf 'entryPoints:\n  web:\n    address: "[2001:db8::5]:80"\n' > "${b}/v6.yaml"
+echo 'APPMOTEL_BIND_IP=""' > "${b}/empty.env"
+bind() { (APPMOTEL_BIND_IP="$3" resolve_bind_ip "${b}/$1" "${b}/$2") 2>/dev/null; }
+check "bind: keep yaml IP"         "192.0.2.40" "$(bind ip.yaml none.env '')"
+check "bind: keep unquoted IP"     "192.0.2.5"    "$(bind bare.yaml none.env '')"
+check "bind: keep IPv6"            "[2001:db8::5]"   "$(bind v6.yaml none.env '')"
+check "bind: default all"          ""            "$(bind all.yaml none.env '')"
+check "bind: .env wins"            "198.51.100.3"    "$(echo 'APPMOTEL_BIND_IP=x' > "${b}/set.env"; bind ip.yaml set.env 198.51.100.3)"
+check "bind: empty .env = all"     ""            "$(bind ip.yaml empty.env '')"
+check "bind: first install env"   "198.51.100.9"    "$(bind all.yaml none.env 198.51.100.9)"
+check "bind: bad IP refused"       "DIE"         "$(bind all.yaml set.env '1.2.3.4:99 #')"
+check "bind: octet > 255 refused"  "DIE"         "$(bind all.yaml set.env 192.0.2.300)"
+
 # --- install.sh resolve_operator_users: appmotel-ops is always an operator
 # shellcheck source=/dev/null
 source <(sed -n "/^resolve_operator_users() {/,/^}/p" "${repo_dir}/install.sh")

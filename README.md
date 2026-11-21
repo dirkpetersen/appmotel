@@ -307,6 +307,20 @@ AWS_REGION="us-west-2"
 
 On a new install with no such wildcard certificate, `install.sh` sets `USE_LETSENCRYPT=yes` by itself when no other program uses port 80, and an active ufw or firewalld allows it. It cannot see outside firewalls (such as an AWS security group). If those block port 80, Traefik only logs failed Let's Encrypt attempts. `LETSENCRYPT_EMAIL` is optional; Let's Encrypt rejects `example.com` addresses.
 
+#### Servers with more than one network card
+
+By default Traefik listens on ports 80 and 443 on **all** addresses of the server. If the server has a second network card, for example for a storage network, apps are then also reachable on that network. To listen on one address only, set it in `/home/appmotel/.config/appmotel/.env`:
+
+```bash
+APPMOTEL_BIND_IP="192.0.2.40"     # the IP of the primary network card
+```
+
+Then run `appmo self-update`. Traefik then listens only on `192.0.2.40:80` and `192.0.2.40:443`. Use an IPv4 address, or an IPv6 address in brackets (`[2001:db8::40]`). An empty value (`APPMOTEL_BIND_IP=""`) means all addresses again.
+
+- **First install:** the installer cannot know which card is the primary one, so it does not guess. Give the IP to the user part of the install: `APPMOTEL_BIND_IP="192.0.2.40" bash install.sh`. It is saved in the `.env`. If the server has more than one IP and none is set, the installer warns and lists the addresses.
+- **Upgrades never undo a hand edit:** if `traefik.yaml` was changed by hand to listen on one IP and the `.env` has no `APPMOTEL_BIND_IP`, `install.sh` and `appmo self-update` keep that IP and save it in the `.env`.
+- Your DNS records for `BASE_DOMAIN` must point to that IP (or to a public IP that is forwarded to it).
+
 ### Per-App Configuration
 
 Apps can override defaults in their `.env` file:

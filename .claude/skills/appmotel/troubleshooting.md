@@ -23,6 +23,10 @@ appmo restart myapp
 - **404 later:** the route is missing. `appmo list` must show the app. Run `appmo restart myapp`, which rebuilds the route of an isolated app.
 - **502 Bad Gateway:** Traefik has the route, but the app does not answer on its port. See "App does not start".
 
+## Apps reachable on the wrong network (second NIC)
+
+Traefik listens on all addresses unless `APPMOTEL_BIND_IP` is set in `/home/appmotel/.config/appmotel/.env`. A sysadmin sets it to the IP of the primary card and runs `appmo self-update`. Never edit `traefik.yaml` by hand to change it: use the setting. Check with `ss -ltn '( sport = :443 )'`.
+
 ## Wrong or missing TLS certificate
 
 ```bash

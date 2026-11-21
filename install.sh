@@ -915,6 +915,40 @@ HOOKEOF
 }
 
 # -----------------------------------------------------------------------------
+# Function: resolve_bind_ip
+# Description: Print the IP that Traefik listens on for ports 80 and 443, or
+#   nothing for all addresses. APPMOTEL_BIND_IP in .env wins (an empty value
+#   means all addresses). If .env has no such line, an IP that traefik.yaml
+#   already binds to (for example a hand edit on a server with a second NIC)
+#   is kept, so a reinstall never widens it. On a first install the IP can
+#   come from the environment: APPMOTEL_BIND_IP=192.0.2.5 bash install.sh
+#   Not named TRAEFIK_*: Traefik reads such env vars as its own config.
+# Parameters: $1 = existing traefik.yaml, $2 = appmotel .env
+# -----------------------------------------------------------------------------
+resolve_bind_ip() {
+  local yaml="$1" env_file="$2" ip=""
+  if grep -q '^APPMOTEL_BIND_IP=' "${env_file}" 2>/dev/null; then
+    ip="${APPMOTEL_BIND_IP:-}"          # set in .env (empty = all addresses)
+  elif [[ -n "${APPMOTEL_BIND_IP:-}" ]]; then
+    ip="${APPMOTEL_BIND_IP}"            # first install: APPMOTEL_BIND_IP=... bash install.sh
+  elif [[ -f "${yaml}" ]]; then
+    ip=$(grep -oE '^[[:space:]]*address:[[:space:]]*"?(\[[0-9A-Fa-f:.]+\]|[0-9.]+):80"?' "${yaml}" | head -1 \
+      | sed -E 's/^[[:space:]]*address:[[:space:]]*"?//; s/:80"?$//')
+  fi
+  [[ -z "${ip}" ]] && return 0
+  # The value goes into traefik.yaml: accept only an IPv4 or [IPv6] address
+  if [[ "${ip}" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+    local octet
+    for octet in "${BASH_REMATCH[@]:1}"; do
+      [[ ${octet} -le 255 ]] || die "Invalid APPMOTEL_BIND_IP: ${ip}"
+    done
+  elif [[ ! "${ip}" =~ ^\[[0-9A-Fa-f:.]+\]$ ]]; then
+    die "Invalid APPMOTEL_BIND_IP: '${ip}' (use an IPv4 address, or an IPv6 address in [ ])"
+  fi
+  echo "${ip}"
+}
+
+# -----------------------------------------------------------------------------
 # Function: generate_traefik_config
 # Description: Generates Traefik static and dynamic configuration
 # Note: In Traefik v3, TLS stores MUST be in dynamic configuration, not static
@@ -925,6 +959,25 @@ generate_traefik_config() {
   local static_config_file="${APPMOTEL_HOME}/.config/traefik/traefik.yaml"
   local dynamic_config_dir="${APPMOTEL_HOME}/.config/traefik/dynamic"
   local tls_config_file="${dynamic_config_dir}/tls-config.yaml"
+
+  # Listen address for ports 80/443 (one NIC only, if set or already bound)
+  local bind_ip env_file="${APPMOTEL_HOME}/.config/appmotel/.env"
+  bind_ip=$(resolve_bind_ip "${static_config_file}" "${env_file}") || exit 1
+  if [[ -n "${bind_ip}" ]]; then
+    if ! grep -q "^APPMOTEL_BIND_IP=" "${env_file}" 2>/dev/null; then
+      printf '# Set by install.sh: Traefik listens only on this IP (ports 80, 443)\nAPPMOTEL_BIND_IP="%s"\n' "${bind_ip}" >> "${env_file}"
+      log_msg "INFO" "Saved Traefik bind address ${bind_ip} as APPMOTEL_BIND_IP in ${env_file}"
+    fi
+    log_msg "INFO" "Traefik listens on ${bind_ip}:80 and ${bind_ip}:443"
+  else
+    # No guess: the "right" NIC is a site decision. Warn if there is a choice.
+    local addrs
+    addrs=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | tr '\n' ' ' || true)
+    if [[ $(wc -w <<< "${addrs}") -gt 1 ]]; then
+      log_msg "WARN" "Traefik listens on ALL addresses (${addrs% }) for ports 80 and 443"
+      log_msg "WARN" "To use one NIC only: set APPMOTEL_BIND_IP=\"<ip>\" in ${env_file}, then run: appmo self-update"
+    fi
+  fi
 
   # Build certificate configuration for ACME (goes in static config)
   local acme_config=""
@@ -972,7 +1025,6 @@ EOF
       # Route53 is global, but the AWS SDK in Traefik refuses to work without
       # a region ("Missing Region"); Traefik reads it from this .env
       if [[ -z "${AWS_REGION:-}" ]]; then
-        local env_file="${APPMOTEL_HOME}/.config/appmotel/.env"
         sed -i '/^AWS_REGION=/d' "${env_file}"
         # No comment after the value: systemd's EnvironmentFile keeps it
         printf '# Set by install.sh for Route53 (any region works)\nAWS_REGION="us-east-1"\n' >> "${env_file}"
@@ -1022,14 +1074,14 @@ EOF
 
 entryPoints:
   web:
-    address: ":80"
+    address: "${bind_ip}:80"
     http:
       redirections:
         entryPoint:
           to: websecure
           scheme: https
   websecure:
-    address: ":443"
+    address: "${bind_ip}:443"
     transport:
       respondingTimeouts:
         # Long timeouts for streaming/SSE apps (e.g. codecheck runs multi-minute

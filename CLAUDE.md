@@ -141,6 +141,7 @@ appmo self-update           # Update CLI, Traefik, configs, propagate domain cha
 
 - `BASE_DOMAIN=dev-ai.example.edu` — Primary domain for all apps (`app.BASE_DOMAIN`)
 - `OPERATOR_USERS=apps` — Who may control the appmotel user via sudoers (users, `%groups`, or `ALL` for every user). The group `appmotel-ops` (created by `sudo bash install.sh`) is always added. Applied by `sudo bash install.sh`; unset keeps an existing `ALL` grant, else `apps`
+- `APPMOTEL_BIND_IP=192.0.2.40` — Optional: Traefik listens on this IP only for ports 80/443 (second NIC). Unset keeps an IP that `traefik.yaml` already binds to (`resolve_bind_ip` in `install.sh`); empty means all addresses. Not named `TRAEFIK_*`, because Traefik reads such env vars as its own config
 - `REDIRECT_BASE_DOMAIN=old.example.edu` — Optional: 308 permanent redirect from old domain to `BASE_DOMAIN`. When set, `appmo self-update` generates a single Traefik catch-all config that redirects `*.old.example.edu` → `*.BASE_DOMAIN`
 
 ### Optional App `.env` Settings
