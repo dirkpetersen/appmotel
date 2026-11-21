@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/AUTO-DEBUG/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/DEV-SETUP/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/ENV-MANAGEMENT/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/IMPLEMENTATION/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/ISOLATED-APPS/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/MULTI-COMPONENT/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/TESTING/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/TLS-CERTIFICATES/</loc>
+      </url>
+      <url>
+        <loc>https://dirkpetersen.github.io/appmotel/examples/</loc>
+      </url>
+</urlset>

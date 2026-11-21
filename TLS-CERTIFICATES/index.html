@@ -1,0 +1,879 @@
+
+
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://dirkpetersen.github.io/appmotel/TLS-CERTIFICATES/">
+      
+      
+      
+      
+        <link rel="prev" href="../ISOLATED-APPS/">
+      
+      
+        <link rel="next" href="../examples/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.1.3">
+    
+    
+      
+        <title>TLS Certificates - Appmotel</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e2cf241e.min.css">
+      
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Appmotel" class="md-header__button md-logo" aria-label="Appmotel" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+      <span class="md-visually-hidden">Navigation</span>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Appmotel
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              TLS Certificates
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+          <span class="md-visually-hidden">Search</span>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/dirkpetersen/appmotel" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dirkpetersen/appmotel
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Appmotel" class="md-nav__button md-logo" aria-label="Appmotel" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    Appmotel
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dirkpetersen/appmotel" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dirkpetersen/appmotel
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ISOLATED-APPS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Isolated Apps (read first)
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TLS Certificates
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TLS Certificates
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-a-wildcard-certificate-that-you-supply-certbot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        1. A wildcard certificate that you supply (certbot)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-lets-encrypt-through-traefik-acme" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        2. Let's Encrypt through Traefik (ACME)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Let&#x27;s Encrypt through Traefik (ACME)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dns-mode-route53" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DNS mode (Route53)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#turned-on-by-default-for-new-installs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Turned on by default for new installs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rate-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rate limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#check-which-certificate-an-app-gets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Check which certificate an app gets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ENV-MANAGEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI-COMPONENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Multi-Component Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AUTO-DEBUG/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Debug
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEV-SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development Setup
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../IMPLEMENTATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Implementation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../TESTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-a-wildcard-certificate-that-you-supply-certbot" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        1. A wildcard certificate that you supply (certbot)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-lets-encrypt-through-traefik-acme" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        2. Let's Encrypt through Traefik (ACME)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Let&#x27;s Encrypt through Traefik (ACME)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dns-mode-route53" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        DNS mode (Route53)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#turned-on-by-default-for-new-installs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Turned on by default for new installs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rate-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rate limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#check-which-certificate-an-app-gets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Check which certificate an app gets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="tls-certificates">TLS Certificates<a class="headerlink" href="#tls-certificates" title="Permanent link">&para;</a></h1>
+<p>Every app gets HTTPS at <code>https://&lt;app&gt;.BASE_DOMAIN</code>. You do not have to issue or renew a certificate for each app yourself. appmotel uses one of two sources, in this order.</p>
+<h2 id="1-a-wildcard-certificate-that-you-supply-certbot">1. A wildcard certificate that you supply (certbot)<a class="headerlink" href="#1-a-wildcard-certificate-that-you-supply-certbot" title="Permanent link">&para;</a></h2>
+<p>If <code>/etc/letsencrypt/live/&lt;name&gt;/</code> holds a certificate for exactly <code>*.BASE_DOMAIN</code>, appmotel uses it for all apps.</p>
+<ul>
+<li><code>install.sh</code> finds it and writes <code>~/.config/traefik/dynamic/tls-config.yaml</code>, which makes it Traefik's default certificate. App routes then use <code>tls: {}</code>.</li>
+<li>A certificate for a different domain is never used. For example, with <code>BASE_DOMAIN=apps.example.edu</code>, a certificate for <code>*.other.example.edu</code> or <code>*.example.edu</code> is ignored. (<code>*.example.edu</code> does not cover <code>x.apps.example.edu</code>, because a wildcard covers only one label.)</li>
+<li>appmotel must be able to read the key. <code>install.sh</code> gives the <code>ssl-cert</code> group read access, and <code>/usr/local/bin/appmotel-fix-certs</code> does it again after a change.</li>
+<li>Renewal is certbot's job. <code>install.sh</code> installs a certbot deploy hook that restarts Traefik after a renewal, because Traefik reads these files only once at start.</li>
+<li><code>appmo autopull</code> warns in the log 14 days before the certificate expires (<code>TLS_EXPIRY_WARN_DAYS</code>).</li>
+</ul>
+<p>To issue such a wildcard yourself, certbot needs the DNS-01 challenge, for example:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>sudo<span class="w"> </span>certbot<span class="w"> </span>certonly<span class="w"> </span>--dns-route53<span class="w"> </span>-d<span class="w"> </span><span class="s1">'*.apps.example.edu'</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>sudo<span class="w"> </span>bash<span class="w"> </span>install.sh<span class="w">      </span><span class="c1"># picks up the new certificate</span>
+</span></code></pre></div>
+<h2 id="2-lets-encrypt-through-traefik-acme">2. Let's Encrypt through Traefik (ACME)<a class="headerlink" href="#2-lets-encrypt-through-traefik-acme" title="Permanent link">&para;</a></h2>
+<p>If there is no matching wildcard certificate and <code>USE_LETSENCRYPT=yes</code>, Traefik gets certificates from Let's Encrypt by itself:</p>
+<ul>
+<li>For each app route, Traefik asks Let's Encrypt for a certificate for that host name the first time a client connects. This takes a few seconds; until then, Traefik's default certificate is served.</li>
+<li>Traefik renews each certificate about 30 days before it expires. No cron job and no restart is needed.</li>
+<li>All certificates and the ACME account key are in <code>~/.local/share/traefik/acme.json</code> (mode 600, only <code>appmotel</code> can read it).</li>
+<li>A new app gets its certificate without any manual step. Removed apps keep their old certificate in <code>acme.json</code> until it expires; that is harmless.</li>
+</ul>
+<p>You select how Let's Encrypt checks that you control the domain with <code>LETSENCRYPT_MODE</code>:</p>
+<table>
+<thead>
+<tr>
+<th><code>LETSENCRYPT_MODE</code></th>
+<th>How Let's Encrypt checks</th>
+<th>Needs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>http</code> (default)</td>
+<td>It fetches a token from <code>http://&lt;app&gt;.BASE_DOMAIN/.well-known/acme-challenge/</code> on port 80</td>
+<td>Port 80 open from the internet</td>
+</tr>
+<tr>
+<td><code>dns</code></td>
+<td>Traefik writes a TXT record in Route53</td>
+<td>Route53 zone, AWS credentials or an EC2 instance role. No inbound port is needed</td>
+</tr>
+</tbody>
+</table>
+<p>What you get depends on the mode. Let's Encrypt issues wildcard certificates only with the DNS-01 challenge:</p>
+<ul>
+<li><strong><code>http</code>:</strong> one certificate for each app host name. A new app has Traefik's default certificate for a few seconds, until its own certificate arrives.</li>
+<li><strong><code>dns</code>:</strong> one wildcard certificate, <code>*.BASE_DOMAIN</code> plus <code>BASE_DOMAIN</code>, for all apps. Every app route asks for the same certificate, and Traefik gets it only once. A new app has a valid certificate at once.</li>
+</ul>
+<h3 id="dns-mode-route53">DNS mode (Route53)<a class="headerlink" href="#dns-mode-route53" title="Permanent link">&para;</a></h3>
+<p>Traefik needs Route53 access, from an EC2 instance role or from <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code> in the <code>.env</code>. The role needs <code>route53:ListHostedZonesByName</code>, <code>route53:ChangeResourceRecordSets</code> and <code>route53:GetChange</code>.</p>
+<p>Route53 is a global service, but the AWS SDK in Traefik needs a region. If <code>AWS_REGION</code> is not set, <code>install.sh</code> adds <code>AWS_REGION="us-east-1"</code> to the <code>.env</code>.</p>
+<p>The first wildcard can take about 3 minutes, because Let's Encrypt waits until the TXT record is visible.</p>
+<p><strong>Switching an existing server from <code>http</code> to <code>dns</code>:</strong> set <code>LETSENCRYPT_MODE="dns"</code> and run <code>appmo self-update</code>. This rebuilds all app routes, and new apps get the wildcard. Existing apps keep their own certificates, because Traefik prefers a certificate for the exact host name. To move all apps to the wildcard at once, move the old certificates away:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>sudo<span class="w"> </span>-u<span class="w"> </span>appmotel<span class="w"> </span>mv<span class="w"> </span>/home/appmotel/.local/share/traefik/acme.json<span class="w"> </span>/home/appmotel/.local/share/traefik/acme.json.old
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>sudo<span class="w"> </span>-u<span class="w"> </span>appmotel<span class="w"> </span>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>traefik-appmotel
+</span></code></pre></div>
+<p>Until the wildcard arrives (about 3 minutes), clients see Traefik's default certificate. Do it at a quiet time.</p>
+<h3 id="turned-on-by-default-for-new-installs">Turned on by default for new installs<a class="headerlink" href="#turned-on-by-default-for-new-installs" title="Permanent link">&para;</a></h3>
+<p>When <code>install.sh</code> creates a new <code>~/.config/appmotel/.env</code> and finds no matching wildcard certificate, it sets <code>USE_LETSENCRYPT=yes</code> if:</p>
+<ul>
+<li>no other program listens on port 80, and</li>
+<li>ufw or firewalld, if active, allows port 80.</li>
+</ul>
+<p>The server cannot test the firewalls outside the machine (for example an AWS security group or a campus firewall). If they block port 80, Traefik only logs failed attempts and serves its default certificate. Open port 80, or use <code>LETSENCRYPT_MODE=dns</code>.</p>
+<p>An existing <code>.env</code> is never changed. To turn Let's Encrypt on later:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>sudo<span class="w"> </span>-u<span class="w"> </span>appmotel<span class="w"> </span>nano<span class="w"> </span>/home/appmotel/.config/appmotel/.env
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1">#   USE_LETSENCRYPT=yes</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1">#   LETSENCRYPT_EMAIL=""         # optional (example.com addresses are rejected)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1">#   LETSENCRYPT_MODE="http"      # or "dns"</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>appmo<span class="w"> </span>self-update
+</span></code></pre></div>
+<h3 id="rate-limits">Rate limits<a class="headerlink" href="#rate-limits" title="Permanent link">&para;</a></h3>
+<p>Let's Encrypt allows 50 new certificates for each registered domain per week. In <code>http</code> mode each app uses one, which is enough for most servers. If you add and remove many apps, use <code>dns</code> mode or a wildcard certificate from section 1.</p>
+<h2 id="check-which-certificate-an-app-gets">Check which certificate an app gets<a class="headerlink" href="#check-which-certificate-an-app-gets" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">echo</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>openssl<span class="w"> </span>s_client<span class="w"> </span>-connect<span class="w"> </span>myapp.apps.example.edu:443<span class="w"> </span>-servername<span class="w"> </span>myapp.apps.example.edu<span class="w"> </span><span class="m">2</span>&gt;/dev/null<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>openssl<span class="w"> </span>x509<span class="w"> </span>-noout<span class="w"> </span>-issuer<span class="w"> </span>-subject<span class="w"> </span>-dates
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Issuer</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>O=Let's Encrypt</code> and subject <code>CN=*.apps.example.edu</code></td>
+<td>Your certbot wildcard certificate (section 1)</td>
+</tr>
+<tr>
+<td><code>O=Let's Encrypt</code> and subject <code>CN=apps.example.edu</code></td>
+<td>Traefik's wildcard certificate in <code>dns</code> mode (section 2)</td>
+</tr>
+<tr>
+<td><code>O=Let's Encrypt</code> and subject <code>CN=myapp.apps.example.edu</code></td>
+<td>Traefik's certificate for this app in <code>http</code> mode (section 2)</td>
+</tr>
+<tr>
+<td><code>CN=TRAEFIK DEFAULT CERT</code></td>
+<td>No certificate yet. Wait a few seconds, then look at the Traefik log</td>
+</tr>
+</tbody>
+</table>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>sudo<span class="w"> </span>journalctl<span class="w"> </span>-u<span class="w"> </span>traefik-appmotel<span class="w"> </span>-n<span class="w"> </span><span class="m">50</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-i<span class="w"> </span>acme
+</span></code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.719e0d91.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.9e76c64c.min.js"></script>
+      
+      
+    
+  </body>
+</html>
