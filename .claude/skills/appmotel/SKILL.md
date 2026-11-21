@@ -74,6 +74,7 @@ appmo self-update
   ```
   To change an existing value, use `appmo exec myapp sed -i 's/^OLD=.*/OLD=new/' .env`.
 - **Secrets:** `.env` files hold secrets. Do not print them into logs, issues or commits. Read only the line you need: `appmo exec myapp grep '^PORT=' .env`.
+- **First `.env` of an app:** `appmo add` copies `.env.default` (or `env.default`, `.env.example`, `env.example`, `.env.local`) from the app's own folder. For a subfolder app, put the template in that subfolder: a template in a parent folder is not used.
 - **Multi-component apps:** `appmo restart myapp` restarts all components.
 - **Never** `git rebase -i`, `git add -i` or other interactive commands.
 

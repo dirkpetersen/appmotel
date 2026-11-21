@@ -17,6 +17,10 @@ appmo restart myapp
 - The app must listen on `$PORT` from its `.env`, on `127.0.0.1` or `0.0.0.0`.
 - A Python app that wants another Python version: set `PYTHON_VERSION=3.12` in the `.env` (uv installs it), then run `appmo exec myapp rm -rf .venv` and `appmo update myapp`.
 
+## App `.env` holds global settings (`BASE_DOMAIN`, `USE_LETSENCRYPT`, ...)
+
+Apps that were added from a subfolder before Nov 2026 could get the parent folder's template as their `.env` (for example the appmotel examples got appmotel's own `.env.default`). The lines do no harm. To clean up, delete them with `appmo exec myapp sed -i '/^BASE_DOMAIN=/d' .env` (one line per key, keep `PORT`), then `appmo restart myapp`.
+
 ## 404 or 502 from Traefik
 
 - **404 right after a deploy:** Traefik loads a new route about 1 second after it is written. Try again.
