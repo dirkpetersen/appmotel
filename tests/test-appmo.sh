@@ -22,7 +22,7 @@ check() {
 }
 
 # Load single functions from bin/appmo (running it would elevate to appmotel)
-for fn in python_version_request parse_env_file create_traefik_config; do
+for fn in python_version_request parse_env_file create_traefik_config setup_app_env_file update_port_in_env; do
   # shellcheck source=/dev/null
   source <(sed -n "/^${fn}() {/,/^}/p" "${appmo}")
 done
@@ -67,6 +67,16 @@ LETSENCRYPT_MODE=dns create_traefik_config demo 12345 example.org "${work}/good.
 check "traefik: dns mode wildcard"  "1" "$(grep -c '\- "\*\.example\.org"$' "${yaml}")"
 check "traefik: dns mode main"      "1" "$(grep -c 'main: "example\.org"$' "${yaml}")"
 check "traefik: bad port refused"  "1" "$(create_traefik_config demo '1;x' example.org "${work}/good.env" && echo 0 || echo 1)"
+
+# --- setup_app_env_file: a subfolder app does not get a parent's template
+APPS_CONFIG_DIR="${work}/cfg"; APPS_DATA_DIR="${work}/data"
+mkdir -p "${APPS_DATA_DIR}/sub/repo/examples/hello" "${APPS_DATA_DIR}/own/repo/app"
+echo 'USE_LETSENCRYPT=no' > "${APPS_DATA_DIR}/sub/repo/.env.default"
+echo 'GREETING=hi' > "${APPS_DATA_DIR}/own/repo/app/.env.example"
+setup_app_env_file sub 12345 examples/hello
+check "env: parent template ignored" "PORT=12345" "$(cat "${APPS_CONFIG_DIR}/sub/.env")"
+setup_app_env_file own 12346 app
+check "env: own template used"       "GREETING=hi PORT=12346" "$(tr '\n' ' ' < "${APPS_CONFIG_DIR}/own/.env" | sed 's/ $//')"
 
 # --- appmotel-user: names are checked before anything else (also as non-root)
 for name in 'x;id' '../etc' 'A' 'a_b' "$(printf 'a%.0s' {1..31})"; do

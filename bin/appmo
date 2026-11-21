@@ -626,41 +626,6 @@ parse_github_url() {
   fi
 }
 
-# -----------------------------------------------------------------------------
-# Function: find_env_template_up
-# Description: Search for .env template files starting from a directory and going up
-# Arguments: start_dir, stop_dir (don't search above this)
-# Returns: Path to found template or empty string
-# -----------------------------------------------------------------------------
-find_env_template_up() {
-  local start_dir="$1"
-  local stop_dir="$2"
-
-  local current_dir="${start_dir}"
-  local templates=(".env.default" "env.default" ".env.example" "env.example" ".env.local" ".env")
-
-  while [[ "${current_dir}" == "${stop_dir}"* ]]; do
-    for tmpl in "${templates[@]}"; do
-      if [[ -f "${current_dir}/${tmpl}" ]]; then
-        echo "${current_dir}/${tmpl}"
-        return 0
-      fi
-    done
-
-    # Move up one directory
-    local parent_dir
-    parent_dir=$(dirname "${current_dir}")
-
-    # Stop if we've reached the stop_dir or can't go higher
-    if [[ "${parent_dir}" == "${current_dir}" ]] || [[ "${current_dir}" == "${stop_dir}" ]]; then
-      break
-    fi
-
-    current_dir="${parent_dir}"
-  done
-
-  return 1
-}
 
 # -----------------------------------------------------------------------------
 # Function: find_file_up
@@ -1530,7 +1495,7 @@ EOF
 # Function: setup_app_env_file
 # Description: Creates physical .env in config dir and symlinks repo/.env to it
 # Looks for template: .env.default, env.default, .env.example, env.example, .env.local
-# For subfolder deployments, searches up directory tree for templates
+# in the app folder only (the subfolder for subfolder deployments)
 # -----------------------------------------------------------------------------
 setup_app_env_file() {
   local app_name="$1"
@@ -1558,23 +1523,16 @@ setup_app_env_file() {
     # Remove any existing symlink in config dir
     rm -f "${config_env}"
 
-    # Look for template files - search up directory tree for subfolders
-    local template_file=""
-    if [[ -n "${subdir}" ]]; then
-      # For subfolder deployments, search up from subfolder to repo root
-      template_file=$(find_env_template_up "${app_dir}" "${repo_dir}") || true
-      if [[ -n "${template_file}" ]]; then
-        log_msg "INFO" "Found template at: ${template_file}"
+    # Template only from the app's own folder: a parent folder's template
+    # belongs to the repo or another app (e.g. the appmotel repo's root
+    # .env.default is the global config template, not one for examples/*)
+    local template_file="" tmpl
+    for tmpl in ".env.default" "env.default" ".env.example" "env.example" ".env.local"; do
+      if [[ -f "${app_dir}/${tmpl}" ]]; then
+        template_file="${app_dir}/${tmpl}"
+        break
       fi
-    else
-      # Standard search in repo root
-      for tmpl in ".env.default" "env.default" ".env.example" "env.example" ".env.local"; do
-        if [[ -f "${repo_dir}/${tmpl}" ]]; then
-          template_file="${repo_dir}/${tmpl}"
-          break
-        fi
-      done
-    fi
+    done
 
     if [[ -n "${template_file}" ]]; then
       # Copy template to config dir

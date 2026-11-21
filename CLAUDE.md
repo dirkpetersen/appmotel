@@ -117,7 +117,7 @@ Port range for app assignments: 10001–59999 (auto-assigned if not set in app `
 5. **Procfile** — multiple named processes (e.g., `web:`, `worker:`) → one systemd service per process; only `web` is exposed via Traefik
 6. **Binary** — executable in `bin/` directory
 
-For subfolder deploys (`appmo add app repo/tree/main/subdir`), dependency files are searched upward to the repo root.
+For subfolder deploys (`appmo add app repo/tree/main/subdir`), dependency files are searched upward to the repo root. The `.env` template (`.env.default`, `.env.example`, ...) is taken from the subfolder only (`setup_app_env_file`); the appmotel repo's own root `.env.default` is the global config template and must never become an app `.env`.
 
 ### appmo CLI Commands
 

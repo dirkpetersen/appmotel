@@ -30,7 +30,7 @@ appmo add myapp https://github.com/username/repo main
 
 Appmotel:
 1. Clones the repository to `~/.local/share/appmotel/myapp/repo/`
-2. Checks for `.env` in the repo (used as template)
+2. Looks for a template in the app folder: `.env.default`, `env.default`, `.env.example`, `env.example` or `.env.local` (the first one found is copied). If there is none, an existing `.env` is moved. For a subfolder deploy, only the subfolder is searched, not the folders above it, so each app in a monorepo needs its own template.
 3. Creates physical `.env` in `~/.config/appmotel/myapp/.env`
 4. Creates symlink from repo to config: `repo/.env -> ~/.config/appmotel/myapp/.env`
 5. Assigns PORT if not specified (auto-assigned from 10001-59999)
