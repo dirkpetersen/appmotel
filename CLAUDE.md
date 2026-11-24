@@ -183,6 +183,7 @@ An isolated app runs as its own user `a-<app>` (group `appmotel-apps`, home mode
 - In admin role, an isolated app has only `~/.config/appmotel/<app>/isolated.conf` (user, port). `main()` sends per-app commands to `run_appmo_as_app`, which runs `appmo` as the app user, then `sync_isolated_traefik` rebuilds the route. Values read from the app user's files are untrusted; `create_traefik_config` validates them.
 - `secure_appmotel_files` (same code in `install.sh` and `bin/appmo`, also run by autopull) removes group/other access from everything in `/home/appmotel` except `~/.local/bin`. `/home/appmotel` is world-traversable (751) for the `/usr/local/bin/appmo` symlink, so these modes are what keeps app users out.
 - `install_app_port_firewall` (root part of `install.sh`) installs `appmotel-firewall.service`, which loads `/etc/appmotel/app-ports.nft`: new TCP connections to 10001-59999 are dropped unless they come in on `lo` (Traefik uses `http://localhost:<port>`). Keep `ct state new` in that rule: the ephemeral port range overlaps, and replies to outgoing connections must pass.
+- `install_journal_access` (root part of `install.sh`) writes `/etc/tmpfiles.d/appmotel-journal.conf`, a read ACL on `/var/log/journal` for `appmotel-ops`. A group cannot join `systemd-journal`, and an ACL also covers members added later. Skipped with a WARN if the journal is volatile.
 - Open item: an app user can still connect to other apps' localhost ports directly (no network isolation between apps on the host yet).
 
 ## AWS Deployment

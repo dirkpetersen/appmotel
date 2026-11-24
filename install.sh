@@ -657,6 +657,28 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
+# Function: install_journal_access
+# Description: Members of appmotel-ops may read the whole system journal
+#   (journalctl) through a read ACL on /var/log/journal, the same way systemd
+#   does it for adm and wheel. A group cannot be put inside systemd-journal,
+#   so an ACL is what makes later group members work without more steps.
+#   Needs a persistent journal; with a volatile one the ACL is skipped.
+# -----------------------------------------------------------------------------
+install_journal_access() {
+  if [[ ! -d /var/log/journal ]]; then
+    log_msg "WARN" "/var/log/journal missing (volatile journal): appmotel-ops cannot read the journal. Run 'mkdir /var/log/journal; systemctl restart systemd-journald', then re-run install.sh"
+    return 0
+  fi
+  cat > /etc/tmpfiles.d/appmotel-journal.conf <<'EOF'
+# Installed by Appmotel install.sh - overwritten on reinstall.
+# appmotel-ops may read the system journal (journalctl).
+A+ /var/log/journal - - - - d:group:appmotel-ops:r-X,group:appmotel-ops:r-X
+EOF
+  systemd-tmpfiles --create /etc/tmpfiles.d/appmotel-journal.conf
+  log_msg "INFO" "Group appmotel-ops may read the system journal (/etc/tmpfiles.d/appmotel-journal.conf)"
+}
+
+# -----------------------------------------------------------------------------
 # Function: enable_linger
 # Description: Enables systemd linger for appmotel user
 # -----------------------------------------------------------------------------
@@ -1411,6 +1433,7 @@ install_as_root() {
   configure_sudoers
   enable_linger
   install_app_port_firewall
+  install_journal_access
 
   # Create systemd service (requires root, but Traefik binary doesn't exist yet)
   create_traefik_service

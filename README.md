@@ -138,6 +138,7 @@ Think of appmotel as a building with many apartments, where each app is an apart
 
 - **Users** (the group `appmotel-users`) are like the front-desk staff. They use one tool, the `appmo` command, to move apps in and out, restart them and look at them. They cannot do anything else as appmotel. Every action is written to a log with their name.
 - **Operators** (the group `appmotel-ops`, and the user `apps`) are the caretakers. They have the master key: they can do anything as appmotel, also without `appmo`. For example, they can open a shell as appmotel, change the Traefik settings by hand or read the TLS keys. Only their `appmo` commands are logged in detail.
+- Operators can also read the whole system journal (`journalctl`, `journalctl -t appmo`). `install.sh` gives the group `appmotel-ops` a read ACL on `/var/log/journal`, so new members need no extra group. This needs a persistent journal (`/var/log/journal` must exist; Ubuntu has it). Users in `appmotel-users` see only their own journal; they use `appmo logs <app>` for app logs.
 - **Root** is the owner of the building and can do everything.
 
 | | User | Operator |
