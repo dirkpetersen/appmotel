@@ -3723,8 +3723,10 @@ cmd_update() {
 
   # Wait until the app answers on its port, so "updated" means usable
   local attempt
+  # Listening, not connecting: for an isolated app whose PORT just changed,
+  # the firewall allows the new port only after sync_isolated_traefik
   for attempt in $(seq 1 30); do
-    if timeout 2 bash -c "cat < /dev/null > /dev/tcp/localhost/${PORT}" 2>/dev/null; then
+    if ss -ltnH "sport = :${PORT}" 2>/dev/null | grep -q .; then
       log_msg "INFO" "App updated successfully (backup: ${backup_id})"
       return 0
     fi
@@ -3935,6 +3937,14 @@ cmd_env() {
 
   if [[ $# -ge 2 ]]; then
     local env_path="${APPS_CONFIG_DIR}/${app_name}/.env"
+    if [[ "$2" == "set" || "$2" == "unset" ]]; then
+      # Agents run calls in parallel: without the lock, two read-change-write
+      # cycles lose one change. Held until appmo exits.
+      mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
+      local lock_fd
+      exec {lock_fd}>>"${APPS_CONFIG_DIR}/${app_name}/.env.lock"
+      flock "${lock_fd}"
+    fi
     case "$2" in
       get)
         [[ $# -eq 3 ]] || die "Usage: appmo env ${app_name} get KEY"
@@ -3942,7 +3952,6 @@ cmd_env() {
         ;;
       set)
         [[ $# -ge 2 && $# -le 4 ]] || die "Usage: appmo env ${app_name} set [KEY [VALUE]]"
-        mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
         if [[ $# -eq 2 ]]; then
           env_set_lines "${env_path}"
           log_msg "INFO" "Run 'appmo restart ${app_name}' to apply."
@@ -4615,9 +4624,14 @@ check_acme_cert() {
     return 0
   fi
 
-  local app
-  app=$(find "${APPS_CONFIG_DIR}" -mindepth 2 -maxdepth 2 \( -name metadata.conf -o -name isolated.conf \) \
-    -printf '%h\n' 2>/dev/null | sed 's|.*/||' | sort | head -n 1) || true
+  # An app with a route: Traefik asks for certificates only for routers
+  local app="" f
+  for f in "${TRAEFIK_DYNAMIC_DIR}"/*.yaml; do
+    [[ -f "${f}" ]] || continue
+    case "${f##*/}" in tls-config.yaml|default-transport.yaml|redirect-domains.yaml) continue ;; esac
+    app="${f##*/}"; app="${app%.yaml}"
+    break
+  done
   [[ -n "${app}" ]] || return 0
 
   local started now
