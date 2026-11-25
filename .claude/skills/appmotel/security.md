@@ -19,7 +19,8 @@ App ports (10001-59999) accept new connections only from the server itself (`app
 ## Protect secrets
 
 - Secrets belong in the app's `.env`, never in the repo.
-- Read only what you need: `appmo exec myapp grep '^DATABASE_URL=' .env`. Do not paste `.env` content into issues, PRs, commits or chat.
+- Read only what you need: `appmo env myapp get DATABASE_URL`. Do not paste `.env` content into issues, PRs, commits or chat.
+- Set secrets from stdin, never as `appmo env myapp set KEY VALUE` (the sudo log keeps the command line): `printf '%s' "$S" | appmo env myapp set KEY`, or many lines with `appmo env myapp set <<'EOF' ... EOF`.
 - For a private repo of an isolated app, appmotel copies its own GitHub SSH key into the app user's home. That key can read every repo that appmotel can read. Prefer a deploy key for each repo.
 
 ## Check scripts before you run them

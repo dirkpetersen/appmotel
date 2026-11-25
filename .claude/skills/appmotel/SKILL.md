@@ -71,12 +71,17 @@ appmo self-update
 - **Non-interactive:** all of this runs without a password. `appmo env myapp` (no more words) opens an editor, so do not use it in automation. Read and change the `.env` like this:
   ```bash
   appmo env myapp get PORT                 # prints the value, exit 1 if not set
-  appmo env myapp set NEW_VAR value        # replaces or adds the line, quotes it
-  printf '%s' "$SECRET" | appmo env myapp set API_KEY   # secret from stdin
+  appmo env myapp set DEBUG false          # not secret: value on the command line is fine
+  printf '%s' "$SECRET" | appmo env myapp set API_KEY   # one secret from stdin
+  appmo env myapp set <<'EOF'              # many values from stdin, all or none
+  DATABASE_URL=postgres://app:pw@db/app
+  API_KEY=abc123
+  EOF
   appmo restart myapp                      # once, after the last set
   ```
   `set` refuses values with `$(`, backticks, `;`, `&&`, `||` or a newline.
-- **Secrets:** `.env` files hold secrets. Do not print them into logs, issues or commits. Read only the value you need (`appmo env myapp get KEY`). Give secrets to `set` on stdin, so they are not in the process list or the sudo log.
+- **Secrets:** `.env` files hold secrets. Do not print them into logs, issues or commits. Read only the value you need (`appmo env myapp get KEY`).
+- **Always give secrets on stdin** (a pipe or a here-doc with a quoted `'EOF'`), never as `set KEY VALUE`. A value on the command line is in the process list and in the sudo log; `set` warns when a name like `*PASS*`, `*TOKEN*`, `*KEY*` or `*SECRET*` gets its value that way. The appmo audit log hides values in all forms. To copy a secret from one app to another without printing it: `appmo env app1 get API_KEY | appmo env app2 set API_KEY`.
 - **First `.env` of an app:** `appmo add` copies `.env.default` (or `env.default`, `.env.example`, `env.example`, `.env.local`) from the app's own folder. For a subfolder app, put the template in that subfolder: a template in a parent folder is not used.
 - **Multi-component apps:** `appmo restart myapp` restarts all components.
 - **Never** `git rebase -i`, `git add -i` or other interactive commands.

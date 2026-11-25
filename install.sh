@@ -267,11 +267,18 @@ create_appmotel_user() {
 # -----------------------------------------------------------------------------
 # Function: detect_aws
 # Description: Returns 0 if running on AWS EC2, 1 otherwise
-# Checks IMDS reachability (works without an IAM role)
+# Checks IMDS reachability (works without an IAM role). IMDSv2 first: with
+# "HttpTokens: required" (the default on new AMIs) a call without a token
+# gets 401, and AWS would not be detected.
 # -----------------------------------------------------------------------------
 detect_aws() {
-  curl -sf --connect-timeout 2 "http://169.254.169.254/latest/meta-data/instance-id" \
-    -o /dev/null 2>/dev/null
+  local token
+  local -a hdr=()
+  token=$(curl -sf --connect-timeout 2 -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null) || token=""
+  [[ -n "${token}" ]] && hdr=(-H "X-aws-ec2-metadata-token: ${token}")
+  curl -sf --connect-timeout 2 "${hdr[@]}" \
+    "http://169.254.169.254/latest/meta-data/instance-id" -o /dev/null 2>/dev/null
 }
 
 # -----------------------------------------------------------------------------
@@ -602,6 +609,9 @@ configure_sudoers() {
 #   replies to outgoing connections (ephemeral ports overlap this range) are
 #   not NEW, so they pass. A systemd unit loads it at boot. If an admin has
 #   disabled the unit, it stays disabled.
+#   On the host itself, isolated app users (@app_uids) may open new
+#   connections only to their own app port (@own_ports). The root helper
+#   'appmotel-user firewall' fills both sets into app-users.nft.
 # -----------------------------------------------------------------------------
 install_app_port_firewall() {
   local nft_bin
@@ -617,13 +627,22 @@ install_app_port_firewall() {
 table inet appmotel
 delete table inet appmotel
 table inet appmotel {
+  set app_uids { type uid; }
+  set own_ports { type uid . inet_service; }
   chain input {
     type filter hook input priority filter; policy accept;
     iifname "lo" accept
     tcp dport 10001-59999 ct state new drop
   }
+  chain output {
+    type filter hook output priority filter; policy accept;
+    oifname "lo" tcp dport 10001-59999 ct state new meta skuid . tcp dport @own_ports accept
+    oifname "lo" tcp dport 10001-59999 ct state new meta skuid @app_uids drop
+  }
 }
+include "/etc/appmotel/app-users.nft"
 EOF
+  [[ -f /etc/appmotel/app-users.nft ]] || echo "# Written by appmotel-user firewall" > /etc/appmotel/app-users.nft
 
   local unit=/etc/systemd/system/appmotel-firewall.service
   local first_time=false
@@ -638,6 +657,7 @@ Before=network-pre.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=${nft_bin} -f /etc/appmotel/app-ports.nft
+ExecStartPost=-/usr/local/bin/appmotel-user firewall
 ExecStop=${nft_bin} delete table inet appmotel
 
 [Install]
@@ -650,7 +670,7 @@ EOF
   fi
   if systemctl is-enabled --quiet appmotel-firewall.service; then
     systemctl restart appmotel-firewall.service
-    log_msg "INFO" "App ports 10001-59999 accept new connections only from localhost (appmotel-firewall.service)"
+    log_msg "INFO" "App ports 10001-59999 accept new connections only from localhost; isolated apps reach only their own port (appmotel-firewall.service)"
   else
     log_msg "WARN" "appmotel-firewall.service is disabled: app ports are reachable from the network"
   fi

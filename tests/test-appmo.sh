@@ -22,7 +22,7 @@ check() {
 }
 
 # Load single functions from bin/appmo (running it would elevate to appmotel)
-for fn in python_version_request parse_env_file create_traefik_config setup_app_env_file update_port_in_env safe_source_env env_get_value env_set_value; do
+for fn in python_version_request parse_env_file create_traefik_config setup_app_env_file update_port_in_env safe_source_env env_get_value env_set_value env_set_lines env_unset_value; do
   # shellcheck source=/dev/null
   source <(sed -n "/^${fn}() {/,/^}/p" "${appmo}")
 done
@@ -153,6 +153,16 @@ check "env set: both quotes refused" "1" "$( (env_set_value "${ef}" X "a'\"b") 2
 check "env set: refused leaves file" "0" "$(grep -c '^X=' "${ef}")"
 ( safe_source_env "${ef}" true; printf '%s|%s|%s' "${DB}" "${MSG}" "${Q}" ) > "${work}/src.out"
 check "env set: safe_source_env reads it" "new|hello world #1|it's" "$(cat "${work}/src.out")"
+printf 'A=1\n# note\n\nB="two words"\nC=x\n' | env_set_lines "${ef}" 2>/dev/null
+check "env set stdin: many lines" "1|two words|x" "$(env_get_value "${ef}" A)|$(env_get_value "${ef}" B)|$(env_get_value "${ef}" C)"
+before=$(md5sum < "${ef}")
+check "env set stdin: bad line -> 1" "1" "$( (printf 'D=1\nE=a;b\n' | env_set_lines "${ef}") 2>/dev/null; echo $?)"
+check "env set stdin: all or none" "${before}" "$(md5sum < "${ef}")"
+check "env set stdin: no temp left" "0" "$(find "${work}" -name 'set.env.*' | wc -l)"
+cp "${ef}" "${work}/unset.env"; printf 'A=again\n' >> "${work}/unset.env"
+env_unset_value "${work}/unset.env" A
+check "env unset: all A lines gone" "0|10001" "$(grep -c '^A=' "${work}/unset.env")|$(env_get_value "${work}/unset.env" PORT)"
+check "env unset: missing -> 1"     "1" "$(env_unset_value "${work}/unset.env" NOPE; echo $?)"
 if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --wait --pipe true >/dev/null 2>&1; then
   check "env set: systemd reads it" "new|hello world #1|it's" \
     "$(systemd-run --user --wait --pipe -q -p EnvironmentFile="${ef}" sh -c 'printf "%s|%s|%s" "$DB" "$MSG" "$Q"')"

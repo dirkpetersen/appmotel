@@ -216,6 +216,7 @@ appmo env <app-name>                          # Edit app's .env file (vim, mouse
 appmo env <app-name> get KEY                  # Print one value
 appmo env <app-name> set KEY VALUE            # Set one value (then appmo restart <app-name>)
 printf '%s' "$SECRET" | appmo env <app-name> set KEY   # Value from stdin: not in the logs
+appmo env <app-name> set < secrets.env        # Many KEY=VALUE lines from stdin (all or none)
 
 # Monitoring & Debugging
 appmo logs <app-name> [lines]                 # View application logs

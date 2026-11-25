@@ -501,6 +501,8 @@ Commands:
   env <app-name>                         Edit app's .env file (vim, mouse off)
   env <app-name> get KEY                 Print one .env value
   env <app-name> set KEY [VALUE]         Set one .env value (no VALUE: read from stdin)
+  env <app-name> set < file              Set many KEY=VALUE lines from stdin (all or none)
+  env <app-name> unset KEY...            Remove .env variables
   exec <app-name> <command>              Run command in app's environment
   backup <app-name>                      Create a backup of an app
   restore <app-name> [backup-id]         Restore an app from backup
@@ -767,6 +769,12 @@ sync_isolated_traefik() {
     log_msg "WARN" "${app_name}: no valid PORT in app metadata, Traefik route not changed"
     return 1
   fi
+  # The app user writes this value: it must not take the port of another app
+  # (its route would point there, and the firewall would let it connect)
+  if [[ " $(reserved_ports_except "${app_name}") " == *" ${port} "* ]]; then
+    log_msg "WARN" "${app_name}: PORT ${port} belongs to another app, Traefik route not changed"
+    return 1
+  fi
 
   local env_copy
   env_copy=$(create_temp_file "isoenv")
@@ -778,8 +786,14 @@ sync_isolated_traefik() {
     return 1
   fi
   rm -f "${env_copy}"
-  printf 'ISOLATED_USER="%s"\nPORT="%s"\n' "${APP_USER_PREFIX}${app_name}" "${port}" \
-    > "${APPS_CONFIG_DIR}/${app_name}/isolated.conf"
+  local conf="${APPS_CONFIG_DIR}/${app_name}/isolated.conf" old_port=""
+  old_port=$(grep -m1 '^PORT=' "${conf}" 2>/dev/null | cut -d= -f2 | tr -d '"') || true
+  printf 'ISOLATED_USER="%s"\nPORT="%s"\n' "${APP_USER_PREFIX}${app_name}" "${port}" > "${conf}"
+  # The app user may connect only to its own port (appmotel-user firewall)
+  if [[ "${old_port}" != "${port}" ]]; then
+    sudo -n /usr/local/bin/appmotel-user firewall \
+      || log_msg "WARN" "${app_name}: could not update the app-port firewall"
+  fi
 }
 
 # Public GitHub repo? Unknown hosts and errors count as private.
@@ -3849,17 +3863,71 @@ env_set_value() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: env_unset_value
+# Description: Removes every KEY= line from an .env file. Returns 1 if KEY
+#   was not set (the file is not changed then).
+# -----------------------------------------------------------------------------
+env_unset_value() {
+  local env_file="$1" key="$2" tmp
+  [[ "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "Invalid variable name '${key}'"
+  grep -qE "^[[:space:]]*${key}=" "${env_file}" 2>/dev/null || return 1
+  tmp=$(mktemp "${env_file}.XXXXXX")
+  grep -vE "^[[:space:]]*${key}=" "${env_file}" > "${tmp}" || true
+  cat "${tmp}" > "${env_file}"
+  rm -f "${tmp}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: env_set_lines
+# Description: Reads KEY=VALUE lines from stdin (blank lines and # comments
+#   are skipped) and sets them all in the .env, or none if one is refused.
+#   A value is the rest of the line, without one pair of outer quotes.
+# -----------------------------------------------------------------------------
+env_set_lines() {
+  local env_file="$1" input copy line value n=0
+  [[ ! -t 0 ]] || die "Give KEY=VALUE lines on stdin, e.g. a here-doc: appmo env <app> set <<'EOF'"
+  input=$(cat)
+  touch "${env_file}"
+  copy=$(mktemp "${env_file}.XXXXXX")
+  cat "${env_file}" > "${copy}"
+  # A subshell, so that a refused line (die) leaves the .env as it was
+  if ! (
+    while IFS= read -r line; do
+      n=$((n + 1))
+      [[ -z "${line//[[:space:]]/}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+      # Line number only: a line without = may be a pasted secret
+      [[ "${line}" == *=* ]] || die "Line ${n} is not KEY=VALUE"
+      value="${line#*=}"
+      if [[ "${value}" =~ ^\"(.*)\"$ ]] || [[ "${value}" =~ ^\'(.*)\'$ ]]; then
+        value="${BASH_REMATCH[1]}"
+      fi
+      env_set_value "${copy}" "${line%%=*}" "${value}"
+    done <<< "${input}"
+  ); then
+    rm -f "${copy}"
+    die "Nothing was changed"
+  fi
+  cat "${copy}" > "${env_file}"
+  rm -f "${copy}"
+  n=$(grep -cvE '^[[:space:]]*(#|$)' <<< "${input}") || true
+  log_msg "INFO" "Set ${n} variable(s)"
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_env
 # Description: appmo env <app>                 edit the .env in an editor
 #              appmo env <app> get KEY         print one value
 #              appmo env <app> set KEY VALUE   set one value (KEY=VALUE works
 #                too; without a value it is read from stdin, which keeps a
 #                secret out of the process list and the sudo log)
+#              appmo env <app> set < lines     set many KEY=VALUE lines from
+#                stdin, all or none
+#              appmo env <app> unset KEY...    remove variables
 # The physical .env lives in config dir, repo has symlink to it
 # -----------------------------------------------------------------------------
 cmd_env() {
   if [[ $# -lt 1 ]]; then
-    die "Usage: appmo env <app-name> [get KEY | set KEY [VALUE]]"
+    die "Usage: appmo env <app-name> [get KEY | set [KEY [VALUE]] | unset KEY...]"
   fi
 
   local app_name="$1"
@@ -3873,24 +3941,47 @@ cmd_env() {
         env_get_value "${env_path}" "$3" || die "${3} is not set in the .env of ${app_name}"
         ;;
       set)
-        [[ $# -eq 3 || $# -eq 4 ]] || die "Usage: appmo env ${app_name} set KEY [VALUE]"
+        [[ $# -ge 2 && $# -le 4 ]] || die "Usage: appmo env ${app_name} set [KEY [VALUE]]"
+        mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
+        if [[ $# -eq 2 ]]; then
+          env_set_lines "${env_path}"
+          log_msg "INFO" "Run 'appmo restart ${app_name}' to apply."
+          return 0
+        fi
         local key="$3" value
-        if [[ $# -eq 4 ]]; then
-          value="$4"
-        elif [[ "${key}" == *=* ]]; then
-          value="${key#*=}"
-          key="${key%%=*}"
+        if [[ $# -eq 4 || "${key}" == *=* ]]; then
+          if [[ $# -eq 4 ]]; then
+            value="$4"
+          else
+            value="${key#*=}"
+            key="${key%%=*}"
+          fi
+          # The audit log hides it, but the sudo log and ps show it
+          if [[ "${key^^}" =~ (PASS|SECRET|TOKEN|KEY|PRIVATE|CREDENTIAL|AUTH) ]]; then
+            log_msg "WARN" "${key} was given on the command line, so the sudo log has it. Next time: printf '%s' \"\$${key}\" | appmo env ${app_name} set ${key}"
+          fi
         elif [[ -t 0 ]]; then
           read -r -s -p "Value for ${key}: " value || die "No value given"
           echo >&2
         else
           value=$(cat)
         fi
-        mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
         env_set_value "${env_path}" "${key}" "${value}"
         log_msg "INFO" "Set ${key} for ${app_name}. Run 'appmo restart ${app_name}' to apply."
         ;;
-      *) die "Usage: appmo env <app-name> [get KEY | set KEY [VALUE]]" ;;
+      unset)
+        [[ $# -ge 3 ]] || die "Usage: appmo env ${app_name} unset KEY..."
+        local k
+        for k in "${@:3}"; do
+          if env_unset_value "${env_path}" "${k}"; then
+            log_msg "INFO" "Removed ${k} from ${app_name}"
+          else
+            log_msg "WARN" "${k} was not set in ${app_name}"
+          fi
+        done
+        log_msg "INFO" "Run 'appmo restart ${app_name}' to apply."
+        ;;
+      *) die "Usage: appmo env <app-name> [get KEY | set [KEY [VALUE]] | unset KEY...]" ;;
     esac
     return 0
   fi
@@ -4788,6 +4879,22 @@ secure_appmotel_files() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: refresh_app_list
+# Description: Writes the app names to ~/.local/bin/.appmo-apps (mode 644),
+#   the only folder of appmotel that others may read, so that tab completion
+#   works for members of appmotel-users. App names are not secret (they are
+#   host names). Run after add/isolate/remove and by every autopull.
+# -----------------------------------------------------------------------------
+refresh_app_list() {
+  [[ "${APPMO_ROLE}" == "admin" && -d "${APPMOTEL_HOME}/.local/bin" ]] || return 0
+  local list="${APPMOTEL_HOME}/.local/bin/.appmo-apps" tmp
+  tmp=$(mktemp "${list}.XXXXXX") || return 0
+  find "${APPS_CONFIG_DIR}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort > "${tmp}" || true
+  chmod 644 "${tmp}"
+  mv -f "${tmp}" "${list}"
+}
+
+# -----------------------------------------------------------------------------
 # Function: main
 # Description: Main CLI dispatcher
 # -----------------------------------------------------------------------------
@@ -4805,6 +4912,7 @@ main() {
     case "${command}" in
       remove|rm)
         remove_isolated "$1"
+        refresh_app_list
         return
         ;;
       status|start|stop|restart|update|check|logs|env|exec|backup|restore|backups)
@@ -4846,6 +4954,10 @@ main() {
     skill) cmd_skill "$@" ;;
     -h|--help|help) usage ;;
     *) die "Unknown command: ${command}. Use 'appmo --help' for usage." ;;
+  esac
+
+  case "${command}" in
+    add|isolate|remove|rm|autopull|self-update) refresh_app_list ;;
   esac
 }
 

@@ -1,0 +1,31 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check (bash -n)
+        run: |
+          for f in install.sh install-aws.sh bin/appmo bin/appmotel-user bin/appmotel-fix-certs \
+                   bin/appmo-completion.bash bin/reset-home.sh tests/test-appmo.sh; do
+            bash -n "$f"
+          done
+
+      # Errors only: the scripts still have warnings, which do not fail the build
+      - name: shellcheck
+        run: |
+          shellcheck -S error install.sh install-aws.sh bin/appmo bin/appmotel-user \
+            bin/appmotel-fix-certs bin/appmo-completion.bash bin/reset-home.sh tests/test-appmo.sh
+
+      - name: Unit checks
+        run: bash tests/test-appmo.sh

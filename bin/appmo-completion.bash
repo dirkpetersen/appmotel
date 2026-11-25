@@ -12,10 +12,12 @@ _appmo_completions() {
   # Main commands (rm/ls are hidden aliases for remove/list)
   local commands="add isolate remove rm list ls status start stop restart update check autopull logs env exec backup restore backups self-update skill help"
 
-  # Get list of apps for completion (exclude .env file, only list directories)
+  # App names: appmo keeps a readable list (the config dir is mode 700)
   local apps=""
-  if [[ -d "/home/appmotel/.config/appmotel" ]]; then
-    apps=$(find /home/appmotel/.config/appmotel -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | tr '\n' ' ')
+  if [[ -r "/home/appmotel/.local/bin/.appmo-apps" ]]; then
+    apps=$(tr '\n' ' ' < /home/appmotel/.local/bin/.appmo-apps)
+  elif [[ -r "/home/appmotel/.config/appmotel" ]]; then
+    apps=$(find /home/appmotel/.config/appmotel -mindepth 1 -maxdepth 1 -type d -printf '%f ' 2>/dev/null)
   fi
 
   case "${COMP_CWORD}" in
@@ -52,7 +54,7 @@ _appmo_completions() {
           COMPREPLY=($(compgen -W "${backups}" -- "${cur}"))
           ;;
         env)
-          COMPREPLY=($(compgen -W "get set" -- "${cur}"))
+          COMPREPLY=($(compgen -W "get set unset" -- "${cur}"))
           ;;
       esac
       ;;

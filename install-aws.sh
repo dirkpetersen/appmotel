@@ -32,6 +32,8 @@ AWS_PROFILE_EC2=""
 AWS_PROFILE_IAM=""
 REQUESTED_HOSTED_ZONE=""
 FORCE_OVERWRITE=0
+readonly REMOTE_SRC="/tmp/appmotel-src"
+SUBDOMAIN=""
 
 # -----------------------------------------------------------------------------
 # AWS CLI Profile Wrapper Functions
@@ -765,6 +767,13 @@ validate_route53_early() {
     die "Please specify which zone to use with --hosted-zone <ZONE_ID>"
   fi
 
+  # BASE_DOMAIN below the zone apex (sub.zone): the zone's own *.zone record
+  # and other names in it stay untouched
+  if [[ -n "${SUBDOMAIN}" ]]; then
+    VALIDATED_DOMAIN="${SUBDOMAIN}.${VALIDATED_DOMAIN}"
+    log_msg "INFO" "Using subdomain: BASE_DOMAIN=${VALIDATED_DOMAIN}"
+  fi
+
   # Check for existing records
   if check_existing_appmotel_records "${VALIDATED_ZONE_ID}" "${VALIDATED_DOMAIN}"; then
     if [[ "${FORCE_OVERWRITE}" -eq 1 ]]; then
@@ -778,7 +787,10 @@ validate_route53_early() {
       log_msg "ERROR" "Option 1: Use --force to overwrite existing records"
       log_msg "ERROR" "  bash install-aws.sh --force"
       log_msg "ERROR" ""
-      log_msg "ERROR" "Option 2: Manually remove the existing records from Route53"
+      log_msg "ERROR" "Option 2: Use a subdomain of the zone (BASE_DOMAIN=<name>.${VALIDATED_DOMAIN})"
+      log_msg "ERROR" "  bash install-aws.sh --subdomain apps"
+      log_msg "ERROR" ""
+      log_msg "ERROR" "Option 3: Manually remove the existing records from Route53"
       log_msg "ERROR" "  - appmotel.${VALIDATED_DOMAIN}"
       log_msg "ERROR" "  - *.${VALIDATED_DOMAIN}"
       log_msg "ERROR" ""
@@ -807,13 +819,18 @@ configure_route53_dns() {
 
   log_msg "INFO" "Configuring Route53 DNS records..."
 
+  # CREATE fails if a record exists (also one made after the early check);
+  # only --force replaces records
+  local action="CREATE"
+  [[ "${FORCE_OVERWRITE}" -eq 1 ]] && action="UPSERT"
+
   # Create change batch JSON for both records
   local change_batch
   change_batch=$(cat <<EOF
 {
   "Changes": [
     {
-      "Action": "UPSERT",
+      "Action": "${action}",
       "ResourceRecordSet": {
         "Name": "appmotel.${domain}",
         "Type": "A",
@@ -822,7 +839,7 @@ configure_route53_dns() {
       }
     },
     {
-      "Action": "UPSERT",
+      "Action": "${action}",
       "ResourceRecordSet": {
         "Name": "*.${domain}",
         "Type": "A",
@@ -923,43 +940,37 @@ configure_dns01_mode() {
 install_appmotel() {
   local host="$1"
   local key_file="$2"
-  local install_script="${SCRIPT_DIR}/install.sh"
-  local env_default="${SCRIPT_DIR}/.env.default"
+  local -a ssh_opts=(-i "${key_file}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 
-  if [[ ! -f "${install_script}" ]]; then
-    die "install.sh not found at ${install_script}"
-  fi
+  [[ -f "${SCRIPT_DIR}/install.sh" ]] || die "install.sh not found in ${SCRIPT_DIR}"
 
-  log_msg "INFO" "Uploading install.sh to remote instance..."
+  # The whole checkout: the user part needs bin/appmo and the templates from
+  # this version, not from GitHub. Only tracked files, so a local .env with
+  # secrets is never copied.
+  log_msg "INFO" "Uploading appmotel to ${REMOTE_SRC} on the instance..."
+  if git -C "${SCRIPT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${SCRIPT_DIR}" ls-files -z | tar -C "${SCRIPT_DIR}" --null -T - -czf -
+  else
+    tar -C "${SCRIPT_DIR}" --exclude=.git --exclude=.env -czf - .
+  fi | ssh "${ssh_opts[@]}" "${SSH_USER}@${host}" \
+    "rm -rf ${REMOTE_SRC} && mkdir -p ${REMOTE_SRC} && tar xzf - -C ${REMOTE_SRC} && chmod -R a+rX ${REMOTE_SRC}"
 
-  scp -i "${key_file}" \
-      -o StrictHostKeyChecking=no \
-      -o UserKnownHostsFile=/dev/null \
-      -o LogLevel=ERROR \
-      "${install_script}" \
-      "${SSH_USER}@${host}:/tmp/install.sh"
-
-  # Upload .env.default if it exists
-  if [[ -f "${env_default}" ]]; then
-    log_msg "INFO" "Uploading .env.default..."
-    scp -i "${key_file}" \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -o LogLevel=ERROR \
-        "${env_default}" \
-        "${SSH_USER}@${host}:/tmp/.env.default"
-  fi
-
-  log_msg "INFO" "Running system-level installation (as root)..."
-
-  ssh -i "${key_file}" \
-      -o StrictHostKeyChecking=no \
-      -o UserKnownHostsFile=/dev/null \
-      -o LogLevel=ERROR \
-      "${SSH_USER}@${host}" \
-      "sudo bash /tmp/install.sh"
-
+  run_remote_install "${host}" "${key_file}"
   log_msg "INFO" "Installation completed successfully!"
+}
+
+# -----------------------------------------------------------------------------
+# Function: run_remote_install
+# Description: Runs both parts of install.sh on the instance: root (users,
+#   sudoers, firewall, Traefik unit), then appmotel (Traefik, appmo, autopull)
+# -----------------------------------------------------------------------------
+run_remote_install() {
+  local host="$1"
+  local key_file="$2"
+  log_msg "INFO" "Running install.sh as root, then as appmotel..."
+  ssh -i "${key_file}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+    "${SSH_USER}@${host}" \
+    "cd ${REMOTE_SRC} && sudo bash install.sh && sudo -u appmotel bash install.sh"
 }
 
 # -----------------------------------------------------------------------------
@@ -1014,11 +1025,10 @@ display_summary() {
   log_msg "INFO" "1. SSH into the instance:"
   log_msg "INFO" "   ssh -i ${key_file} ${SSH_USER}@${host}"
   log_msg "INFO" ""
-  log_msg "INFO" "2. Switch to appmotel user:"
-  log_msg "INFO" "   sudo su - appmotel"
+  log_msg "INFO" "2. Let people use appmo (both parts of install.sh already ran):"
+  log_msg "INFO" "   sudo usermod -aG appmotel-users ${SSH_USER}   # then log in again"
   log_msg "INFO" ""
-  log_msg "INFO" "3. Run user-level installation:"
-  log_msg "INFO" "   curl -fsSL \"https://raw.githubusercontent.com/dirkpetersen/appmotel/main/install.sh?\$(date +%s)\" | bash"
+  log_msg "INFO" "3. Check:  appmo status"
   log_msg "INFO" ""
 
   if [[ -n "${domain}" ]]; then
@@ -1066,6 +1076,8 @@ Options:
   --ec2-profile PROFILE       AWS profile for EC2 operations
   --iam-profile PROFILE       AWS profile for IAM/Route53 operations
   --hosted-zone ZONE_ID       Route53 hosted zone ID to use
+  --subdomain NAME            Use NAME.<zone> as BASE_DOMAIN (records appmotel.NAME.<zone>
+                              and *.NAME.<zone>); leaves the zone apex alone
   --force                     Overwrite existing appmotel DNS records
   -h, --help                  Show this help message
 
@@ -1094,6 +1106,9 @@ Examples:
 
   # Use separate AWS profile for IAM operations
   bash install-aws.sh --iam-profile admin-profile
+
+  # Apps under apps.<zone>, for a zone that is also used for other things
+  bash install-aws.sh --hosted-zone Z1234567890ABC --subdomain apps
 
   # Specify hosted zone and force overwrite
   bash install-aws.sh --hosted-zone Z1234567890ABC --force
@@ -1162,6 +1177,11 @@ main() {
           die "Option $1 requires an argument"
         fi
         REQUESTED_HOSTED_ZONE="${2}"
+        shift
+        ;;
+      --subdomain)
+        [[ "${2-}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || die "Option $1 needs a DNS label (a-z, 0-9, -)"
+        SUBDOMAIN="${2}"
         shift
         ;;
       --force)
@@ -1255,13 +1275,9 @@ main() {
       # the first run saw the placeholder domain and setup_local_dns skipped
       # itself, so the dnsmasq hairpin-NAT workaround was never configured.
       # install.sh is idempotent, so the repeat root pass is safe.
-      log_msg "INFO" "Re-running root install to configure local DNS (dnsmasq)..."
-      ssh -i "${key_file}" \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR \
-          "${SSH_USER}@${public_ip}" \
-          "sudo bash /tmp/install.sh" || log_msg "WARN" "Root install re-run failed; local DNS (dnsmasq) may need manual setup"
+      log_msg "INFO" "Re-running install.sh to configure local DNS (dnsmasq) and the DNS-01 resolver..."
+      run_remote_install "${public_ip}" "${key_file}" \
+        || log_msg "WARN" "install.sh re-run failed; local DNS (dnsmasq) may need manual setup"
 
       # Restart Traefik to apply new domain configuration
       log_msg "INFO" "Restarting Traefik to apply DNS configuration..."

@@ -50,12 +50,17 @@ To read or change one value without an editor (for scripts and agents):
 ```bash
 appmo env myapp get DATABASE_URL          # prints the value; exit code 1 if it is not set
 appmo env myapp set DEBUG false           # or: appmo env myapp set DEBUG=false
-printf '%s' "$TOKEN" | appmo env myapp set API_TOKEN   # value from stdin
+printf '%s' "$TOKEN" | appmo env myapp set API_TOKEN   # one value from stdin
+appmo env myapp set <<'EOF'               # many KEY=VALUE lines from stdin
+DATABASE_URL=postgres://app:pw@db/app
+API_TOKEN=abc123
+EOF
 ```
 
 - `set` replaces the line of the variable (and removes duplicate lines), or adds it at the end. It quotes the value if necessary.
 - `set` refuses names that are not valid, values with more than one line, and values that appmotel would skip when it loads the file (`$(`, backticks, `;`, `&&`, `||`).
-- Give secrets on stdin. A value on the command line is visible in the process list and in the sudo log. The appmo audit log (`journalctl -t appmo`) hides the value in both forms.
+- Give secrets on stdin. A value on the command line is visible in the process list and in the sudo log, and `set` warns if the name looks like a secret (`*PASS*`, `*TOKEN*`, `*KEY*`, `*SECRET*` ...). The appmo audit log (`journalctl -t appmo`) hides the value in all forms.
+- With many lines on stdin, blank lines and `#` comments are skipped, and one pair of outer quotes is removed. If one line is refused, nothing is changed. Quote the here-doc marker (`<<'EOF'`), so that your shell does not expand `$` in the values.
 - `set` does not restart the app. Run `appmo restart myapp` after the last change.
 
 **After editing, restart the app:**

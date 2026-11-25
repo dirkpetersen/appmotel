@@ -7,6 +7,7 @@ IFS=$'\n\t'
 #
 # Usage: appmotel-user create <app>
 #        appmotel-user delete <app>
+#        appmotel-user firewall      (rebuild the app-port sets, see below)
 #
 # The user is "a-<app>", member of group appmotel-apps, home mode 700, linger
 # on. appmotel may run any command as that user (one sudoers file per app).
@@ -17,9 +18,58 @@ readonly PREFIX="a-"
 readonly GROUP="appmotel-apps"
 readonly SUDOERS_DIR="/etc/sudoers.d"
 
+readonly NFT_BASE="/etc/appmotel/app-ports.nft"
+readonly NFT_USERS="/etc/appmotel/app-users.nft"
+
 die() { echo "appmotel-user: $1" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: appmotel-user create|delete <app>"
+# App users may open new connections to app ports (10001-59999) on this host
+# only for their own port: the nft table inet appmotel (made by install.sh)
+# drops the rest for uids in @app_uids, unless uid . port is in @own_ports.
+# The port of each app comes from appmotel's isolated.conf, which appmo
+# writes after it checked that no other app uses that port.
+rebuild_firewall() {
+  local nft_bin
+  nft_bin=$(command -v nft) || return 0
+  [[ -f "${NFT_BASE}" ]] || return 0
+  local appmotel_home member uid port conf
+  appmotel_home=$(getent passwd appmotel | cut -d: -f6)
+  local -a uids=() own=() members=()
+  IFS=',' read -r -a members <<< "$(getent group "${GROUP}" | cut -d: -f4)"
+  for member in "${members[@]}"; do
+    [[ "${member}" == "${PREFIX}"* ]] || continue
+    uid=$(id -u "${member}" 2>/dev/null) || continue
+    uids+=("${uid}")
+    conf="${appmotel_home}/.config/appmotel/${member#"${PREFIX}"}/isolated.conf"
+    port=$(grep -m1 '^PORT=' "${conf}" 2>/dev/null | cut -d= -f2 | tr -d '"') || true
+    if [[ "${port}" =~ ^[0-9]+$ ]] && (( port >= 10001 && port <= 59999 )); then
+      own+=("${uid} . ${port}")
+    fi
+  done
+
+  local tmp
+  tmp=$(mktemp "${NFT_USERS}.XXXXXX")
+  {
+    echo "# Written by appmotel-user firewall - do not edit"
+    (( ${#uids[@]} )) && echo "add element inet appmotel app_uids { $(IFS=,; echo "${uids[*]}") }"
+    (( ${#own[@]} )) && echo "add element inet appmotel own_ports { $(IFS=,; echo "${own[*]}") }"
+    true
+  } > "${tmp}"
+  chmod 644 "${tmp}"
+  mv -f "${tmp}" "${NFT_USERS}"
+  # An admin may have disabled the firewall unit: then write the file only
+  if systemctl is-enabled --quiet appmotel-firewall.service 2>/dev/null; then
+    "${nft_bin}" -f "${NFT_BASE}"
+  fi
+}
+
+if [[ $# -eq 1 && "$1" == "firewall" ]]; then
+  [[ "${EUID}" -eq 0 ]] || die "must run as root"
+  rebuild_firewall
+  exit 0
+fi
+
+[[ $# -eq 2 ]] || die "usage: appmotel-user create|delete <app> | firewall"
 
 action="$1"
 app="$2"
@@ -65,6 +115,7 @@ case "${action}" in
     fi
 
     loginctl enable-linger "${user}"
+    rebuild_firewall || echo "appmotel-user: WARN: could not update the app-port firewall" >&2
     echo "${user}"
     ;;
   delete)
@@ -81,6 +132,7 @@ case "${action}" in
       userdel --remove "${user}" 2>/dev/null || userdel --remove --force "${user}"
     fi
     rm -f "${sudoers_file}"
+    rebuild_firewall || echo "appmotel-user: WARN: could not update the app-port firewall" >&2
     ;;
   *)
     die "unknown action: ${action}"
