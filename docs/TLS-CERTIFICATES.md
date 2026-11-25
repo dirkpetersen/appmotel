@@ -92,7 +92,7 @@ echo | openssl s_client -connect myapp.apps.example.edu:443 -servername myapp.ap
 | `O=Let's Encrypt` and subject `CN=*.apps.example.edu` | Your certbot wildcard certificate (section 1) |
 | `O=Let's Encrypt` and subject `CN=apps.example.edu` | Traefik's wildcard certificate in `dns` mode (section 2) |
 | `O=Let's Encrypt` and subject `CN=myapp.apps.example.edu` | Traefik's certificate for this app in `http` mode (section 2) |
-| `CN=TRAEFIK DEFAULT CERT` | No certificate yet. Wait a few seconds, then look at the Traefik log |
+| `CN=TRAEFIK DEFAULT CERT` | No certificate yet. Wait a few seconds (DNS-01: up to 3 minutes), then look at the Traefik log. Traefik does not retry a failed order by itself, so autopull restarts Traefik when it still serves this certificate 10 minutes after it started (at most once an hour) |
 
 ```bash
 sudo journalctl -u traefik-appmotel -n 50 | grep -i acme

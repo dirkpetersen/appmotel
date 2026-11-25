@@ -44,7 +44,7 @@ echo | openssl s_client -connect myapp.<BASE_DOMAIN>:443 -servername myapp.<BASE
 
 | Subject | Meaning |
 |---|---|
-| `CN=TRAEFIK DEFAULT CERT` | no certificate yet. With Let's Encrypt in `http` mode, wait a few seconds. If it stays, port 80 is probably closed from the internet |
+| `CN=TRAEFIK DEFAULT CERT` | no certificate yet. Wait a few seconds (`dns` mode: up to 3 minutes). After 10 minutes autopull restarts Traefik once an hour to try again (log: `journalctl --user -u appmotel-autopull` as appmotel). If it stays in `http` mode, port 80 is probably closed from the internet |
 | `CN=myapp.<BASE_DOMAIN>` | Traefik's Let's Encrypt certificate for this app (`http` mode) |
 | `CN=<BASE_DOMAIN>` with `*.<BASE_DOMAIN>` | Traefik's wildcard certificate (`dns` mode, Route53) |
 | `CN=*.<BASE_DOMAIN>` | a certbot wildcard certificate from the sysadmin |
