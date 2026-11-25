@@ -9,7 +9,7 @@ You are not allowed to switch to `appmotel`. Check with `id`. If `appmotel-users
 ```bash
 appmo status myapp                       # systemd state and last log lines
 appmo logs myapp 100
-appmo exec myapp grep '^PORT=' .env      # the port the app must listen on
+appmo env myapp get PORT                 # the port the app must listen on
 appmo exec myapp ls -la                  # repo, .venv, node_modules?
 appmo restart myapp
 ```

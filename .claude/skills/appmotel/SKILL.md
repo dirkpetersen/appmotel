@@ -68,13 +68,15 @@ appmo self-update
 
 ## Key patterns for Claude Code
 
-- **Non-interactive:** all of this runs without a password. `appmo env myapp` opens an editor, so do not use it in automation. Change the `.env` like this:
+- **Non-interactive:** all of this runs without a password. `appmo env myapp` (no more words) opens an editor, so do not use it in automation. Read and change the `.env` like this:
   ```bash
-  appmo exec myapp sh -c 'echo "NEW_VAR=value" >> .env'
-  appmo restart myapp
+  appmo env myapp get PORT                 # prints the value, exit 1 if not set
+  appmo env myapp set NEW_VAR value        # replaces or adds the line, quotes it
+  printf '%s' "$SECRET" | appmo env myapp set API_KEY   # secret from stdin
+  appmo restart myapp                      # once, after the last set
   ```
-  To change an existing value, use `appmo exec myapp sed -i 's/^OLD=.*/OLD=new/' .env`.
-- **Secrets:** `.env` files hold secrets. Do not print them into logs, issues or commits. Read only the line you need: `appmo exec myapp grep '^PORT=' .env`.
+  `set` refuses values with `$(`, backticks, `;`, `&&`, `||` or a newline.
+- **Secrets:** `.env` files hold secrets. Do not print them into logs, issues or commits. Read only the value you need (`appmo env myapp get KEY`). Give secrets to `set` on stdin, so they are not in the process list or the sudo log.
 - **First `.env` of an app:** `appmo add` copies `.env.default` (or `env.default`, `.env.example`, `env.example`, `.env.local`) from the app's own folder. For a subfolder app, put the template in that subfolder: a template in a parent folder is not used.
 - **Multi-component apps:** `appmo restart myapp` restarts all components.
 - **Never** `git rebase -i`, `git add -i` or other interactive commands.

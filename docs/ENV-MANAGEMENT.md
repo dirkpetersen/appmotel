@@ -43,7 +43,20 @@ Edit the `.env` file using the `appmo env` command:
 appmo env myapp
 ```
 
-This opens the **physical file** in `~/.config/appmotel/myapp/.env` using your default editor (`$EDITOR` or `nano`).
+This opens the **physical file** in `~/.config/appmotel/myapp/.env` in `vim` (or `vi`), with the mouse off, so that you can select and paste text with your terminal. `sudo` drops `$EDITOR`, so `vim` is the usual editor.
+
+To read or change one value without an editor (for scripts and agents):
+
+```bash
+appmo env myapp get DATABASE_URL          # prints the value; exit code 1 if it is not set
+appmo env myapp set DEBUG false           # or: appmo env myapp set DEBUG=false
+printf '%s' "$TOKEN" | appmo env myapp set API_TOKEN   # value from stdin
+```
+
+- `set` replaces the line of the variable (and removes duplicate lines), or adds it at the end. It quotes the value if necessary.
+- `set` refuses names that are not valid, values with more than one line, and values that appmotel would skip when it loads the file (`$(`, backticks, `;`, `&&`, `||`).
+- Give secrets on stdin. A value on the command line is visible in the process list and in the sudo log. The appmo audit log (`journalctl -t appmo`) hides the value in both forms.
+- `set` does not restart the app. Run `appmo restart myapp` after the last change.
 
 **After editing, restart the app:**
 ```bash

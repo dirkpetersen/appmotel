@@ -131,7 +131,8 @@ appmo update <app>          # Pull and redeploy
 appmo check [app]           # Check for updates (no deploy)
 appmo autopull              # Check all apps + auto-debug error scan
 appmo logs <app> [lines]    # View logs
-appmo env <app>             # Edit app .env
+appmo env <app>             # Edit app .env (vim, mouse off)
+appmo env <app> get|set KEY [VALUE]  # One value; set reads stdin without VALUE; audit log hides the value
 appmo exec <app> <cmd>      # Run command in app env
 appmo backup|restore|backups  # Backup management
 appmo self-update           # Update CLI, Traefik, configs, propagate domain changes

@@ -22,7 +22,7 @@ check() {
 }
 
 # Load single functions from bin/appmo (running it would elevate to appmotel)
-for fn in python_version_request parse_env_file create_traefik_config setup_app_env_file update_port_in_env; do
+for fn in python_version_request parse_env_file create_traefik_config setup_app_env_file update_port_in_env safe_source_env env_get_value env_set_value; do
   # shellcheck source=/dev/null
   source <(sed -n "/^${fn}() {/,/^}/p" "${appmo}")
 done
@@ -132,6 +132,31 @@ check "ops: default"           "apps,%appmotel-ops"       "$(ops '')"
 check "ops: list gets group"   "apps,joe,%appmotel-ops"   "$(ops 'apps joe')"
 check "ops: group not doubled" "%appmotel-ops"            "$(ops '%appmotel-ops')"
 check "ops: ALL stays ALL"     "ALL"                      "$(ops 'ALL')"
+
+# --- env_set_value / env_get_value: what 'appmo env <app> set|get' writes and reads
+die() { echo "DIE: $*" >&2; exit 1; }
+ef="${work}/set.env"
+printf '# comment\nPORT=10001\nDB=old\nDB=dup\n' > "${ef}"
+env_set_value "${ef}" DB "new"
+check "env set: replaces, drops dup" "PORT=10001|DB=new" "$(grep -v '^#' "${ef}" | paste -sd'|')"
+env_set_value "${ef}" MSG "hello world #1"
+check "env set: spaces quoted"   "MSG='hello world #1'" "$(grep '^MSG=' "${ef}")"
+env_set_value "${ef}" Q "it's"
+check "env set: single quote"    "Q=\"it's\""   "$(grep '^Q=' "${ef}")"
+check "env get: plain"           "10001"          "$(env_get_value "${ef}" PORT)"
+check "env get: strips quotes"   "hello world #1" "$(env_get_value "${ef}" MSG)"
+check "env get: missing -> 1"    "1"              "$(env_get_value "${ef}" NOPE >/dev/null; echo $?)"
+check "env set: \$( refused"     "1" "$( (env_set_value "${ef}" X 'a$(id)') 2>/dev/null; echo $?)"
+check "env set: ; refused"       "1" "$( (env_set_value "${ef}" X 'a;b') 2>/dev/null; echo $?)"
+check "env set: bad name refused" "1" "$( (env_set_value "${ef}" '1X' v) 2>/dev/null; echo $?)"
+check "env set: both quotes refused" "1" "$( (env_set_value "${ef}" X "a'\"b") 2>/dev/null; echo $?)"
+check "env set: refused leaves file" "0" "$(grep -c '^X=' "${ef}")"
+( safe_source_env "${ef}" true; printf '%s|%s|%s' "${DB}" "${MSG}" "${Q}" ) > "${work}/src.out"
+check "env set: safe_source_env reads it" "new|hello world #1|it's" "$(cat "${work}/src.out")"
+if command -v systemd-run >/dev/null 2>&1 && systemd-run --user --wait --pipe true >/dev/null 2>&1; then
+  check "env set: systemd reads it" "new|hello world #1|it's" \
+    "$(systemd-run --user --wait --pipe -q -p EnvironmentFile="${ef}" sh -c 'printf "%s|%s|%s" "$DB" "$MSG" "$Q"')"
+fi
 
 # --- install.sh render_sudoers: the appmotel-users group may run only appmo
 # shellcheck source=/dev/null

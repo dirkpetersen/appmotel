@@ -212,7 +212,10 @@ appmo check [app-name]                        # Check for updates (no deploy)
 appmo autopull                                # Check all apps for updates and deploy
 
 # Environment Management
-appmo env <app-name>                          # Edit app's .env file in default editor
+appmo env <app-name>                          # Edit app's .env file (vim, mouse off for copy and paste)
+appmo env <app-name> get KEY                  # Print one value
+appmo env <app-name> set KEY VALUE            # Set one value (then appmo restart <app-name>)
+printf '%s' "$SECRET" | appmo env <app-name> set KEY   # Value from stdin: not in the logs
 
 # Monitoring & Debugging
 appmo logs <app-name> [lines]                 # View application logs
