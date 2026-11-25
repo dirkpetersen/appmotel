@@ -51,6 +51,9 @@ _appmo_completions() {
           fi
           COMPREPLY=($(compgen -W "${backups}" -- "${cur}"))
           ;;
+        env)
+          COMPREPLY=($(compgen -W "get set" -- "${cur}"))
+          ;;
       esac
       ;;
   esac
