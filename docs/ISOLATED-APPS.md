@@ -39,7 +39,7 @@ All of these were tested on a real server.
 
 ### What isolation does NOT protect
 
-- **Network:** app ports are closed to other machines (`appmotel-firewall.service`), but on the server itself an app user can still connect to `127.0.0.1:<port>` of every other app. Traefik's rate limits and any login that Traefik adds are not in that path. If an app trusts every request that comes from localhost, isolation does not protect it. Network isolation is planned (TBD).
+- **Network:** app ports are closed to other machines (`appmotel-firewall.service`). On the server itself, an app user may open connections only to its own app port. To reach another app, it must go through Traefik (`https://<app>.<BASE_DOMAIN>`), with its rate limits. Normal (not isolated) apps run as `appmotel` and can still reach each other. The rule is in the nft table `inet appmotel` (chain `output`, sets `app_uids` and `own_ports`); the root helper `appmotel-user firewall` fills the sets from the app users and their ports. `appmo` refuses a `PORT` that another app already uses.
 - **CPU and memory:** isolated apps share the machine. `MEMORY_LIMIT` and `CPU_QUOTA` still apply per app.
 - **appmotel itself:** whoever controls `appmotel` (or the operator user, `apps` by default) controls all isolated apps too. This is by design.
 - **Private repos:** see [Private repos and SSH keys](#private-repos-and-ssh-keys).

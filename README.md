@@ -29,7 +29,7 @@ appmo add --isolated myapp user/repo      # new app, runs as its own user a-myap
 appmo isolate myapp                       # move an existing app to its own user
 ```
 
-An isolated app runs as its own Linux user `a-<app>`. It cannot read appmotel's files, the files of other apps, or the TLS keys, and it has no `sudo` rights. `appmotel` and the operator still control it with the same `appmo` commands. Isolated apps can still connect to the local ports of other apps (no network isolation yet).
+An isolated app runs as its own Linux user `a-<app>`. It cannot read appmotel's files, the files of other apps, or the TLS keys, and it has no `sudo` rights. `appmotel` and the operator still control it with the same `appmo` commands. On the server, an isolated app can connect only to its own app port, not to the ports of other apps.
 
 Read **[Isolated Apps](docs/ISOLATED-APPS.md)** before you use it: it explains what is protected, what is not, and how to upgrade an existing server.
 
@@ -217,6 +217,7 @@ appmo env <app-name> get KEY                  # Print one value
 appmo env <app-name> set KEY VALUE            # Set one value (then appmo restart <app-name>)
 printf '%s' "$SECRET" | appmo env <app-name> set KEY   # Value from stdin: not in the logs
 appmo env <app-name> set < secrets.env        # Many KEY=VALUE lines from stdin (all or none)
+appmo env <app-name> unset KEY                # Remove a variable
 
 # Monitoring & Debugging
 appmo logs <app-name> [lines]                 # View application logs
@@ -368,8 +369,11 @@ Use the `install-aws.sh` script which automatically:
 4. Configures DNS-01 challenge for wildcard SSL certificates
 
 ```bash
-bash install-aws.sh [instance-type] [region]  # Default: t4g.micro us-west-2
+bash install-aws.sh [--type t4g.small] [--region us-west-2] [--hosted-zone ZONE_ID]
+bash install-aws.sh --hosted-zone ZONE_ID --subdomain apps   # BASE_DOMAIN=apps.<zone>
 ```
+
+It uploads this checkout and runs both parts of `install.sh`. It never replaces existing DNS records unless you give `--force`. Use `--subdomain` if the zone is also used for other things: then the records are `appmotel.apps.<zone>` and `*.apps.<zone>`, and the zone's own records stay as they are. If your AWS user may not read IAM, an admin must create the role `appmotel-route53-role` and the instance profile `appmotel-instance-profile` once.
 
 **Advantages:**
 - ✅ Fully automatic DNS and SSL setup
@@ -883,7 +887,7 @@ myapp/
 - By default all apps run as the `appmotel` user and can read each other's files. Use `appmo add --isolated` or `appmo isolate` to run an app as its own user (see [Isolated Apps](docs/ISOLATED-APPS.md))
 - appmotel's config and data folders are mode 700, `.env` files mode 600
 - Traefik runs with minimal privileges using `CAP_NET_BIND_SERVICE`
-- App ports (10001-59999) accept new connections only from the server itself. Many apps listen on all addresses (for example Flask with `host='0.0.0.0'`), so without this rule they could be reached past Traefik, also from a second network. `sudo bash install.sh` installs the rule as `appmotel-firewall.service` (an nftables table `inet appmotel`). Replies to the server's own outgoing connections are not affected. To check: `sudo nft list table inet appmotel`. An admin who disables the service (`sudo systemctl disable --now appmotel-firewall`) keeps it disabled on reinstall.
+- App ports (10001-59999) accept new connections only from the server itself. Many apps listen on all addresses (for example Flask with `host='0.0.0.0'`), so without this rule they could be reached past Traefik, also from a second network. `sudo bash install.sh` installs the rule as `appmotel-firewall.service` (an nftables table `inet appmotel`). Replies to the server's own outgoing connections are not affected. On the server itself, isolated app users may open connections only to their own app port; Traefik (`appmotel`), root and other users are not affected. To check: `sudo nft list table inet appmotel`. An admin who disables the service (`sudo systemctl disable --now appmotel-firewall`) keeps it disabled on reinstall.
 - Apps are isolated by systemd resource limits
 - HTTPS enforced via automatic redirect
 - Rate limiting prevents abuse

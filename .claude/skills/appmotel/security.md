@@ -14,7 +14,7 @@ By default all apps run as `appmotel` and can read each other's `.env`. Deploy w
 - appmotel's `.env`
 - `acme.json` (the TLS keys)
 
-App ports (10001-59999) accept new connections only from the server itself (`appmotel-firewall.service`, nft table `inet appmotel`), so the only way in from outside is Traefik on 80/443. Open item: on the server, an app user can still connect to other apps' localhost ports. See `docs/ISOLATED-APPS.md`.
+App ports (10001-59999) accept new connections only from the server itself (`appmotel-firewall.service`, nft table `inet appmotel`), so the only way in from outside is Traefik on 80/443. On the server, an isolated app user can connect only to its own app port; to reach another app it must use Traefik. Normal apps (user `appmotel`) can still reach each other. See `docs/ISOLATED-APPS.md`.
 
 ## Protect secrets
 

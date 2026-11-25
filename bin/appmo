@@ -4889,7 +4889,9 @@ refresh_app_list() {
   [[ "${APPMO_ROLE}" == "admin" && -d "${APPMOTEL_HOME}/.local/bin" ]] || return 0
   local list="${APPMOTEL_HOME}/.local/bin/.appmo-apps" tmp
   tmp=$(mktemp "${list}.XXXXXX") || return 0
-  find "${APPS_CONFIG_DIR}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort > "${tmp}" || true
+  # Only folders of real apps (install.sh also makes other folders here)
+  find "${APPS_CONFIG_DIR}" -mindepth 2 -maxdepth 2 \( -name metadata.conf -o -name isolated.conf \) \
+    -printf '%h\n' 2>/dev/null | sed 's|.*/||' | sort -u > "${tmp}" || true
   chmod 644 "${tmp}"
   mv -f "${tmp}" "${list}"
 }

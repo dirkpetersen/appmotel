@@ -19,7 +19,11 @@ appmo restart myapp
 
 ## App `.env` holds global settings (`BASE_DOMAIN`, `USE_LETSENCRYPT`, ...)
 
-Apps that were added from a subfolder before Nov 2026 could get the parent folder's template as their `.env` (for example the appmotel examples got appmotel's own `.env.default`). The lines do no harm. To clean up, delete them with `appmo exec myapp sed -i '/^BASE_DOMAIN=/d' .env` (one line per key, keep `PORT`), then `appmo restart myapp`.
+Apps that were added from a subfolder before Nov 2026 could get the parent folder's template as their `.env` (for example the appmotel examples got appmotel's own `.env.default`). The lines do no harm. To clean up: `appmo env myapp unset BASE_DOMAIN USE_LETSENCRYPT LETSENCRYPT_MODE` (name the keys you see; keep `PORT`), then `appmo restart myapp`.
+
+## An isolated app cannot reach another app on localhost
+
+This is intended: an isolated app user may connect only to its own app port on the server. Call the other app through Traefik (`https://other.<BASE_DOMAIN>`). Check the rule with `sudo nft list table inet appmotel` (sets `app_uids`, `own_ports`).
 
 ## 404 or 502 from Traefik
 

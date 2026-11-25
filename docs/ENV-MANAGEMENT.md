@@ -51,6 +51,7 @@ To read or change one value without an editor (for scripts and agents):
 appmo env myapp get DATABASE_URL          # prints the value; exit code 1 if it is not set
 appmo env myapp set DEBUG false           # or: appmo env myapp set DEBUG=false
 printf '%s' "$TOKEN" | appmo env myapp set API_TOKEN   # one value from stdin
+appmo env myapp unset OLD_VAR OTHER_VAR   # remove variables
 appmo env myapp set <<'EOF'               # many KEY=VALUE lines from stdin
 DATABASE_URL=postgres://app:pw@db/app
 API_TOKEN=abc123

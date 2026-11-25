@@ -479,8 +479,12 @@ create_iam_role() {
     log_msg "INFO" "IAM role '${IAM_ROLE_NAME}' already exists"
   } || {
     # Check for access denied error
+    # Many users may launch instances but not read IAM. Then use the role and
+    # instance profile an admin made before; run-instances fails clearly if
+    # the profile is missing.
     if echo "${role_check_output}" | grep -q "AccessDenied"; then
-      die_iam_permission_error "iam:GetRole"
+      log_msg "WARN" "No iam:GetRole permission: using the existing instance profile '${IAM_INSTANCE_PROFILE}' unchecked"
+      return 0
     fi
 
     log_msg "INFO" "Creating IAM role - this may take a few seconds..."
@@ -874,63 +878,6 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
-# Function: configure_base_domain
-# Description: Updates BASE_DOMAIN in remote .env file
-# Arguments:
-#   $1 - Host IP
-#   $2 - Key file path
-#   $3 - Domain name
-# -----------------------------------------------------------------------------
-configure_base_domain() {
-  local host="$1"
-  local key_file="$2"
-  local domain="$3"
-
-  log_msg "INFO" "Configuring BASE_DOMAIN=${domain} on remote server..."
-
-  ssh -i "${key_file}" \
-      -o StrictHostKeyChecking=no \
-      -o UserKnownHostsFile=/dev/null \
-      -o LogLevel=ERROR \
-      "${SSH_USER}@${host}" \
-      "sudo sed -i 's|^BASE_DOMAIN=.*|BASE_DOMAIN=\"${domain}\"|' /home/appmotel/.config/appmotel/.env"
-
-  log_msg "INFO" "BASE_DOMAIN configured successfully"
-}
-
-# -----------------------------------------------------------------------------
-# Function: configure_dns01_mode
-# Description: Enables Let's Encrypt DNS-01 challenge mode with Route53
-# Arguments:
-#   $1 - Host IP
-#   $2 - Key file path
-#   $3 - Hosted zone ID
-#   $4 - Region
-# -----------------------------------------------------------------------------
-configure_dns01_mode() {
-  local host="$1"
-  local key_file="$2"
-  local zone_id="$3"
-  local region="$4"
-
-  log_msg "INFO" "Configuring Let's Encrypt DNS-01 mode with Route53..."
-
-  ssh -i "${key_file}" \
-      -o StrictHostKeyChecking=no \
-      -o UserKnownHostsFile=/dev/null \
-      -o LogLevel=ERROR \
-      "${SSH_USER}@${host}" \
-      "sudo sed -i \
-        -e 's|^USE_LETSENCRYPT=.*|USE_LETSENCRYPT=\"yes\"|' \
-        -e 's|^LETSENCRYPT_MODE=.*|LETSENCRYPT_MODE=\"dns\"|' \
-        -e 's|^AWS_HOSTED_ZONE_ID=.*|AWS_HOSTED_ZONE_ID=\"${zone_id}\"|' \
-        -e 's|^AWS_REGION=.*|AWS_REGION=\"${region}\"|' \
-        /home/appmotel/.config/appmotel/.env"
-
-  log_msg "INFO" "DNS-01 mode configured (using IAM instance role for credentials)"
-}
-
-# -----------------------------------------------------------------------------
 # Function: install_appmotel
 # Description: Uploads and runs install.sh on remote instance
 # Arguments:
@@ -940,6 +887,7 @@ configure_dns01_mode() {
 install_appmotel() {
   local host="$1"
   local key_file="$2"
+  local domain="${3:-}" zone_id="${4:-}"
   local -a ssh_opts=(-i "${key_file}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 
   [[ -f "${SCRIPT_DIR}/install.sh" ]] || die "install.sh not found in ${SCRIPT_DIR}"
@@ -954,6 +902,21 @@ install_appmotel() {
     tar -C "${SCRIPT_DIR}" --exclude=.git --exclude=.env -czf - .
   fi | ssh "${ssh_opts[@]}" "${SSH_USER}@${host}" \
     "rm -rf ${REMOTE_SRC} && mkdir -p ${REMOTE_SRC} && tar xzf - -C ${REMOTE_SRC} && chmod -R a+rX ${REMOTE_SRC}"
+
+  # The first install must already know the domain and DNS-01 mode: Traefik
+  # starts in it and registers its ACME account. A later change of mode left
+  # an account that Let's Encrypt did not know (accountDoesNotExist).
+  # install.sh makes the new .env from this template.
+  if [[ -n "${domain}" ]]; then
+    ssh "${ssh_opts[@]}" "${SSH_USER}@${host}" "sed -i \
+      -e 's|^BASE_DOMAIN=.*|BASE_DOMAIN=\"${domain}\"|' \
+      -e 's|^USE_LETSENCRYPT=.*|USE_LETSENCRYPT=\"yes\"|' \
+      -e 's|^LETSENCRYPT_MODE=.*|LETSENCRYPT_MODE=\"dns\"|' \
+      -e 's|^AWS_HOSTED_ZONE_ID=.*|AWS_HOSTED_ZONE_ID=\"${zone_id}\"|' \
+      ${REMOTE_SRC}/.env.default && grep -q '^BASE_DOMAIN=\"${domain}\"' ${REMOTE_SRC}/.env.default" \
+      || die "Could not write the domain settings into ${REMOTE_SRC}/.env.default"
+    log_msg "INFO" "BASE_DOMAIN=${domain}, Let's Encrypt DNS-01 with Route53 zone ${zone_id}"
+  fi
 
   run_remote_install "${host}" "${key_file}"
   log_msg "INFO" "Installation completed successfully!"
@@ -1255,43 +1218,23 @@ main() {
   # Wait for SSH to be ready
   wait_for_ssh "${public_ip}" "${key_file}"
 
-  # Install Appmotel
-  install_appmotel "${public_ip}" "${key_file}"
-
-  # Configure Route53 DNS using pre-validated zone info
+  # DNS records first, so that the single install run knows the domain
   local domain_name=""
   if [[ "${route53_available}" -eq 1 ]] && [[ -n "${VALIDATED_ZONE_ID}" ]]; then
-    # Configure DNS records in Route53
     if configure_route53_dns "${VALIDATED_ZONE_ID}" "${VALIDATED_DOMAIN}" "${public_ip}"; then
       domain_name="${VALIDATED_DOMAIN}"
-
-      # Update BASE_DOMAIN on remote server
-      configure_base_domain "${public_ip}" "${key_file}" "${domain_name}"
-
-      # Configure DNS-01 mode for Let's Encrypt wildcard certificates
-      configure_dns01_mode "${public_ip}" "${key_file}" "${VALIDATED_ZONE_ID}" "${region}"
-
-      # Re-run the root installer now that .env holds the real BASE_DOMAIN:
-      # the first run saw the placeholder domain and setup_local_dns skipped
-      # itself, so the dnsmasq hairpin-NAT workaround was never configured.
-      # install.sh is idempotent, so the repeat root pass is safe.
-      log_msg "INFO" "Re-running install.sh to configure local DNS (dnsmasq) and the DNS-01 resolver..."
-      run_remote_install "${public_ip}" "${key_file}" \
-        || log_msg "WARN" "install.sh re-run failed; local DNS (dnsmasq) may need manual setup"
-
-      # Restart Traefik to apply new domain configuration
-      log_msg "INFO" "Restarting Traefik to apply DNS configuration..."
-      ssh -i "${key_file}" \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR \
-          "${SSH_USER}@${public_ip}" \
-          "sudo systemctl restart traefik-appmotel" 2>/dev/null || log_msg "WARN" "Traefik not running yet - expected on first install"
     else
       log_msg "WARN" "DNS configuration failed, continuing without automatic DNS setup"
     fi
   else
     log_msg "INFO" "No Route53 hosted zones configured, skipping automatic DNS setup"
+  fi
+
+  # Install Appmotel (both parts of install.sh, once)
+  if [[ -n "${domain_name}" ]]; then
+    install_appmotel "${public_ip}" "${key_file}" "${domain_name}" "${VALIDATED_ZONE_ID}"
+  else
+    install_appmotel "${public_ip}" "${key_file}"
   fi
 
   # Display summary

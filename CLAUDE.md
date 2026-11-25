@@ -76,7 +76,7 @@ To add a CLI command: write `cmd_<name>`, add it to the dispatch `case` in `bin/
 
 ### Testing
 
-There is no full test suite. Run `bash -n` on each changed script, and `bash tests/test-appmo.sh` (no root needed) for the input checks that guard isolated apps (Traefik values, Python version requests, `appmotel-user` names). Functional tests are manual, on a host with appmotel installed: deploy the example apps and follow `docs/TESTING.md` (clean install, idempotency re-run, per-runtime deploys, CLI commands).
+There is no full test suite. CI (`.github/workflows/test.yml`) runs `bash -n`, `shellcheck -S error` and `tests/test-appmo.sh` on every push and PR; run the same locally. `bash tests/test-appmo.sh` (no root needed) for the input checks that guard isolated apps (Traefik values, Python version requests, `appmotel-user` names). Functional tests are manual, on a host with appmotel installed: deploy the example apps and follow `docs/TESTING.md` (clean install, idempotency re-run, per-runtime deploys, CLI commands).
 
 ### Directory Structure (appmotel user)
 
@@ -133,6 +133,8 @@ appmo autopull              # Check all apps + auto-debug error scan
 appmo logs <app> [lines]    # View logs
 appmo env <app>             # Edit app .env (vim, mouse off)
 appmo env <app> get|set KEY [VALUE]  # One value; set reads stdin without VALUE; audit log hides the value
+appmo env <app> set < lines # Many KEY=VALUE lines from stdin, all or none
+appmo env <app> unset KEY...
 appmo exec <app> <cmd>      # Run command in app env
 appmo backup|restore|backups  # Backup management
 appmo self-update           # Update CLI, Traefik, configs, propagate domain changes
@@ -185,7 +187,8 @@ An isolated app runs as its own user `a-<app>` (group `appmotel-apps`, home mode
 - `secure_appmotel_files` (same code in `install.sh` and `bin/appmo`, also run by autopull) removes group/other access from everything in `/home/appmotel` except `~/.local/bin`. `/home/appmotel` is world-traversable (751) for the `/usr/local/bin/appmo` symlink, so these modes are what keeps app users out.
 - `install_app_port_firewall` (root part of `install.sh`) installs `appmotel-firewall.service`, which loads `/etc/appmotel/app-ports.nft`: new TCP connections to 10001-59999 are dropped unless they come in on `lo` (Traefik uses `http://localhost:<port>`). Keep `ct state new` in that rule: the ephemeral port range overlaps, and replies to outgoing connections must pass.
 - `install_journal_access` (root part of `install.sh`) writes `/etc/tmpfiles.d/appmotel-journal.conf`, a read ACL on `/var/log/journal` for `appmotel-ops`. A group cannot join `systemd-journal`, and an ACL also covers members added later. Skipped with a WARN if the journal is volatile.
-- Open item: an app user can still connect to other apps' localhost ports directly (no network isolation between apps on the host yet).
+- The same table has an `output` chain: uids in `@app_uids` (isolated app users) may open new connections to 10001-59999 on `lo` only when `uid . port` is in `@own_ports`. `appmotel-user firewall` (root, also `ExecStartPost` of the unit, and after create/delete) writes both sets into `/etc/appmotel/app-users.nft` from the members of `appmotel-apps` and appmotel's `isolated.conf`; `sync_isolated_traefik` calls it when the port changes and refuses a port of another app. Normal apps (uid `appmotel`) are not restricted.
+- `~/.local/bin/.appmo-apps` (644, written by `refresh_app_list` after add/isolate/remove/autopull/self-update) is the app-name list for tab completion; the config dir is 700.
 
 ## AWS Deployment
 

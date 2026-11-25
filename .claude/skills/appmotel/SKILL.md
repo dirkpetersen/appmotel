@@ -77,6 +77,7 @@ appmo self-update
   DATABASE_URL=postgres://app:pw@db/app
   API_KEY=abc123
   EOF
+  appmo env myapp unset OLD_VAR            # remove a variable
   appmo restart myapp                      # once, after the last set
   ```
   `set` refuses values with `$(`, backticks, `;`, `&&`, `||` or a newline.
