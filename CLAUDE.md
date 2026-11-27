@@ -28,9 +28,12 @@ sudo -u appmotel bash bin/reset-home.sh --force  # Reset appmotel home
 sudo bash install.sh                             # System-level setup (root)
 sudo -u appmotel bash install.sh                 # User-level setup
 
-# Validate Bash scripts before committing
-bash -n bin/appmo
-bash -n install.sh
+# Validate Bash scripts before committing (same checks as CI)
+for f in install.sh install-aws.sh bin/appmo bin/appmotel-user bin/appmotel-fix-certs \
+         bin/appmo-completion.bash bin/reset-home.sh tests/test-appmo.sh; do bash -n "$f"; done
+shellcheck -S error install.sh install-aws.sh bin/appmo bin/appmotel-user \
+  bin/appmotel-fix-certs bin/appmo-completion.bash bin/reset-home.sh tests/test-appmo.sh
+bash tests/test-appmo.sh                         # Unit checks, no root
 
 # Service management
 sudo -u appmotel sudo systemctl status traefik-appmotel
@@ -64,7 +67,7 @@ See `.claude/skills/bash/SKILL.md` for full coding standards (associative arrays
 |------|---------|
 | `install.sh` | Main installer (root + user-level setup) |
 | `install-aws.sh` | EC2 deployment with Route53 DNS (wraps install.sh) |
-| `bin/appmo` | CLI tool for managing apps (~4200 lines); commands are `cmd_<name>` functions, dispatched by the `case` block at the end of the file |
+| `bin/appmo` | CLI tool for managing apps (~5000 lines); commands are `cmd_<name>` functions, dispatched by the `case` block at the end of the file |
 | `bin/appmo-completion.bash` | Shell completion for appmo (static command list) |
 | `bin/appmotel-fix-certs` | Root helper, installed to `/usr/local/bin`, that makes `/etc/letsencrypt` readable via the `ssl-cert` group; `appmotel` may run it via sudoers |
 | `templates/appmotel-autopull.*` | Systemd units for 2-minute git polling |
@@ -76,7 +79,7 @@ To add a CLI command: write `cmd_<name>`, add it to the dispatch `case` in `bin/
 
 ### Testing
 
-There is no full test suite. CI (`.github/workflows/test.yml`) runs `bash -n`, `shellcheck -S error` and `tests/test-appmo.sh` on every push and PR; run the same locally. `bash tests/test-appmo.sh` (no root needed) for the input checks that guard isolated apps (Traefik values, Python version requests, `appmotel-user` names). Functional tests are manual, on a host with appmotel installed: deploy the example apps and follow `docs/TESTING.md` (clean install, idempotency re-run, per-runtime deploys, CLI commands).
+There is no full test suite. CI (`.github/workflows/test.yml`) runs `bash -n`, `shellcheck -S error` and `tests/test-appmo.sh` on every push and PR; run the same locally. `bash tests/test-appmo.sh` (no root needed) for the input checks that guard isolated apps (Traefik values, Python version requests, `appmotel-user` names). There is no per-test filter: to run one check, copy its lines into a scratch script that sources the functions it needs from `bin/appmo` (the script's own `sed -n "/^fn() {/,/^}/p"` pattern). Functional tests are manual, on a host with appmotel installed: deploy the example apps and follow `docs/TESTING.md` (clean install, idempotency re-run, per-runtime deploys, CLI commands).
 
 ### Directory Structure (appmotel user)
 
@@ -138,6 +141,7 @@ appmo env <app> unset KEY...
 appmo exec <app> <cmd>      # Run command in app env
 appmo backup|restore|backups  # Backup management
 appmo self-update           # Update CLI, Traefik, configs, propagate domain changes
+appmo skill                 # Install the appmotel skill into the caller's ~/.claude/skills (never elevates)
 ```
 
 ### Global `.env` Settings (`~/.config/appmotel/.env`)
@@ -198,6 +202,10 @@ An isolated app runs as its own user `a-<app>` (group `appmotel-apps`, home mode
 ## Auto-Debug (Error Detection)
 
 During each autopull cycle, appmotel scans app logs for errors. If `claude` (Claude Code CLI) and `gh` (GitHub CLI) are installed, it automatically analyzes errors and files GitHub issues. See **[docs/AUTO-DEBUG.md](docs/AUTO-DEBUG.md)** for full details, prerequisites, and configuration.
+
+## Docs Site
+
+`docs/` and `zensical.toml` are published to GitHub Pages by `.github/workflows/docs.yml` (`pip install zensical && zensical build --clean`, pushed to `gh-pages` on push to main). CI overwrites `docs/index.md` and `docs/examples.md` from `README.md` and `examples/README.md`, so edit the READMEs, not those copies.
 
 ## Additional Documentation
 
