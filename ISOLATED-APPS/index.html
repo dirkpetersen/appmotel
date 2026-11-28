@@ -1,0 +1,1104 @@
+
+
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://dirkpetersen.github.io/appmotel/ISOLATED-APPS/">
+      
+      
+      
+      
+        <link rel="prev" href="./..">
+      
+      
+        <link rel="next" href="../TLS-CERTIFICATES/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.1.4">
+    
+    
+      
+        <title>Isolated Apps (read first) - Appmotel</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.5cb9f1ba.min.css">
+      
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Appmotel" class="md-header__button md-logo" aria-label="Appmotel" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+      <span class="md-visually-hidden">Navigation</span>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Appmotel
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Isolated Apps (read first)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+          <span class="md-visually-hidden">Search</span>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/dirkpetersen/appmotel" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dirkpetersen/appmotel
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Appmotel" class="md-nav__button md-logo" aria-label="Appmotel" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    Appmotel
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dirkpetersen/appmotel" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dirkpetersen/appmotel
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Isolated Apps (read first)
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Isolated Apps (read first)
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The problem
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-solution-one-linux-user-for-each-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The solution: one Linux user for each app
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The solution: one Linux user for each app">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-an-isolated-app-cannot-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What an isolated app cannot do
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-isolation-does-not-protect" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What isolation does NOT protect
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How it works
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How it works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-the-files-are" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the files are
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-an-existing-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading an existing server
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#moving-an-app-appmo-isolate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Moving an app: <code>appmo isolate</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#private-repos-and-ssh-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Private repos and SSH keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#removing-an-isolated-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Removing an isolated app
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-versions-uv" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Python versions (uv)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Troubleshooting
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../TLS-CERTIFICATES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TLS Certificates
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ENV-MANAGEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI-COMPONENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Multi-Component Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AUTO-DEBUG/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Debug
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEV-SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development Setup
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../IMPLEMENTATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Implementation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../TESTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The problem
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-solution-one-linux-user-for-each-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The solution: one Linux user for each app
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The solution: one Linux user for each app">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-an-isolated-app-cannot-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What an isolated app cannot do
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-isolation-does-not-protect" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What isolation does NOT protect
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        How it works
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="How it works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#where-the-files-are" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the files are
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#upgrading-an-existing-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Upgrading an existing server
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#moving-an-app-appmo-isolate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Moving an app: <code>appmo isolate</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#private-repos-and-ssh-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Private repos and SSH keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#removing-an-isolated-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Removing an isolated app
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-versions-uv" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Python versions (uv)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Troubleshooting
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="isolated-apps">Isolated Apps<a class="headerlink" href="#isolated-apps" title="Permanent link">&para;</a></h1>
+<p>This page is for the sysadmin who runs an appmotel server. Read it before you put apps with secrets on a shared server.</p>
+<h2 id="the-problem">The problem<a class="headerlink" href="#the-problem" title="Permanent link">&para;</a></h2>
+<p>By default, every app runs as the same Linux user, <code>appmotel</code>. So every app can read the files of every other app:</p>
+<ul>
+<li>the <code>.env</code> files of all apps (database passwords, API keys, tokens)</li>
+<li>appmotel's own <code>.env</code> (for example AWS keys for Route53)</li>
+<li>the TLS private keys in <code>acme.json</code></li>
+<li>appmotel's GitHub SSH key</li>
+</ul>
+<p>If one app has a bug that lets an attacker run code or read files, the attacker gets the secrets of <strong>all</strong> apps on the server.</p>
+<h2 id="the-solution-one-linux-user-for-each-app">The solution: one Linux user for each app<a class="headerlink" href="#the-solution-one-linux-user-for-each-app" title="Permanent link">&para;</a></h2>
+<p>An isolated app runs as its own Linux user, <code>a-&lt;app&gt;</code>. For example, the app <code>billing</code> runs as <code>a-billing</code>.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>appmo<span class="w"> </span>add<span class="w"> </span>--isolated<span class="w"> </span>billing<span class="w"> </span>user/billing-repo<span class="w">        </span><span class="c1"># new app</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>appmo<span class="w"> </span>isolate<span class="w"> </span>billing<span class="w">                                 </span><span class="c1"># existing app</span>
+</span></code></pre></div>
+<p>All other commands stay the same. <code>appmo start</code>, <code>stop</code>, <code>restart</code>, <code>update</code>, <code>logs</code>, <code>env</code>, <code>exec</code>, <code>status</code>, <code>check</code>, <code>backup</code>, <code>restore</code>, <code>backups</code>, <code>remove</code>, <code>list</code> and <code>autopull</code> work for isolated apps too.</p>
+<h3 id="what-an-isolated-app-cannot-do">What an isolated app cannot do<a class="headerlink" href="#what-an-isolated-app-cannot-do" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Attempt by the app user</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read appmotel's <code>.env</code>, or the <code>.env</code> of another app</td>
+<td>Permission denied</td>
+</tr>
+<tr>
+<td>Read <code>acme.json</code> (TLS keys) or the Traefik config</td>
+<td>Permission denied</td>
+</tr>
+<tr>
+<td>Read the home of another app user</td>
+<td>Permission denied</td>
+</tr>
+<tr>
+<td>Use <code>sudo</code>, or become <code>appmotel</code></td>
+<td>Refused, the user has no sudo rights</td>
+</tr>
+<tr>
+<td>Change Traefik routes (for example, take over the host name of another app)</td>
+<td>Not possible, only <code>appmotel</code> writes routes</td>
+</tr>
+<tr>
+<td>Run <code>appmo self-update</code> or <code>appmo isolate</code></td>
+<td>Refused</td>
+</tr>
+</tbody>
+</table>
+<p>All of these were tested on a real server.</p>
+<h3 id="what-isolation-does-not-protect">What isolation does NOT protect<a class="headerlink" href="#what-isolation-does-not-protect" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Network:</strong> app ports are closed to other machines (<code>appmotel-firewall.service</code>). On the server itself, an app user may open connections only to its own app port. To reach another app, it must go through Traefik (<code>https://&lt;app&gt;.&lt;BASE_DOMAIN&gt;</code>), with its rate limits. Normal (not isolated) apps run as <code>appmotel</code> and can still reach each other. The rule is in the nft table <code>inet appmotel</code> (chain <code>output</code>, sets <code>app_uids</code> and <code>own_ports</code>); the root helper <code>appmotel-user firewall</code> fills the sets from the app users and their ports. <code>appmo</code> refuses a <code>PORT</code> that another app already uses.</li>
+<li><strong>CPU and memory:</strong> isolated apps share the machine. <code>MEMORY_LIMIT</code> and <code>CPU_QUOTA</code> still apply per app.</li>
+<li><strong>appmotel itself:</strong> whoever controls <code>appmotel</code> (or the operator user, <code>apps</code> by default) controls all isolated apps too. This is by design.</li>
+<li><strong>Private repos:</strong> see <a href="#private-repos-and-ssh-keys">Private repos and SSH keys</a>.</li>
+</ul>
+<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>operator (apps) --sudo--&gt; appmotel --sudo -u a-&lt;app&gt;--&gt; a-&lt;app&gt;
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>                             |                             |
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>                         Traefik routes,             app files, venv,
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>                         isolated.conf               systemd user service
+</span></code></pre></div>
+<ul>
+<li><strong>The app user:</strong> <code>a-&lt;app&gt;</code>, with its own home <code>/home/a-&lt;app&gt;</code> (mode 700), member of the group <code>appmotel-apps</code>. Linger is on, so its systemd user services run without a login.</li>
+<li><strong>The root helper <code>/usr/local/bin/appmotel-user</code>:</strong> creates and deletes app users. <code>appmotel</code> may run it with sudo. The helper:</li>
+<li>accepts only valid app names (at most 30 characters)</li>
+<li>never takes over a user that it did not create</li>
+<li>refuses to finish if the new user would get any sudo rights</li>
+<li><strong>The control path:</strong> <code>/etc/sudoers.d/appmotel-a-&lt;app&gt;</code> contains one line, <code>appmotel ALL=(a-&lt;app&gt;) NOPASSWD: ALL</code>. So <code>appmotel</code> can run anything as that user, and nothing in the other direction.</li>
+<li><strong>The operator rules:</strong> the rules in <code>/etc/sudoers.d/appmotel</code> for the operators (<code>appmotel-ops</code>, <code>OPERATOR_USERS</code>) and for the group <code>appmotel-users</code> exclude the app users, <code>&lt;operators&gt;, !%appmotel-apps</code>. This also holds when <code>OPERATOR_USERS=ALL</code>, or when an app user is put into <code>appmotel-users</code> by mistake.</li>
+<li><strong>Two roles of <code>appmo</code>:</strong> run as <code>appmotel</code>, it is in admin role. Run as an <code>a-*</code> user, it is in app role: it manages only the apps in that user's home, never switches to <code>appmotel</code>, and never writes Traefik config.</li>
+<li><strong>What appmotel keeps:</strong> for an isolated app, appmotel keeps only <code>~/.config/appmotel/&lt;app&gt;/isolated.conf</code> (the user and the port). For each command, <code>appmo</code> runs itself as the app user. After the command, appmotel rebuilds the Traefik route from the app's port and <code>.env</code>. It checks every value first, so a changed <code>.env</code> cannot add routes for other host names.</li>
+</ul>
+<h3 id="where-the-files-are">Where the files are<a class="headerlink" href="#where-the-files-are" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Normal app</th>
+<th>Isolated app</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Repo, venv</td>
+<td><code>/home/appmotel/.local/share/appmotel/&lt;app&gt;/repo</code></td>
+<td><code>/home/a-&lt;app&gt;/.local/share/appmotel/&lt;app&gt;/repo</code></td>
+</tr>
+<tr>
+<td><code>.env</code>, metadata</td>
+<td><code>/home/appmotel/.config/appmotel/&lt;app&gt;/</code></td>
+<td><code>/home/a-&lt;app&gt;/.config/appmotel/&lt;app&gt;/</code></td>
+</tr>
+<tr>
+<td>systemd unit</td>
+<td><code>/home/appmotel/.config/systemd/user/</code></td>
+<td><code>/home/a-&lt;app&gt;/.config/systemd/user/</code></td>
+</tr>
+<tr>
+<td>Backups</td>
+<td><code>/home/appmotel/.local/share/appmotel-backups/&lt;app&gt;/</code></td>
+<td><code>/home/a-&lt;app&gt;/.local/share/appmotel-backups/&lt;app&gt;/</code></td>
+</tr>
+<tr>
+<td>Traefik route</td>
+<td><code>/home/appmotel/.config/traefik/dynamic/&lt;app&gt;.yaml</code></td>
+<td>same (written by appmotel)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="upgrading-an-existing-server">Upgrading an existing server<a class="headerlink" href="#upgrading-an-existing-server" title="Permanent link">&para;</a></h2>
+<p>Do this once, from a checkout of the new appmotel version.</p>
+<ol>
+<li>Run the system part as root. It creates the groups <code>appmotel-apps</code>, <code>appmotel-users</code> and <code>appmotel-ops</code>, installs <code>/usr/local/bin/appmotel-user</code> and writes the new sudoers rules:
+   <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>sudo<span class="w"> </span>bash<span class="w"> </span>install.sh
+</span></code></pre></div></li>
+<li>Run the user part as appmotel. It sets the new file modes and installs uv:
+   <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sudo<span class="w"> </span>-u<span class="w"> </span>appmotel<span class="w"> </span>bash<span class="w"> </span>install.sh
+</span></code></pre></div></li>
+<li>Check the result:
+   <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>sudo<span class="w"> </span>cat<span class="w"> </span>/etc/sudoers.d/appmotel<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>appmotel-apps<span class="w">     </span><span class="c1"># the exclusion is there</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>sudo<span class="w"> </span>-u<span class="w"> </span>apps<span class="w"> </span>cat<span class="w"> </span>/home/appmotel/.config/appmotel/.env<span class="w">      </span><span class="c1"># must say: Permission denied</span>
+</span></code></pre></div></li>
+</ol>
+<p>Existing apps keep working unchanged. Move them one at a time with <code>appmo isolate &lt;app&gt;</code>.</p>
+<p><strong>Changed behaviour after the upgrade:</strong></p>
+<ul>
+<li>appmotel's <code>~/.config</code>, data and backup folders are now mode 700, and all <code>.env</code> files mode 600. Before, any local user could read them. Scripts that read these files directly as another user (for example as <code>apps</code>) must now use <code>sudo -u appmotel cat ...</code> or <code>appmo exec &lt;app&gt; cat .env</code>.</li>
+<li>Tab completion of app names no longer works for the operator user, for the same reason.</li>
+<li><code>appmo list</code> has a new USER column.</li>
+</ul>
+<h2 id="moving-an-app-appmo-isolate">Moving an app: <code>appmo isolate</code><a class="headerlink" href="#moving-an-app-appmo-isolate" title="Permanent link">&para;</a></h2>
+<p><code>appmo isolate &lt;app&gt;</code>:</p>
+<ol>
+<li>Makes a backup of the app.</li>
+<li>Creates the user and stops the old services.</li>
+<li>Copies the repo into the new home, together with files that git does not track (for example SQLite databases or uploads). Venvs are not copied; they are built again.</li>
+<li>Copies the app's <code>.env</code>.</li>
+<li>Deploys the app as the new user on the same port and moves the route.</li>
+</ol>
+<p>The URL stays the same. If any step fails, appmotel deletes the new user, restores the old route and starts the old services again.</p>
+<p>The app is down while it is built again. That is a few seconds for small apps, about 1 to 2 minutes for a Next.js build.</p>
+<p>The backup from step 1 stays in appmotel's backup folder, and <code>isolate</code> prints its path. <code>appmo restore</code> cannot use it after the move, because restore now runs as the app user. To go back to the old app: run <code>appmo remove &lt;app&gt;</code>, add the app again without <code>--isolated</code>, and copy the <code>.env</code> from that backup.</p>
+<h2 id="private-repos-and-ssh-keys">Private repos and SSH keys<a class="headerlink" href="#private-repos-and-ssh-keys" title="Permanent link">&para;</a></h2>
+<p>The app user has no GitHub access of its own.</p>
+<ul>
+<li><strong>Public repo:</strong> appmotel clones it over HTTPS. No key is copied.</li>
+<li><strong>Private repo:</strong> appmotel copies <strong>its own GitHub SSH key</strong> into <code>/home/a-&lt;app&gt;/.ssh/</code>. The app user can then read every repo that this key can read, not only its own. If that is not acceptable, use a separate deploy key for each repo. Until appmo supports that, you can put a deploy key in <code>/home/a-&lt;app&gt;/.ssh/</code> yourself and remove the copied key.</li>
+</ul>
+<p>appmotel treats a repo as private when the GitHub API does not show it as public.</p>
+<h2 id="removing-an-isolated-app">Removing an isolated app<a class="headerlink" href="#removing-an-isolated-app" title="Permanent link">&para;</a></h2>
+<p><code>appmo remove &lt;app&gt;</code> does these things:</p>
+<ul>
+<li>stops the app</li>
+<li>keeps its <code>.env</code> as <code>/home/appmotel/.config/appmotel/&lt;app&gt;/.env.backup</code>, which the next <code>appmo add</code> of that name restores</li>
+<li>saves the app's backups as one archive in <code>/home/appmotel/.local/share/appmotel-backups/</code></li>
+<li>deletes the user, its home and its sudoers file</li>
+</ul>
+<h2 id="python-versions-uv">Python versions (uv)<a class="headerlink" href="#python-versions-uv" title="Permanent link">&para;</a></h2>
+<p>Each app user can have its own Python version. If an app asks for a version, appmotel builds the venv with <a href="https://docs.astral.sh/uv/">uv</a>. uv installs that Python into the app user's home, so no root and no system package is needed. About 90 MB of disk is used for each app that does this.</p>
+<p>The version is taken from the first of these that is set:</p>
+<ol>
+<li><code>PYTHON_VERSION=3.12</code> in the app's <code>.env</code></li>
+<li>a <code>.python-version</code> file in the repo</li>
+<li><code>requires-python</code> in <code>pyproject.toml</code></li>
+<li><code>PYTHON_VERSION</code> in appmotel's <code>.env</code> (the default for all apps)</li>
+</ol>
+<p>If none is set, the system <code>python3</code> is used, as before.</p>
+<p>To change the version of a deployed app, set <code>PYTHON_VERSION</code> in its <code>.env</code> and remove the old venv:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>appmo<span class="w"> </span>env<span class="w"> </span>myapp<span class="w">                       </span><span class="c1"># add PYTHON_VERSION=3.12</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>appmo<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>myapp<span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span>.venv
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>appmo<span class="w"> </span>update<span class="w"> </span>myapp
+</span></code></pre></div>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>appmo<span class="w"> </span>list<span class="w">                                     </span><span class="c1"># USER column shows a-&lt;app&gt; for isolated apps</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>appmo<span class="w"> </span>logs<span class="w"> </span>myapp<span class="w">                               </span><span class="c1"># logs of the app user's service</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>sudo<span class="w"> </span>-u<span class="w"> </span>appmotel<span class="w"> </span>sudo<span class="w"> </span>-u<span class="w"> </span>a-myapp<span class="w"> </span>bash<span class="w"> </span>-l<span class="w">       </span><span class="c1"># a shell as the app user (as operator)</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>sudo<span class="w"> </span>-l<span class="w"> </span>-U<span class="w"> </span>a-myapp<span class="w">                             </span><span class="c1"># must say: not allowed to run sudo</span>
+</span></code></pre></div>
+<ul>
+<li><strong>"Could not create user a-myapp":</strong> <code>/usr/local/bin/appmotel-user</code> is missing or old. Run <code>sudo bash install.sh</code>.</li>
+<li><strong>"user a-myapp would get sudo rights":</strong> an old operator rule in <code>/etc/sudoers.d/appmotel</code> has no <code>!%appmotel-apps</code> exclusion. Run <code>sudo bash install.sh</code>.</li>
+<li><strong>The URL gives 404 for a moment after a deploy:</strong> Traefik loads a new route about a second after it is written. <code>appmo add</code> waits for the URL before it ends.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.719e0d91.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.ef37db6d.min.js"></script>
+      
+      
+    
+  </body>
+</html>

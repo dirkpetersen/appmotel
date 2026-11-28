@@ -1,0 +1,2138 @@
+
+
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://dirkpetersen.github.io/appmotel/TESTING/">
+      
+      
+      
+      
+        <link rel="prev" href="../IMPLEMENTATION/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.1.4">
+    
+    
+      
+        <title>Testing - Appmotel</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.5cb9f1ba.min.css">
+      
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="Appmotel" class="md-header__button md-logo" aria-label="Appmotel" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+      <span class="md-visually-hidden">Navigation</span>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Appmotel
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Testing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+          <span class="md-visually-hidden">Search</span>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/dirkpetersen/appmotel" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dirkpetersen/appmotel
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="Appmotel" class="md-nav__button md-logo" aria-label="Appmotel" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    Appmotel
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/dirkpetersen/appmotel" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    dirkpetersen/appmotel
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ISOLATED-APPS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Isolated Apps (read first)
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../TLS-CERTIFICATES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  TLS Certificates
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ENV-MANAGEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Environment Management
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI-COMPONENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Multi-Component Apps
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AUTO-DEBUG/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Auto-Debug
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../DEV-SETUP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development Setup
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../IMPLEMENTATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Implementation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Testing
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#installation-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Installation Testing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Installation Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-clean-installation-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        1. Clean Installation Test
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-idempotency-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        2. Idempotency Test
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#application-deployment-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Application Deployment Testing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Application Deployment Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-1-python-flask-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 1: Python Flask Application
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test 1: Python Flask Application">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#setup-test-repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup Test Repository
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deploy-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy Application
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-2-nodejs-express-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 2: Node.js Express Application
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test 2: Node.js Express Application">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#setup-test-repository_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup Test Repository
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deploy-application_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy Application
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-commands-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        CLI Commands Testing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CLI Commands Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#list-applications" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        List Applications
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#status-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Status Checks
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#service-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Service Management
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Update Application
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#view-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        View Logs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execute-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Execute Commands
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remove-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Remove Application
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operations-features-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operations Features Testing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operations Features Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rollback-and-pin" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rollback and Pin
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scheduled-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scheduled Jobs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#restart-limit-and-crash-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restart Limit and Crash Loop
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logs-top-backup-verify-certificates-notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Logs, Top, Backup Verify, Certificates, Notifications
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-handling-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Error Handling Tests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Error Handling Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-1-invalid-app-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 1: Invalid App Name
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-2-duplicate-app-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 2: Duplicate App Name
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-3-invalid-github-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 3: Invalid GitHub URL
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-4-failed-installsh" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 4: Failed install.sh
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-5-port-already-in-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 5: Port Already in Use
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#traefik-configuration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Traefik Configuration Tests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Traefik Configuration Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#verify-dynamic-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verify Dynamic Config
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-traefik-reload" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test Traefik Reload
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Performance Tests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#multiple-app-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multiple App Deployment
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security Tests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Security Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#file-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        File Permissions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sudoers-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sudoers Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cleanup-after-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cleanup After Testing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Troubleshooting
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#service-wont-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Service Won't Start
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#port-not-responding" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Port Not Responding
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#traefik-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Traefik Issues
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test Checklist
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#prerequisites" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prerequisites
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#installation-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Installation Testing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Installation Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-clean-installation-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        1. Clean Installation Test
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-idempotency-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        2. Idempotency Test
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#application-deployment-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Application Deployment Testing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Application Deployment Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-1-python-flask-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 1: Python Flask Application
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test 1: Python Flask Application">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#setup-test-repository" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup Test Repository
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deploy-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy Application
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-2-nodejs-express-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 2: Node.js Express Application
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test 2: Node.js Express Application">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#setup-test-repository_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup Test Repository
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deploy-application_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deploy Application
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-commands-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        CLI Commands Testing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CLI Commands Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#list-applications" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        List Applications
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#status-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Status Checks
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#service-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Service Management
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#update-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Update Application
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#view-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        View Logs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execute-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Execute Commands
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#remove-application" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Remove Application
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operations-features-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Operations Features Testing
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Operations Features Testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rollback-and-pin" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rollback and Pin
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scheduled-jobs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Scheduled Jobs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#restart-limit-and-crash-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restart Limit and Crash Loop
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logs-top-backup-verify-certificates-notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Logs, Top, Backup Verify, Certificates, Notifications
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-handling-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Error Handling Tests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Error Handling Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-1-invalid-app-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 1: Invalid App Name
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-2-duplicate-app-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 2: Duplicate App Name
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-3-invalid-github-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 3: Invalid GitHub URL
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-4-failed-installsh" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 4: Failed install.sh
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-5-port-already-in-use" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test 5: Port Already in Use
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#traefik-configuration-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Traefik Configuration Tests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Traefik Configuration Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#verify-dynamic-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verify Dynamic Config
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-traefik-reload" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test Traefik Reload
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Performance Tests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#multiple-app-deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Multiple App Deployment
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security Tests
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Security Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#file-permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        File Permissions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sudoers-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sudoers Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cleanup-after-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cleanup After Testing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Troubleshooting
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Troubleshooting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#service-wont-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Service Won't Start
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#port-not-responding" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Port Not Responding
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#traefik-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Traefik Issues
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Test Checklist
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="appmotel-testing-guide">Appmotel Testing Guide<a class="headerlink" href="#appmotel-testing-guide" title="Permanent link">&para;</a></h1>
+<p>This document provides instructions for testing the Appmotel system.</p>
+<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
+<ul>
+<li>System with sudo access</li>
+<li>Git installed</li>
+<li>Python 3 installed</li>
+<li>Node.js and npm installed</li>
+<li>GitHub account</li>
+</ul>
+<h2 id="installation-testing">Installation Testing<a class="headerlink" href="#installation-testing" title="Permanent link">&para;</a></h2>
+<h3 id="1-clean-installation-test">1. Clean Installation Test<a class="headerlink" href="#1-clean-installation-test" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Clean the appmotel user's home directory</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>/path/to/appmotel
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>sudo<span class="w"> </span>-u<span class="w"> </span>appmotel<span class="w"> </span>bash<span class="w"> </span>bin/reset-home.sh<span class="w"> </span>--force
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># Run installation</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>sudo<span class="w"> </span>bash<span class="w"> </span>install.sh
+</span></code></pre></div>
+<p><strong>Expected Results:</strong>
+- Appmotel user created (if didn't exist)
+- Traefik binary downloaded to <code>/home/appmotel/.local/bin/traefik</code>
+- Directory structure created:
+  - <code>/home/appmotel/.config/traefik/</code>
+  - <code>/home/appmotel/.config/traefik/dynamic/</code>
+  - <code>/home/appmotel/.config/appmotel/apps/</code>
+  - <code>/home/appmotel/.local/share/traefik/</code>
+  - <code>/home/appmotel/.local/share/appmotel/</code>
+- Traefik configuration generated
+- Systemd service <code>traefik-appmotel</code> created and running
+- Sudoers rules configured
+- <code>appmo</code> CLI installed to <code>/usr/local/bin/appmo</code></p>
+<p><strong>Verification:</strong>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Check Traefik service</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>systemctl<span class="w"> </span>status<span class="w"> </span>traefik-appmotel
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Check if appmo is installed</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>which<span class="w"> </span>appmo
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>appmo<span class="w"> </span>--help
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1"># Check Traefik binary</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>ls<span class="w"> </span>-l<span class="w"> </span>/home/appmotel/.local/bin/traefik
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="c1"># Check directory structure (as appmotel user)</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>sudo<span class="w"> </span>su<span class="w"> </span>-<span class="w"> </span>appmotel
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>ls<span class="w"> </span>-la<span class="w"> </span>~/.config/
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>ls<span class="w"> </span>-la<span class="w"> </span>~/.local/share/
+</span></code></pre></div></p>
+<h3 id="2-idempotency-test">2. Idempotency Test<a class="headerlink" href="#2-idempotency-test" title="Permanent link">&para;</a></h3>
+<p>Run the installation script again:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>sudo<span class="w"> </span>bash<span class="w"> </span>install.sh
+</span></code></pre></div>
+<p><strong>Expected Results:</strong>
+- Script completes without errors
+- No duplicate users, services, or configurations created
+- Traefik continues running without interruption</p>
+<h2 id="application-deployment-testing">Application Deployment Testing<a class="headerlink" href="#application-deployment-testing" title="Permanent link">&para;</a></h2>
+<h3 id="test-1-python-flask-application">Test 1: Python Flask Application<a class="headerlink" href="#test-1-python-flask-application" title="Permanent link">&para;</a></h3>
+<h4 id="setup-test-repository">Setup Test Repository<a class="headerlink" href="#setup-test-repository" title="Permanent link">&para;</a></h4>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">cd</span><span class="w"> </span>examples/flask-hello
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># Initialize git repository</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>git<span class="w"> </span>init
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>git<span class="w"> </span>add<span class="w"> </span>.
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"Initial Flask app"</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="c1"># Create GitHub repository and push</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="c1"># (Replace with your GitHub username)</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>gh<span class="w"> </span>repo<span class="w"> </span>create<span class="w"> </span>test-flask-hello<span class="w"> </span>--public<span class="w"> </span>--source<span class="o">=</span>.<span class="w"> </span>--remote<span class="o">=</span>origin<span class="w"> </span>--push
+</span></code></pre></div>
+<h4 id="deploy-application">Deploy Application<a class="headerlink" href="#deploy-application" title="Permanent link">&para;</a></h4>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>appmo<span class="w"> </span>add<span class="w"> </span>flask-hello<span class="w"> </span>https://github.com/&lt;username&gt;/test-flask-hello<span class="w"> </span>main
+</span></code></pre></div>
+<p><strong>Expected Results:</strong>
+- Repository cloned to <code>/home/appmotel/.local/share/appmotel/flask-hello/repo/</code>
+- Python virtual environment created at <code>.venv/</code>
+- Dependencies installed from <code>requirements.txt</code>
+- <code>install.sh</code> executed successfully
+- Port assigned (8000 or auto-assigned)
+- Systemd service <code>appmotel-flask-hello</code> created and started
+- Traefik config created at <code>/home/appmotel/.config/traefik/dynamic/flask-hello.yaml</code>
+- App accessible at <code>https://flask-hello.&lt;BASE_DOMAIN&gt;</code></p>
+<p><strong>Verification:</strong>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Check service status</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>appmo<span class="w"> </span>status<span class="w"> </span>flask-hello
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># View logs</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>appmo<span class="w"> </span>logs<span class="w"> </span>flask-hello
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="c1"># Test port</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>curl<span class="w"> </span>http://localhost:8000
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="c1"># Test via Traefik (if DNS configured)</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>curl<span class="w"> </span>https://flask-hello.&lt;BASE_DOMAIN&gt;
+</span></code></pre></div></p>
+<h3 id="test-2-nodejs-express-application">Test 2: Node.js Express Application<a class="headerlink" href="#test-2-nodejs-express-application" title="Permanent link">&para;</a></h3>
+<h4 id="setup-test-repository_1">Setup Test Repository<a class="headerlink" href="#setup-test-repository_1" title="Permanent link">&para;</a></h4>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">cd</span><span class="w"> </span>examples/express-hello
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="c1"># Initialize git repository</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>git<span class="w"> </span>init
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>git<span class="w"> </span>add<span class="w"> </span>.
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"Initial Express app"</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="c1"># Create GitHub repository and push</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>gh<span class="w"> </span>repo<span class="w"> </span>create<span class="w"> </span>test-express-hello<span class="w"> </span>--public<span class="w"> </span>--source<span class="o">=</span>.<span class="w"> </span>--remote<span class="o">=</span>origin<span class="w"> </span>--push
+</span></code></pre></div>
+<h4 id="deploy-application_1">Deploy Application<a class="headerlink" href="#deploy-application_1" title="Permanent link">&para;</a></h4>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>appmo<span class="w"> </span>add<span class="w"> </span>express-hello<span class="w"> </span>https://github.com/&lt;username&gt;/test-express-hello<span class="w"> </span>main
+</span></code></pre></div>
+<p><strong>Expected Results:</strong>
+- Repository cloned
+- <code>npm install</code> executed
+- Dependencies installed from <code>package.json</code>
+- Service created and started
+- App accessible at configured port</p>
+<p><strong>Verification:</strong>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>appmo<span class="w"> </span>status<span class="w"> </span>express-hello
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>appmo<span class="w"> </span>logs<span class="w"> </span>express-hello
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>curl<span class="w"> </span>http://localhost:8001
+</span></code></pre></div></p>
+<h2 id="cli-commands-testing">CLI Commands Testing<a class="headerlink" href="#cli-commands-testing" title="Permanent link">&para;</a></h2>
+<h3 id="list-applications">List Applications<a class="headerlink" href="#list-applications" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>appmo<span class="w"> </span>list
+</span></code></pre></div>
+<p><strong>Expected Output:</strong>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>APP NAME             STATUS     URL
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>--------             ------     ---
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>express-hello        running    https://express-hello.apps.local
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>flask-hello          running    https://flask-hello.apps.local
+</span></code></pre></div></p>
+<h3 id="status-checks">Status Checks<a class="headerlink" href="#status-checks" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Single app status</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>appmo<span class="w"> </span>status<span class="w"> </span>flask-hello
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># All apps status</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>appmo<span class="w"> </span>status
+</span></code></pre></div>
+<p><strong>Expected Output:</strong>
+- App name and URL
+- GitHub repository and branch
+- Port number
+- Last deployment timestamp
+- Systemd service status (running/stopped)
+- Port response status</p>
+<h3 id="service-management">Service Management<a class="headerlink" href="#service-management" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Stop application</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>appmo<span class="w"> </span>stop<span class="w"> </span>flask-hello
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>systemctl<span class="w"> </span>is-active<span class="w"> </span>appmotel-flask-hello<span class="w">  </span><span class="c1"># Should return "inactive"</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># Start application</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>appmo<span class="w"> </span>start<span class="w"> </span>flask-hello
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>systemctl<span class="w"> </span>is-active<span class="w"> </span>appmotel-flask-hello<span class="w">  </span><span class="c1"># Should return "active"</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="c1"># Restart application</span>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>appmo<span class="w"> </span>restart<span class="w"> </span>flask-hello
+</span></code></pre></div>
+<h3 id="update-application">Update Application<a class="headerlink" href="#update-application" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Make changes to the application</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="nb">cd</span><span class="w"> </span>/path/to/local/test-flask-hello
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">"# Updated"</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>README.md
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>git<span class="w"> </span>commit<span class="w"> </span>-am<span class="w"> </span><span class="s2">"Update app"</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>git<span class="w"> </span>push
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="c1"># Trigger update</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>appmo<span class="w"> </span>update<span class="w"> </span>flask-hello
+</span></code></pre></div>
+<p><strong>Expected Results:</strong>
+- Latest code pulled from GitHub
+- <code>install.sh</code> executed
+- Python/Node.js dependencies reinstalled
+- Service restarted
+- Metadata timestamp updated</p>
+<h3 id="view-logs">View Logs<a class="headerlink" href="#view-logs" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Last 50 lines (default)</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>appmo<span class="w"> </span>logs<span class="w"> </span>flask-hello
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># Custom number of lines</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>appmo<span class="w"> </span>logs<span class="w"> </span>flask-hello<span class="w"> </span><span class="m">100</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># Follow logs in real-time</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>appmotel-flask-hello<span class="w"> </span>-f
+</span></code></pre></div>
+<h3 id="execute-commands">Execute Commands<a class="headerlink" href="#execute-commands" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Python app</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>appmo<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>flask-hello<span class="w"> </span>python3<span class="w"> </span>--version
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>appmo<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>flask-hello<span class="w"> </span>pip<span class="w"> </span>list
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="c1"># Node.js app</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>appmo<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>express-hello<span class="w"> </span>node<span class="w"> </span>--version
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>appmo<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>express-hello<span class="w"> </span>npm<span class="w"> </span>list
+</span></code></pre></div>
+<h3 id="remove-application">Remove Application<a class="headerlink" href="#remove-application" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>appmo<span class="w"> </span>remove<span class="w"> </span>flask-hello
+</span></code></pre></div>
+<p><strong>Expected Results:</strong>
+- Systemd service stopped and disabled
+- Service file deleted
+- Traefik config deleted
+- App directory removed from <code>/home/appmotel/.local/share/appmotel/</code>
+- App config removed from <code>/home/appmotel/.config/appmotel/apps/</code></p>
+<p><strong>Verification:</strong>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Service should not exist</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>systemctl<span class="w"> </span>status<span class="w"> </span>appmotel-flask-hello<span class="w">  </span><span class="c1"># Should fail</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># Files should be gone</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>ls<span class="w"> </span>/home/appmotel/.local/share/appmotel/<span class="w">  </span><span class="c1"># flask-hello should not appear</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>ls<span class="w"> </span>/home/appmotel/.config/appmotel/apps/<span class="w">  </span><span class="c1"># flask-hello should not appear</span>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="c1"># Should not appear in list</span>
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>appmo<span class="w"> </span>list
+</span></code></pre></div></p>
+<h2 id="operations-features-testing">Operations Features Testing<a class="headerlink" href="#operations-features-testing" title="Permanent link">&para;</a></h2>
+<p>Run these with one normal and one isolated app (<code>appmo add --isolated</code>). <code>bash tests/test-appmo.sh</code> covers the parsing and file generation; these steps cover the parts that need a real host.</p>
+<h3 id="rollback-and-pin">Rollback and Pin<a class="headerlink" href="#rollback-and-pin" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>appmo<span class="w"> </span>backups<span class="w"> </span>flask-hello<span class="w">                 </span><span class="c1"># COMMIT column is filled</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="c1"># push a commit that breaks the app, wait for autopull (or appmo update flask-hello)</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>appmo<span class="w"> </span>rollback<span class="w"> </span>flask-hello<span class="w">                </span><span class="c1"># back to the commit before the push</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>appmo<span class="w"> </span>status<span class="w"> </span>flask-hello<span class="w">                  </span><span class="c1"># "Pinned: rolled back to &lt;commit&gt;"</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>journalctl<span class="w"> </span>--user<span class="w"> </span>-u<span class="w"> </span>appmotel-autopull<span class="w"> </span>-n<span class="w"> </span><span class="m">5</span><span class="w">   </span><span class="c1"># "... (1 pinned by rollback, not updated)"</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>appmo<span class="w"> </span>backups<span class="w"> </span>flask-hello<span class="w">                 </span><span class="c1"># a new backup of the broken state (undo with appmo restore)</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>appmo<span class="w"> </span>unpin<span class="w"> </span>flask-hello<span class="w">                   </span><span class="c1"># next autopull deploys the branch again</span>
+</span></code></pre></div>
+<p><strong>Expected:</strong> the app runs the old commit and autopull does not touch it until <code>unpin</code>. A second <code>appmo rollback</code> goes one version further back. <code>appmo update</code> also removes the pin.</p>
+<h3 id="scheduled-jobs">Scheduled Jobs<a class="headerlink" href="#scheduled-jobs" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="c1"># in the app repo</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="nb">printf</span><span class="w"> </span><span class="s1">'*:0/2 | date &gt;&gt; /tmp/job-test.log\nbogus | true\n'</span><span class="w"> </span>&gt;<span class="w"> </span>examples/flask-hello/appmo-schedule
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="c1"># push, then wait for autopull</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>appmo<span class="w"> </span>status<span class="w"> </span>flask-hello<span class="w">                  </span><span class="c1"># "Scheduled jobs": 1 timer, next run in &lt; 2 min</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>appmo<span class="w"> </span>logs<span class="w"> </span>flask-hello<span class="w"> </span>--grep<span class="w"> </span><span class="s1">'scheduled job'</span><span class="w">   </span><span class="c1"># the timer ran it</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>appmo<span class="w"> </span>stop<span class="w"> </span>flask-hello<span class="w">                    </span><span class="c1"># timer stops too; appmo start resumes it</span>
+</span></code></pre></div>
+<p><strong>Expected:</strong> the <code>bogus</code> line is skipped with a WARN at deploy time. Removing the file and pushing removes the timer; <code>appmo remove</code> removes it too.</p>
+<h3 id="restart-limit-and-crash-loop">Restart Limit and Crash Loop<a class="headerlink" href="#restart-limit-and-crash-loop" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>appmo<span class="w"> </span>env<span class="w"> </span>flask-hello<span class="w"> </span><span class="nb">set</span><span class="w"> </span>RESTART_LIMIT<span class="w"> </span><span class="m">3</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>appmo<span class="w"> </span>restart<span class="w"> </span>flask-hello<span class="w">                 </span><span class="c1"># writes appmotel-flask-hello.service.d/restart-limit.conf</span>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="c1"># push a commit whose app exits at start (raise SystemExit(1) at the top of app.py), wait for autopull</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>sleep<span class="w"> </span><span class="m">60</span><span class="p">;</span><span class="w"> </span>appmo<span class="w"> </span>status<span class="w"> </span>flask-hello<span class="w">        </span><span class="c1"># "FAILED: crash loop, systemd stopped restarting it"</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="c1"># next autopull run: ERROR "flask-hello: crash loop ..." (and a webhook message if set)</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>appmo<span class="w"> </span>rollback<span class="w"> </span>flask-hello<span class="w">                </span><span class="c1"># running again on the good commit</span>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>appmo<span class="w"> </span>env<span class="w"> </span>flask-hello<span class="w"> </span><span class="nb">unset</span><span class="w"> </span>RESTART_LIMIT<span class="p">;</span><span class="w"> </span>appmo<span class="w"> </span>restart<span class="w"> </span>flask-hello<span class="w">   </span><span class="c1"># drop-in removed</span>
+</span></code></pre></div>
+<p>Without <code>RESTART_LIMIT</code>, <code>appmo status</code> shows <code>CRASHED, systemd restarts it</code> and autopull still reports the crash loop (3+ restarts between two runs).</p>
+<h3 id="logs-top-backup-verify-certificates-notifications">Logs, Top, Backup Verify, Certificates, Notifications<a class="headerlink" href="#logs-top-backup-verify-certificates-notifications" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>appmo<span class="w"> </span>logs<span class="w"> </span>flask-hello<span class="w"> </span>--since<span class="w"> </span><span class="s2">"10 min ago"</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>appmo<span class="w"> </span>logs<span class="w"> </span>flask-hello<span class="w"> </span>--grep<span class="w"> </span><span class="s1">'GET /'</span><span class="w"> </span><span class="m">5</span><span class="w">   </span><span class="c1"># last 5 matching lines</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>appmo<span class="w"> </span>top<span class="w">                                 </span><span class="c1"># one row per app, isolated apps included</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>appmo<span class="w"> </span>backup-verify<span class="w"> </span>flask-hello<span class="w">           </span><span class="c1"># all "ok"</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>appmo<span class="w"> </span>certs<span class="w">                               </span><span class="c1"># with USE_LETSENCRYPT=yes: one row per app certificate</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>appmo<span class="w"> </span>env<span class="w"> </span>flask-hello<span class="w"> </span><span class="nb">set</span><span class="w"> </span>NOTIFY_WEBHOOK_URL<span class="w"> </span>https://&lt;your<span class="w"> </span><span class="nb">test</span><span class="w"> </span>webhook&gt;
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>appmo<span class="w"> </span>update<span class="w"> </span>flask-hello<span class="w">                  </span><span class="c1"># the webhook gets "deployed main &lt;old&gt; -&gt; &lt;new&gt;"</span>
+</span></code></pre></div>
+<h2 id="error-handling-tests">Error Handling Tests<a class="headerlink" href="#error-handling-tests" title="Permanent link">&para;</a></h2>
+<h3 id="test-1-invalid-app-name">Test 1: Invalid App Name<a class="headerlink" href="#test-1-invalid-app-name" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>appmo<span class="w"> </span>add<span class="w"> </span><span class="s2">"my app"</span><span class="w"> </span>https://github.com/user/repo<span class="w"> </span>main
+</span></code></pre></div>
+<p><strong>Expected:</strong> Error message about invalid app name format</p>
+<h3 id="test-2-duplicate-app-name">Test 2: Duplicate App Name<a class="headerlink" href="#test-2-duplicate-app-name" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>appmo<span class="w"> </span>add<span class="w"> </span>express-hello<span class="w"> </span>https://github.com/user/repo<span class="w"> </span>main
+</span></code></pre></div>
+<p><strong>Expected:</strong> Error message that app already exists</p>
+<h3 id="test-3-invalid-github-url">Test 3: Invalid GitHub URL<a class="headerlink" href="#test-3-invalid-github-url" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>appmo<span class="w"> </span>add<span class="w"> </span>testapp<span class="w"> </span>https://github.com/nonexistent/repo<span class="w"> </span>main
+</span></code></pre></div>
+<p><strong>Expected:</strong> Clone fails, operation rolls back, no app created</p>
+<h3 id="test-4-failed-installsh">Test 4: Failed install.sh<a class="headerlink" href="#test-4-failed-installsh" title="Permanent link">&para;</a></h3>
+<p>Create an app with a failing install.sh:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="nb">echo</span><span class="w"> </span><span class="s1">'#!/bin/bash'</span><span class="w"> </span>&gt;<span class="w"> </span>/tmp/test-fail/install.sh
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="nb">echo</span><span class="w"> </span><span class="s1">'exit 1'</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>/tmp/test-fail/install.sh
+</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="c1"># Create git repo and try to add</span>
+</span></code></pre></div>
+<p><strong>Expected:</strong> Installation fails, operation rolls back, app not created</p>
+<h3 id="test-5-port-already-in-use">Test 5: Port Already in Use<a class="headerlink" href="#test-5-port-already-in-use" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># Start a process on port 8000</span>
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>python3<span class="w"> </span>-m<span class="w"> </span>http.server<span class="w"> </span><span class="m">8000</span><span class="w"> </span><span class="p">&amp;</span>
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="nv">SERVER_PID</span><span class="o">=</span><span class="nv">$!</span>
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>
+</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="c1"># Try to add app configured for port 8000</span>
+</span><span id="__span-26-6"><a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a><span class="c1"># Expected: Error about port in use</span>
+</span><span id="__span-26-7"><a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a>
+</span><span id="__span-26-8"><a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="c1"># Cleanup</span>
+</span><span id="__span-26-9"><a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a><span class="nb">kill</span><span class="w"> </span><span class="nv">$SERVER_PID</span>
+</span></code></pre></div>
+<h2 id="traefik-configuration-tests">Traefik Configuration Tests<a class="headerlink" href="#traefik-configuration-tests" title="Permanent link">&para;</a></h2>
+<h3 id="verify-dynamic-config">Verify Dynamic Config<a class="headerlink" href="#verify-dynamic-config" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="c1"># Check Traefik config files</span>
+</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>sudo<span class="w"> </span>su<span class="w"> </span>-<span class="w"> </span>appmotel
+</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>cat<span class="w"> </span>~/.config/traefik/traefik.yaml
+</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>ls<span class="w"> </span>-l<span class="w"> </span>~/.config/traefik/dynamic/
+</span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>cat<span class="w"> </span>~/.config/traefik/dynamic/flask-hello.yaml
+</span></code></pre></div>
+<p><strong>Expected:</strong>
+- Static config correctly references dynamic directory
+- Dynamic configs created for each app
+- Correct routing rules (Host, entryPoints, TLS)
+- Correct service URLs (localhost:PORT)</p>
+<h3 id="test-traefik-reload">Test Traefik Reload<a class="headerlink" href="#test-traefik-reload" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="c1"># Add new app</span>
+</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>appmo<span class="w"> </span>add<span class="w"> </span>testapp3<span class="w"> </span>&lt;repo&gt;<span class="w"> </span>main
+</span><span id="__span-28-3"><a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>
+</span><span id="__span-28-4"><a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="c1"># Traefik should automatically pick up new config</span>
+</span><span id="__span-28-5"><a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="c1"># Check Traefik logs</span>
+</span><span id="__span-28-6"><a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>traefik-appmotel<span class="w"> </span>-n<span class="w"> </span><span class="m">50</span>
+</span></code></pre></div>
+<p><strong>Expected:</strong> Traefik logs show configuration reload without restart</p>
+<h2 id="performance-tests">Performance Tests<a class="headerlink" href="#performance-tests" title="Permanent link">&para;</a></h2>
+<h3 id="multiple-app-deployment">Multiple App Deployment<a class="headerlink" href="#multiple-app-deployment" title="Permanent link">&para;</a></h3>
+<p>Deploy 5 apps simultaneously:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="k">for</span><span class="w"> </span>i<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="o">{</span><span class="m">1</span>..5<span class="o">}</span><span class="p">;</span><span class="w"> </span><span class="k">do</span>
+</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="w">  </span>appmo<span class="w"> </span>add<span class="w"> </span>testapp<span class="nv">$i</span><span class="w"> </span>&lt;repo&gt;<span class="w"> </span>main<span class="w"> </span><span class="p">&amp;</span>
+</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="k">done</span>
+</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="nb">wait</span>
+</span></code></pre></div>
+<p><strong>Expected:</strong>
+- All apps deploy successfully
+- No port conflicts
+- All services running
+- Traefik routing all apps correctly</p>
+<h2 id="security-tests">Security Tests<a class="headerlink" href="#security-tests" title="Permanent link">&para;</a></h2>
+<h3 id="file-permissions">File Permissions<a class="headerlink" href="#file-permissions" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="c1"># Check ACME file permissions</span>
+</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>ls<span class="w"> </span>-l<span class="w"> </span>/home/appmotel/.local/share/traefik/acme.json
+</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="c1"># Expected: 600 (-rw-------)</span>
+</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>
+</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="c1"># Check config directory ownership</span>
+</span><span id="__span-30-6"><a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>ls<span class="w"> </span>-ld<span class="w"> </span>/home/appmotel/.config/traefik/
+</span><span id="__span-30-7"><a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a><span class="c1"># Expected: owned by appmotel:appmotel</span>
+</span></code></pre></div>
+<h3 id="sudoers-configuration">Sudoers Configuration<a class="headerlink" href="#sudoers-configuration" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="c1"># As appmotel user, verify allowed commands</span>
+</span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>sudo<span class="w"> </span>su<span class="w"> </span>-<span class="w"> </span>appmotel
+</span><span id="__span-31-3"><a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>traefik-appmotel<span class="w">  </span><span class="c1"># Should work</span>
+</span><span id="__span-31-4"><a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span>restart<span class="w"> </span>appmotel-flask-hello<span class="w">  </span><span class="c1"># Should work</span>
+</span><span id="__span-31-5"><a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>sudo<span class="w"> </span>apt-get<span class="w"> </span>update<span class="w">  </span><span class="c1"># Should fail (not allowed)</span>
+</span></code></pre></div>
+<h2 id="cleanup-after-testing">Cleanup After Testing<a class="headerlink" href="#cleanup-after-testing" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="c1"># Remove all test apps</span>
+</span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>appmo<span class="w"> </span>list<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-n<span class="w"> </span>+3<span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">'{print $1}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>xargs<span class="w"> </span>-I<span class="w"> </span><span class="o">{}</span><span class="w"> </span>appmo<span class="w"> </span>remove<span class="w"> </span><span class="o">{}</span>
+</span><span id="__span-32-3"><a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>
+</span><span id="__span-32-4"><a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a><span class="c1"># Or clean everything</span>
+</span><span id="__span-32-5"><a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>sudo<span class="w"> </span>su<span class="w"> </span>-<span class="w"> </span>appmotel
+</span><span id="__span-32-6"><a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a>rm<span class="w"> </span>-rf<span class="w"> </span>/home/appmotel/*
+</span><span id="__span-32-7"><a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a>rm<span class="w"> </span>-rf<span class="w"> </span>/home/appmotel/.<span class="o">[</span>^.<span class="o">]</span>*
+</span><span id="__span-32-8"><a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a><span class="nb">exit</span>
+</span><span id="__span-32-9"><a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a>
+</span><span id="__span-32-10"><a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a><span class="c1"># Remove systemd services</span>
+</span><span id="__span-32-11"><a id="__codelineno-32-11" name="__codelineno-32-11" href="#__codelineno-32-11"></a>sudo<span class="w"> </span>rm<span class="w"> </span>/etc/systemd/system/appmotel-*.service
+</span><span id="__span-32-12"><a id="__codelineno-32-12" name="__codelineno-32-12" href="#__codelineno-32-12"></a>sudo<span class="w"> </span>rm<span class="w"> </span>/etc/systemd/system/traefik-appmotel.service
+</span><span id="__span-32-13"><a id="__codelineno-32-13" name="__codelineno-32-13" href="#__codelineno-32-13"></a>sudo<span class="w"> </span>systemctl<span class="w"> </span>daemon-reload
+</span><span id="__span-32-14"><a id="__codelineno-32-14" name="__codelineno-32-14" href="#__codelineno-32-14"></a>
+</span><span id="__span-32-15"><a id="__codelineno-32-15" name="__codelineno-32-15" href="#__codelineno-32-15"></a><span class="c1"># Remove appmo CLI</span>
+</span><span id="__span-32-16"><a id="__codelineno-32-16" name="__codelineno-32-16" href="#__codelineno-32-16"></a>sudo<span class="w"> </span>rm<span class="w"> </span>/usr/local/bin/appmo
+</span><span id="__span-32-17"><a id="__codelineno-32-17" name="__codelineno-32-17" href="#__codelineno-32-17"></a>
+</span><span id="__span-32-18"><a id="__codelineno-32-18" name="__codelineno-32-18" href="#__codelineno-32-18"></a><span class="c1"># Delete test repositories from GitHub</span>
+</span><span id="__span-32-19"><a id="__codelineno-32-19" name="__codelineno-32-19" href="#__codelineno-32-19"></a>gh<span class="w"> </span>repo<span class="w"> </span>delete<span class="w"> </span>test-flask-hello<span class="w"> </span>--yes
+</span><span id="__span-32-20"><a id="__codelineno-32-20" name="__codelineno-32-20" href="#__codelineno-32-20"></a>gh<span class="w"> </span>repo<span class="w"> </span>delete<span class="w"> </span>test-express-hello<span class="w"> </span>--yes
+</span></code></pre></div>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
+<h3 id="service-wont-start">Service Won't Start<a class="headerlink" href="#service-wont-start" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="c1"># Check service status</span>
+</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>systemctl<span class="w"> </span>status<span class="w"> </span>appmotel-&lt;app-name&gt;
+</span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>
+</span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a><span class="c1"># Check journalctl logs</span>
+</span><span id="__span-33-5"><a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>appmotel-&lt;app-name&gt;<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span>
+</span><span id="__span-33-6"><a id="__codelineno-33-6" name="__codelineno-33-6" href="#__codelineno-33-6"></a>
+</span><span id="__span-33-7"><a id="__codelineno-33-7" name="__codelineno-33-7" href="#__codelineno-33-7"></a><span class="c1"># Check app's install.sh output</span>
+</span><span id="__span-33-8"><a id="__codelineno-33-8" name="__codelineno-33-8" href="#__codelineno-33-8"></a><span class="c1"># Check if dependencies are installed</span>
+</span></code></pre></div>
+<h3 id="port-not-responding">Port Not Responding<a class="headerlink" href="#port-not-responding" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="c1"># Check if port is in use</span>
+</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>ss<span class="w"> </span>-tuln<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>&lt;PORT&gt;
+</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>
+</span><span id="__span-34-4"><a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a><span class="c1"># Check app logs</span>
+</span><span id="__span-34-5"><a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>appmo<span class="w"> </span>logs<span class="w"> </span>&lt;app-name&gt;
+</span><span id="__span-34-6"><a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a>
+</span><span id="__span-34-7"><a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a><span class="c1"># Try to connect directly</span>
+</span><span id="__span-34-8"><a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a>curl<span class="w"> </span>http://localhost:&lt;PORT&gt;
+</span></code></pre></div>
+<h3 id="traefik-issues">Traefik Issues<a class="headerlink" href="#traefik-issues" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="c1"># Check Traefik status</span>
+</span><span id="__span-35-2"><a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>systemctl<span class="w"> </span>status<span class="w"> </span>traefik-appmotel
+</span><span id="__span-35-3"><a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>
+</span><span id="__span-35-4"><a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a><span class="c1"># Check Traefik logs</span>
+</span><span id="__span-35-5"><a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>traefik-appmotel<span class="w"> </span>-n<span class="w"> </span><span class="m">100</span>
+</span><span id="__span-35-6"><a id="__codelineno-35-6" name="__codelineno-35-6" href="#__codelineno-35-6"></a>
+</span><span id="__span-35-7"><a id="__codelineno-35-7" name="__codelineno-35-7" href="#__codelineno-35-7"></a><span class="c1"># Verify Traefik config syntax</span>
+</span><span id="__span-35-8"><a id="__codelineno-35-8" name="__codelineno-35-8" href="#__codelineno-35-8"></a>/home/appmotel/.local/bin/traefik<span class="w"> </span>validate<span class="w"> </span>--configFile<span class="o">=</span>/home/appmotel/.config/traefik/traefik.yaml
+</span></code></pre></div>
+<h2 id="test-checklist">Test Checklist<a class="headerlink" href="#test-checklist" title="Permanent link">&para;</a></h2>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Clean installation completes successfully</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Installation is idempotent</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Python Flask app deploys correctly</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Node.js Express app deploys correctly</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo list</code> shows all apps</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo status</code> shows correct information</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo start/stop/restart</code> work correctly</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo update</code> pulls and reinstalls correctly</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo logs</code> displays application logs</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo exec</code> runs commands in app environment</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo remove</code> cleanly removes apps</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo rollback</code> restores the previous commit and pins; <code>unpin</code>/<code>update</code> release it</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo-schedule</code> lines become timers; bad lines are skipped; stop/start/remove handle them</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> A crash loop shows in <code>appmo status</code> and is reported by autopull</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>appmo logs --since/--grep</code>, <code>appmo top</code>, <code>appmo backup-verify</code>, <code>appmo certs</code> work for normal and isolated apps</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Error handling works for invalid inputs</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Port assignment works correctly</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Traefik routes traffic correctly</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Multiple apps can run simultaneously</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> File permissions are correct</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Sudoers configuration works as expected</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.719e0d91.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.ef37db6d.min.js"></script>
+      
+      
+    
+  </body>
+</html>
