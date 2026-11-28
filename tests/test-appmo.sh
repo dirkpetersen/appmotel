@@ -27,7 +27,8 @@ for fn in python_version_request parse_env_file create_traefik_config setup_app_
           job_units unit_props is_counter human_bytes format_cpu_time backup_retention validate_backup_id \
           rollback_target create_backup check_disk_space get_all_services get_app_unit_files verify_result \
           verify_backup safe_source_metadata safe_rm_rf check_crash_loop cert_end_epoch list_tls_certs cmd_logs \
-          restore_backup restore_app_deps systemctl_stop find_file_up is_zensical_site; do
+          restore_backup restore_app_deps systemctl_stop find_file_up is_zensical_site \
+          save_app_metadata load_app_metadata is_multi_component parse_procfile; do
   # shellcheck source=/dev/null
   source <(sed -n "/^${fn}() {/,/^}/p" "${appmo}")
 done
@@ -446,6 +447,27 @@ check "restore: dep failure -> 1"      "1" "$(restore_backup rs "${rs_id}" >/dev
 check "restore: jobs after failure"    "1" "$(grep -c '^jobs' "${ops}/restore.log")"
 check "restore: no start after failure" "0" "$(grep -c 'start appmotel-rs$' "${ops}/restore.log")"
 unset -f systemctl setup_python_env setup_nodejs_env setup_go_env setup_zensical_env sync_scheduled_jobs
+
+# --- Procfile apps: processes are units, not components
+svc() { local -a s=(); get_all_services "$1" s; local IFS=' '; echo "${s[*]}"; }
+mkdir -p "${APPS_DATA_DIR}/pf/repo"
+printf 'web: python3 app.py\nworker: python3 worker.py\n' > "${APPS_DATA_DIR}/pf/repo/Procfile"
+save_app_metadata pf https://github.com/u/pf main 12004 "" "" "web worker" 2>/dev/null
+check "procfile: PROCESSES saved"   'PROCESSES="web worker"' "$(grep '^PROCESSES=' "${APPS_CONFIG_DIR}/pf/metadata.conf")"
+check "procfile: services"          "web worker" "$(svc pf)"
+check "procfile: units"             "appmotel-pf-web.service appmotel-pf-worker.service" \
+  "$(units=(); get_app_unit_files pf units; IFS=' '; echo "${units[*]}")"
+check "procfile: not components"    "no" "$(is_multi_component pf && echo yes || echo no)"
+save_app_metadata pf https://github.com/u/pf main 12004 "" "" "" 2>/dev/null
+check "procfile: old app, from Procfile" "web worker" "$(svc pf)"
+printf '[Service]\nExecStart=/bin/true\n' > "${SYSTEMD_USER_DIR}/appmotel-pf.service"
+check "procfile: own unit wins"     "pf" "$(svc pf)"
+rm -f "${SYSTEMD_USER_DIR}/appmotel-pf.service"
+save_app_metadata mc https://github.com/u/mc main 12005 "backend frontend" "" "" 2>/dev/null
+check "components: multi"           "yes|backend frontend" "$(is_multi_component mc && echo yes)|$(svc mc)"
+save_app_metadata sub https://github.com/u/sub main 12006 "" "apps/x" "" 2>/dev/null
+load_app_metadata sub; load_app_metadata mc
+check "metadata: no stale SUBDIR"   "unset" "${SUBDIR:-unset}"
 
 # --- cmd_logs: what it asks journalctl for
 journalctl() { printf '%s\n' "$@"; }

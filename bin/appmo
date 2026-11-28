@@ -465,7 +465,7 @@ safe_source_metadata() {
   fi
 
   # Known valid metadata keys
-  local -a valid_keys=("APP_NAME" "GITHUB_URL" "BRANCH" "PORT" "LAST_DEPLOYMENT" "SERVICES" "SUBDIR")
+  local -a valid_keys=("APP_NAME" "GITHUB_URL" "BRANCH" "PORT" "LAST_DEPLOYMENT" "SERVICES" "SUBDIR" "PROCESSES")
 
   local line_num=0
   while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -1375,7 +1375,7 @@ restore_app_deps() {
   local -a services=()
   get_all_services "${app_name}" services 2>/dev/null || services=("${app_name}")
 
-  if [[ ${#services[@]} -gt 1 ]] && [[ "${services[0]}" != "${app_name}" ]]; then
+  if is_multi_component "${app_name}"; then
     local component component_dir
     for component in "${services[@]}"; do
       component_dir="${app_dir}/${component}"
@@ -1688,6 +1688,7 @@ save_app_metadata() {
   local port="$4"
   local services="${5:-}"  # Optional services string (space-separated component names)
   local subdir="${6:-}"    # Optional subfolder path within repo
+  local processes="${7:-}" # Optional Procfile process names (space-separated)
 
   local config_dir="${APPS_CONFIG_DIR}/${app_name}"
   mkdir -p "${config_dir}"
@@ -1710,6 +1711,12 @@ EOF
   # Add SUBDIR field if provided (for subfolder deployments)
   if [[ -n "${subdir}" ]]; then
     echo "SUBDIR=\"${subdir}\"" >> "${metadata_file}"
+  fi
+
+  # Procfile apps: one unit appmotel-<app>-<process> per process. Not in
+  # SERVICES, which means components (folders) to cmd_update and restore.
+  if [[ -n "${processes}" ]]; then
+    echo "PROCESSES=\"${processes}\"" >> "${metadata_file}"
   fi
 
   log_msg "INFO" "App metadata saved"
@@ -1835,6 +1842,9 @@ load_app_metadata() {
     die "App metadata not found for '${app_name}'"
   fi
 
+  # Optional keys: clear them, so an app without one does not keep the value
+  # of the app loaded before it (autopull updates many apps in one shell)
+  unset SERVICES SUBDIR PROCESSES
   safe_source_metadata "${metadata_file}"
 }
 
@@ -1997,6 +2007,24 @@ get_all_services() {
   local services_str
   services_str=$(grep "^SERVICES=" "${metadata_file}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || true)
 
+  # Procfile apps: their processes (units appmotel-<app>-<process>)
+  if [[ -z "${services_str}" ]]; then
+    services_str=$(grep "^PROCESSES=" "${metadata_file}" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || true)
+  fi
+
+  # Procfile apps added before PROCESSES existed: the processes of the
+  # Procfile, if the app has no single unit appmotel-<app>.service
+  if [[ -z "${services_str}" ]] && [[ ! -f "${SYSTEMD_USER_DIR}/appmotel-${app_name}.service" ]]; then
+    local subdir="" procfile line
+    subdir=$(grep -m1 '^SUBDIR=' "${metadata_file}" 2>/dev/null | cut -d= -f2- | tr -d '"') || subdir=""
+    procfile="${APPS_DATA_DIR}/${app_name}/repo${subdir:+/${subdir}}/Procfile"
+    if [[ -f "${procfile}" ]]; then
+      while IFS= read -r line; do
+        services_str+="${services_str:+ }${line%%:*}"
+      done < <(parse_procfile "${procfile}")
+    fi
+  fi
+
   if [[ -n "${services_str}" ]]; then
     # Convert space-separated to array (temporarily use default IFS for splitting)
     local saved_ifs="${IFS}"
@@ -2008,6 +2036,14 @@ get_all_services() {
     # Apps without SERVICES field use the app name as single service
     services_ref=("${app_name}")
   fi
+}
+
+# True if the app has components (SERVICES: folders like frontend/backend),
+# not Procfile processes: only components get their own dependency setup
+is_multi_component() {
+  local services_str
+  services_str=$(grep "^SERVICES=" "${APPS_CONFIG_DIR}/$1/metadata.conf" 2>/dev/null | cut -d'=' -f2 | tr -d '"' || true)
+  [[ "${services_str}" == *" "* ]]
 }
 
 # -----------------------------------------------------------------------------
@@ -3661,6 +3697,7 @@ cmd_add() {
   else
     # Single-component deployment - check for Procfile or standard single service
     local procfile="${app_dir}/Procfile"
+    local processes_str=""
     if [[ -f "${procfile}" ]]; then
       log_msg "INFO" "Procfile detected, setting up multi-process app"
 
@@ -3694,6 +3731,7 @@ cmd_add() {
           # Enable and start service
           systemctl --user enable "appmotel-${app_name}-${proc_name}"
           systemctl --user start "appmotel-${app_name}-${proc_name}"
+          processes_str+="${processes_str:+ }${proc_name}"
         fi
       done < <(parse_procfile "${procfile}")
 
@@ -3711,8 +3749,9 @@ cmd_add() {
       systemctl --user start "appmotel-${app_name}"
     fi
 
-    # Save metadata (no SERVICES field for single-component, but include subdir)
-    save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}" "" "${subdir}"
+    # Save metadata (no SERVICES field for single-component, but include
+    # subdir, and the processes of a Procfile app)
+    save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}" "" "${subdir}" "${processes_str}"
   fi
 
   # Scheduled jobs from appmo-schedule in the app folder, and RESTART_LIMIT
@@ -4204,7 +4243,7 @@ cmd_update() {
     get_all_services "${app_name}" services
 
     # Check if multi-component app
-    if [[ ${#services[@]} -gt 1 ]] && [[ "${services[0]}" != "${app_name}" ]]; then
+    if is_multi_component "${app_name}"; then
       # Multi-component: setup each component
       log_msg "INFO" "Updating ${#services[@]} components..."
       for component in "${services[@]}"; do
@@ -4281,13 +4320,18 @@ cmd_update() {
   fi
 
   # Get SERVICES string if multi-component
-  local services_str=""
-  if [[ ${#services[@]} -gt 1 ]] && [[ "${services[0]}" != "${app_name}" ]]; then
+  local services_str="" processes_str="" service
+  if is_multi_component "${app_name}"; then
     services_str=$(echo "${services[@]}" | tr ' ' '\n' | sort | tr '\n' ' ' | xargs)
+  elif [[ "${services[0]}" != "${app_name}" ]]; then
+    # Procfile processes (also records them for apps added before PROCESSES)
+    for service in "${services[@]}"; do
+      processes_str+="${processes_str:+ }${service}"
+    done
   fi
 
-  # Update metadata timestamp (preserve SUBDIR if set)
-  save_app_metadata "${app_name}" "${GITHUB_URL}" "${BRANCH}" "${PORT}" "${services_str}" "${SUBDIR:-}"
+  # Update metadata timestamp (preserve SUBDIR and PROCESSES if set)
+  save_app_metadata "${app_name}" "${GITHUB_URL}" "${BRANCH}" "${PORT}" "${services_str}" "${SUBDIR:-}" "${processes_str}"
 
   # The branch is deployed again, so a rollback pin no longer applies.
   # (autopull never updates a pinned app; only a manual update gets here.)
