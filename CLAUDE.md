@@ -133,7 +133,12 @@ appmo start|stop|restart    # Service control
 appmo update <app>          # Pull and redeploy
 appmo check [app]           # Check for updates (no deploy)
 appmo autopull              # Check all apps + auto-debug error scan
-appmo logs <app> [lines]    # View logs
+appmo logs <app> [lines] [--since T] [--grep RE] [--follow]  # Logs incl. scheduled jobs
+appmo top [app...]          # Memory, CPU time, restarts, disk per app
+appmo certs                 # TLS certificates (tls-config.yaml + acme.json) and expiry; admin only
+appmo rollback <app> [id]   # Restore newest backup of another commit, back up current state first, pin
+appmo unpin <app>           # Remove the rollback pin (appmo update also removes it)
+appmo backup-verify <app> [id]  # Archive, git fsck, COMMIT, settings, units, route; restores nothing
 appmo env <app>             # Edit app .env (vim, mouse off)
 appmo env <app> get|set KEY [VALUE]  # One value; set reads stdin without VALUE; audit log hides the value
 appmo env <app> set < lines # Many KEY=VALUE lines from stdin, all or none
@@ -150,6 +155,8 @@ appmo skill                 # Install the appmotel skill into the caller's ~/.cl
 - `OPERATOR_USERS=apps` — Who may control the appmotel user via sudoers (users, `%groups`, or `ALL` for every user). The group `appmotel-ops` (created by `sudo bash install.sh`) is always added. Applied by `sudo bash install.sh`; unset keeps an existing `ALL` grant, else `apps`
 - `APPMOTEL_BIND_IP=192.0.2.40` — Optional: Traefik listens on this IP only for ports 80/443 (second NIC). Unset keeps an IP that `traefik.yaml` already binds to (`resolve_bind_ip` in `install.sh`); empty means all addresses. Not named `TRAEFIK_*`, because Traefik reads such env vars as its own config
 - `REDIRECT_BASE_DOMAIN=old.example.edu` — Optional: 308 permanent redirect from old domain to `BASE_DOMAIN`. When set, `appmo self-update` generates a single Traefik catch-all config that redirects `*.old.example.edu` → `*.BASE_DOMAIN`
+- `NOTIFY_WEBHOOK_URL=https://hooks.slack.com/...` — Optional: `notify` posts `{"text": ...}` for deploys, failed updates, rollbacks, crash loops, expiring certs. An app's own `NOTIFY_WEBHOOK_URL` wins; in app role (isolated) only the app's own is used, the global `.env` is unreadable there
+- `TLS_EXPIRY_WARN_DAYS=14` — `check_tls_expiry` (autopull, daily) warns for the tls-config.yaml cert and each Let's Encrypt cert in `acme.json`
 
 ### Optional App `.env` Settings
 
@@ -158,6 +165,15 @@ appmo skill                 # Install the appmotel skill into the caller's ~/.cl
 - `HEALTH_CHECK_PATH=/health` — Health check endpoint
 - `AUTO_DEBUG=no` — Disable auto-debug error detection for this app
 - `BACKUP_RETENTION=5` — Number of backups to keep per app (default: 5)
+- `RESTART_LIMIT=5`, `RESTART_WINDOW=300` — Opt-in: systemd stops restarting after N starts in the window. Written as a drop-in `<unit>.service.d/restart-limit.conf` by `apply_restart_limit` (add, update, start, restart, restore), not into the unit file, because unit files are only written by `appmo add`
+- `JOB_TIMEOUT=1h` — `TimeoutStartSec` of scheduled jobs
+- `NOTIFY_WEBHOOK_URL` — Per-app webhook (see global settings)
+
+### Scheduled jobs, rollback pins, crash loops
+
+- **Jobs:** `appmo-schedule` in the app folder, lines `<OnCalendar> | <command>` (`schedule_parse_line` restricts the calendar's characters; `systemd-analyze calendar` validates it). `sync_scheduled_jobs` (add, update, restore) writes `appmotel-<app>.job-<n>.{service,timer}`, the command into `<config>/<app>/jobs/job-<n>.sh`, and the unit names into `<config>/<app>/jobs.list`. The dot cannot occur in app, component or Procfile names, so job units never collide with app units (`appmotel-<app>-job-1` would be app `<app>-job-1`'s unit). Everything that removes or toggles jobs reads `jobs.list`, not a glob. `restore_backup` removes the current jobs *before* the config restore replaces `jobs.list`, and rebuilds them even when the restore fails.
+- **Rollback pin:** `<config>/<app>/pinned` (COMMIT, BACKUP, SINCE). Autopull skips pinned apps (still runs `check_crash_loop` and `check_app_errors`); a successful `cmd_update` deletes it; `cmd_isolate` refuses a pinned app. `create_backup` writes `COMMIT` (deployed HEAD) into each backup; `rollback_target` picks the newest backup (`sort -rV`) whose COMMIT differs from HEAD, skipping backups marked `ROLLBACK_SAFETY`. `cmd_rollback` holds `.autopull.lock` (fd 8) for the whole restore, makes that safety backup with `create_backup <app> keep-all` (no pruning, which could delete the target), and writes the pin after the restore whether it succeeded or not (the restore replaces the config dir). Backup ids get a `-N` suffix when two are made in one second. `restore_backup` reinstalls deps via `restore_app_deps` (same folder rules as `cmd_update`: backups leave out `.venv`/`node_modules` at any depth) and runs `reset-failed` before each start.
+- **Crash loop:** `check_crash_loop` (autopull) compares `NRestarts` with `<data>/<app>/.restart-counts` from the previous run (not in backups). The hourly stamp `.crash-loop-reported` only expires; a quiet run does not clear it. A failed unit with `NRestarts > 0` means the start limit ended the restarts: systemd then reports `Result=exit-code`, not `start-limit-hit`. Read unit state with `unit_props` (an associative array; `systemctl show --value` with several properties prints them in systemd's order).
 
 ### Traefik & TLS
 

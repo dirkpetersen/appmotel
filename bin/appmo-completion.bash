@@ -10,7 +10,7 @@ _appmo_completions() {
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   # Main commands (rm/ls are hidden aliases for remove/list)
-  local commands="add isolate remove rm list ls status start stop restart update check autopull logs env exec backup restore backups self-update skill help"
+  local commands="add isolate remove rm list ls status start stop restart update check autopull logs top env exec backup restore backups backup-verify rollback unpin certs self-update skill help"
 
   # App names: appmo keeps a readable list (the config dir is mode 700)
   local apps=""
@@ -31,11 +31,11 @@ _appmo_completions() {
         add)
           # No completion for add (needs app-name, github-url, branch)
           ;;
-        isolate|remove|rm|status|start|stop|restart|update|check|logs|env|exec|backup|restore|backups)
+        isolate|remove|rm|status|start|stop|restart|update|check|logs|top|env|exec|backup|restore|backups|backup-verify|rollback|unpin)
           # Complete with app names
           COMPREPLY=($(compgen -W "${apps}" -- "${cur}"))
           ;;
-        list|ls|self-update|help)
+        list|ls|self-update|certs|help)
           # No further arguments
           ;;
       esac
@@ -44,7 +44,13 @@ _appmo_completions() {
       # Third argument: depends on command
       local cmd="${COMP_WORDS[1]}"
       case "${cmd}" in
-        restore)
+        logs)
+          COMPREPLY=($(compgen -W "--since --grep --follow" -- "${cur}"))
+          ;;
+        top)
+          COMPREPLY=($(compgen -W "${apps}" -- "${cur}"))
+          ;;
+        restore|rollback|backup-verify)
           # Complete with backup IDs
           local app_name="${COMP_WORDS[2]}"
           local backups=""

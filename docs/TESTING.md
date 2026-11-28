@@ -274,6 +274,63 @@ ls /home/appmotel/.config/appmotel/apps/  # flask-hello should not appear
 appmo list
 ```
 
+## Operations Features Testing
+
+Run these with one normal and one isolated app (`appmo add --isolated`). `bash tests/test-appmo.sh` covers the parsing and file generation; these steps cover the parts that need a real host.
+
+### Rollback and Pin
+
+```bash
+appmo backups flask-hello                 # COMMIT column is filled
+# push a commit that breaks the app, wait for autopull (or appmo update flask-hello)
+appmo rollback flask-hello                # back to the commit before the push
+appmo status flask-hello                  # "Pinned: rolled back to <commit>"
+journalctl --user -u appmotel-autopull -n 5   # "... (1 pinned by rollback, not updated)"
+appmo backups flask-hello                 # a new backup of the broken state (undo with appmo restore)
+appmo unpin flask-hello                   # next autopull deploys the branch again
+```
+
+**Expected:** the app runs the old commit and autopull does not touch it until `unpin`. A second `appmo rollback` goes one version further back. `appmo update` also removes the pin.
+
+### Scheduled Jobs
+
+```bash
+# in the app repo
+printf '*:0/2 | date >> /tmp/job-test.log\nbogus | true\n' > examples/flask-hello/appmo-schedule
+# push, then wait for autopull
+appmo status flask-hello                  # "Scheduled jobs": 1 timer, next run in < 2 min
+appmo logs flask-hello --grep 'scheduled job'   # the timer ran it
+appmo stop flask-hello                    # timer stops too; appmo start resumes it
+```
+
+**Expected:** the `bogus` line is skipped with a WARN at deploy time. Removing the file and pushing removes the timer; `appmo remove` removes it too.
+
+### Restart Limit and Crash Loop
+
+```bash
+appmo env flask-hello set RESTART_LIMIT 3
+appmo restart flask-hello                 # writes appmotel-flask-hello.service.d/restart-limit.conf
+# push a commit whose app exits at start (raise SystemExit(1) at the top of app.py), wait for autopull
+sleep 60; appmo status flask-hello        # "FAILED: crash loop, systemd stopped restarting it"
+# next autopull run: ERROR "flask-hello: crash loop ..." (and a webhook message if set)
+appmo rollback flask-hello                # running again on the good commit
+appmo env flask-hello unset RESTART_LIMIT; appmo restart flask-hello   # drop-in removed
+```
+
+Without `RESTART_LIMIT`, `appmo status` shows `CRASHED, systemd restarts it` and autopull still reports the crash loop (3+ restarts between two runs).
+
+### Logs, Top, Backup Verify, Certificates, Notifications
+
+```bash
+appmo logs flask-hello --since "10 min ago"
+appmo logs flask-hello --grep 'GET /' 5   # last 5 matching lines
+appmo top                                 # one row per app, isolated apps included
+appmo backup-verify flask-hello           # all "ok"
+appmo certs                               # with USE_LETSENCRYPT=yes: one row per app certificate
+appmo env flask-hello set NOTIFY_WEBHOOK_URL https://<your test webhook>
+appmo update flask-hello                  # the webhook gets "deployed main <old> -> <new>"
+```
+
 ## Error Handling Tests
 
 ### Test 1: Invalid App Name
@@ -479,6 +536,10 @@ journalctl -u traefik-appmotel -n 100
 - [ ] `appmo logs` displays application logs
 - [ ] `appmo exec` runs commands in app environment
 - [ ] `appmo remove` cleanly removes apps
+- [ ] `appmo rollback` restores the previous commit and pins; `unpin`/`update` release it
+- [ ] `appmo-schedule` lines become timers; bad lines are skipped; stop/start/remove handle them
+- [ ] A crash loop shows in `appmo status` and is reported by autopull
+- [ ] `appmo logs --since/--grep`, `appmo top`, `appmo backup-verify`, `appmo certs` work for normal and isolated apps
 - [ ] Error handling works for invalid inputs
 - [ ] Port assignment works correctly
 - [ ] Traefik routes traffic correctly

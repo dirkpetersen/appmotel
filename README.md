@@ -206,6 +206,8 @@ appmo start <app-name>                        # Start an app
 appmo stop <app-name>                         # Stop an app
 appmo restart <app-name>                      # Restart an app
 appmo update <app-name>                       # Update app (auto-backup & rollback)
+appmo rollback <app-name> [backup-id]         # Back to the version before the last update, pinned
+appmo unpin <app-name>                        # Let autopull update a rolled-back app again
 
 # Updates & Automation
 appmo check [app-name]                        # Check for updates (no deploy)
@@ -220,17 +222,25 @@ appmo env <app-name> set < secrets.env        # Many KEY=VALUE lines from stdin 
 appmo env <app-name> unset KEY                # Remove a variable
 
 # Monitoring & Debugging
-appmo logs <app-name> [lines]                 # View application logs
+appmo logs <app-name> [lines]                 # View application logs (and scheduled jobs)
+appmo logs <app-name> --since "1h ago" --grep 'ERROR|Traceback'   # Search; --follow to watch
+appmo top [app-name...]                       # Memory, CPU time, restarts, disk per app
+appmo certs                                   # TLS certificates and when they expire
 appmo exec <app-name> <command>               # Run command in app environment
 
 # Backup & Restore
 appmo backup <app-name>                       # Create backup
 appmo restore <app-name> [backup-id]          # Restore from backup
-appmo backups <app-name>                      # List available backups
+appmo backups <app-name>                      # List available backups (with their commit)
+appmo backup-verify <app-name> [backup-id]    # Check a backup can be restored (default: newest)
 
 # System Maintenance
 appmo self-update                             # Update appmo CLI, Traefik, and configs
 ```
+
+`appmo rollback` restores the newest backup of a different commit, which is the version from before the last update. It brings back both the code and the `.env` from that time, and reinstalls the dependencies. It backs up the current state first, so `appmo restore <app> <id>` can undo it (`appmo backups` marks that backup "state before a rollback"; a second `appmo rollback` skips it and goes one version further back). It then **pins** the app: autopull leaves it alone, because it would otherwise deploy the bad commit again within two minutes. The app is pinned even if the restore fails, so that autopull does not deploy over a half-restored app. `appmo unpin` (next autopull) or `appmo update` (now) follows the branch again. `appmo status` shows the pin; `appmo isolate` refuses a pinned app, because the isolated copy is deployed from the branch.
+
+`appmo backup-verify` restores nothing. It checks that the code archive reads to the end, extracts to an intact git repository (`git fsck`) of the recorded commit, that the settings parse, and that the unit files and the Traefik route are in the backup.
 
 ### Application Requirements
 
@@ -284,6 +294,20 @@ Each process gets its own systemd service:
 - `appmotel-myapp-scheduler`
 
 The `web` process receives the main port and is accessible via HTTPS.
+
+### Scheduled Jobs
+
+For periodic tasks, add a file `appmo-schedule` to the app folder. Each line is a [systemd calendar expression](https://www.freedesktop.org/software/systemd/man/latest/systemd.time.html#Calendar%20Events), ` | `, and a command:
+
+```
+# <when> | <command>   (runs in the app folder, with the app's .env and venv)
+daily | python3 cleanup.py
+*-*-* 02:30:00 | ./bin/report --email
+Mon..Fri 08:00 | curl -fsS http://localhost:$PORT/tasks/digest
+*:0/15 | python3 sync.py
+```
+
+`appmo add`, `update`, `restore` and `rollback` turn each line into a systemd timer `appmotel-<app>.job-<n>`. Missed runs (server off) run at the next boot. A job has the app's `MEMORY_LIMIT` and `CPU_QUOTA`, and is stopped after `JOB_TIMEOUT` (default `1h`). Lines that do not parse are skipped with a warning; check an expression with `systemd-analyze calendar '<when>'`. `appmo status` lists the jobs with their next run, `appmo logs` includes their output, and `appmo stop` / `start` pause and resume them. Test a command first with `appmo exec <app> <command>`.
 
 ## Configuration
 
@@ -344,7 +368,29 @@ DISABLE_RATE_LIMIT=true  # Disable rate limiting
 
 # Health Checks
 HEALTH_CHECK_PATH=/api/health  # Health endpoint (default: /health)
+
+# Crash loops: stop restarting after 5 starts in RESTART_WINDOW seconds (default
+# 300). Unset (default): restart every 10 s forever. appmo restart starts it again.
+RESTART_LIMIT=5
+RESTART_WINDOW=300
+
+# Scheduled jobs (appmo-schedule): stop a job after this long (default 1h)
+JOB_TIMEOUT=2h
+
+# Backups to keep (default 5)
+BACKUP_RETENTION=5
+
+# Chat webhook for this app (default: the global NOTIFY_WEBHOOK_URL)
+NOTIFY_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
+
+`RESTART_LIMIT` and `RESTART_WINDOW` go into a systemd drop-in (`appmotel-<app>.service.d/restart-limit.conf`) that `appmo start`, `restart`, `update` and `restore` rewrite, so after a change run `appmo restart <app>`.
+
+### Notifications
+
+With `NOTIFY_WEBHOOK_URL` set, appmotel posts one line to that chat webhook (Slack format `{"text": ...}`, which Mattermost, Rocket.Chat and Google Chat accept too). It posts for a deploy (old → new commit), a failed update and its automatic rollback, an `appmo rollback`, a crash loop, and a TLS certificate that expires within `TLS_EXPIRY_WARN_DAYS` (default 14). Set it in `~/.config/appmotel/.env` for all apps, or in an app's `.env` for that app. An isolated app has to set its own, because its user cannot read appmotel's `.env`.
+
+A **crash loop** is a service that restarted 3 or more times between two autopull runs (2 minutes), or that systemd stopped restarting because of `RESTART_LIMIT`. Autopull logs it as an error and notifies at most once an hour per app. `appmo status` shows a crashed or failed service and its restart count.
 
 ## DNS Configuration
 
@@ -642,6 +688,8 @@ Appmotel automatically checks all deployed apps for updates every 2 minutes usin
 2. **Git Polling**: The `appmo-autopull` script checks each app for updates
 3. **Automatic Deploy**: When changes are found, `appmo update <app>` runs automatically
 4. **Rollback on Failure**: If deployment fails, the previous version is automatically restored
+5. **Pinned apps are skipped**: after `appmo rollback`, an app is not updated until `appmo unpin` or `appmo update`
+6. **Health**: each run reports crash loops, and once a day expiring TLS certificates (see [Notifications](#notifications))
 
 ### Monitoring Autopull
 

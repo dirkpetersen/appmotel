@@ -42,6 +42,9 @@ appmo list                    # USER column: appmotel or a-<app>
 appmo status                  # all apps, Traefik, TLS certificate expiry
 appmo status myapp
 appmo logs myapp 100
+appmo logs myapp --since "1h ago" --grep 'ERROR|Traceback'   # search; --follow to watch
+appmo top                     # memory, CPU time, restarts, disk of every app
+appmo certs                   # every TLS certificate and its expiry
 appmo check [myapp]           # are there new commits? (no deploy)
 
 # Change
@@ -55,10 +58,13 @@ appmo exec myapp cat .env
 appmo exec myapp git status
 appmo exec myapp python manage.py migrate
 
-# Backups
+# Backups and going back
 appmo backup myapp
-appmo backups myapp
+appmo backups myapp                     # with the commit of each backup
+appmo backup-verify myapp [backup-id]   # can it be restored? (restores nothing)
 appmo restore myapp [2026-01-10-120000]
+appmo rollback myapp          # bad deploy: back to the version before it; pins the app
+appmo unpin myapp             # after the fix is pushed: autopull deploys it again
 
 # Appmotel itself (CLI, Traefik binary, configs, all routes)
 appmo self-update
@@ -85,6 +91,9 @@ appmo self-update
 - **Always give secrets on stdin** (a pipe or a here-doc with a quoted `'EOF'`), never as `set KEY VALUE`. A value on the command line is in the process list and in the sudo log; `set` warns when a name like `*PASS*`, `*TOKEN*`, `*KEY*` or `*SECRET*` gets its value that way. The appmo audit log hides values in all forms. To copy a secret from one app to another without printing it: `appmo env app1 get API_KEY | appmo env app2 set API_KEY`.
 - **First `.env` of an app:** `appmo add` copies `.env.default` (or `env.default`, `.env.example`, `env.example`, `.env.local`) from the app's own folder. For a subfolder app, put the template in that subfolder: a template in a parent folder is not used.
 - **Multi-component apps:** `appmo restart myapp` restarts all components.
+- **Bad deploy:** `appmo rollback myapp` returns to the previous commit and pins the app, because autopull would otherwise deploy the broken commit again within 2 minutes. Push the fix, then `appmo unpin myapp` (or `appmo update myapp` at once). `appmo status myapp` shows a pin.
+- **Crash loop:** autopull logs `crash loop` (and notifies `NOTIFY_WEBHOOK_URL`) when a service restarts 3+ times in 2 minutes. `appmo status myapp` shows `CRASHED` or `FAILED`; `appmo logs myapp --since "10 min ago"` shows why.
+- **Periodic tasks:** a file `appmo-schedule` in the app folder, lines `<systemd calendar> | <command>` (for example `daily | python3 cleanup.py`), becomes systemd timers on the next deploy. Do not add cron entries.
 - **Never** `git rebase -i`, `git add -i` or other interactive commands.
 
 ## Install this skill for yourself

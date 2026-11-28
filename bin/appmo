@@ -149,6 +149,14 @@ readonly DEFAULT_CPU_QUOTA="100%"
 readonly DEFAULT_RATE_LIMIT_AVG=100
 readonly DEFAULT_RATE_LIMIT_BURST=50
 
+# Scheduled jobs: lines "<calendar> | <command>" in this file of the app folder
+readonly SCHEDULE_FILE_NAME="appmo-schedule"
+readonly MAX_SCHEDULED_JOBS=20
+# autopull reports a crash loop when a unit restarted this often between two runs
+readonly CRASH_LOOP_RESTARTS=3
+# Let's Encrypt certificates that Traefik got (written by Traefik, mode 600)
+readonly ACME_FILE="${APPMOTEL_HOME}/.local/share/traefik/acme.json"
+
 # Ensure XDG_RUNTIME_DIR is set for systemd --user commands
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
@@ -179,6 +187,61 @@ log_msg() {
 die() {
   log_msg "ERROR" "$1"
   exit 1
+}
+
+# -----------------------------------------------------------------------------
+# Function: json_escape
+# Description: Print $1 as the inside of a JSON string: escapes backslash,
+#   double quote, newline, CR and tab; drops other control characters.
+# -----------------------------------------------------------------------------
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "${s}" | tr -d '\000-\010\013\014\016-\037'
+}
+
+# -----------------------------------------------------------------------------
+# Function: notify
+# Description: Post a one-line message to a chat webhook (Slack format
+#   {"text": ...}; Mattermost, Rocket.Chat and Google Chat accept it too).
+#   The URL is NOTIFY_WEBHOOK_URL from the app .env, else (admin role only)
+#   from appmotel's global .env: an isolated app user cannot read that file,
+#   so isolated apps notify only with their own URL. Never fails.
+# Parameters: $1 = app name ("" for host-wide events), $2 = message
+# -----------------------------------------------------------------------------
+notify() {
+  local app_name="$1" message="$2" url=""
+  local app_env="${APPS_CONFIG_DIR}/${app_name}/.env"
+  if [[ -n "${app_name}" ]] && [[ -f "${app_env}" ]]; then
+    url=$(env_get_value "${app_env}" NOTIFY_WEBHOOK_URL 2>/dev/null) || url=""
+  fi
+  if [[ -z "${url}" ]] && [[ "${APPMO_ROLE}" == "admin" ]]; then
+    url="${NOTIFY_WEBHOOK_URL:-}"
+  fi
+  [[ -n "${url}" ]] || return 0
+
+  if [[ ! "${url}" =~ ^https?://[^[:space:]]+$ ]]; then
+    log_msg "WARN" "NOTIFY_WEBHOOK_URL is not an http(s) URL, no notification sent"
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    log_msg "WARN" "curl is not installed, no notification sent"
+    return 0
+  fi
+
+  local text="appmotel ${BASE_DOMAIN:-$(hostname 2>/dev/null || echo host)}"
+  [[ -z "${app_name}" ]] || text+=": ${app_name}"
+  text+=": ${message}"
+  if ! printf '{"text": "%s"}\n' "$(json_escape "${text}")" \
+      | curl -fsS --max-time 10 --proto '=https,http' -H 'Content-Type: application/json' \
+          --data-binary @- "${url}" >/dev/null 2>&1; then
+    log_msg "WARN" "Could not send a notification to NOTIFY_WEBHOOK_URL"
+  fi
+  return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -497,7 +560,14 @@ Commands:
   update <app-name>                      Manually update an app
   check [app-name]                       Check for available updates (no deploy)
   autopull                               Check all apps for updates and deploy
-  logs <app-name> [lines]                View app logs
+  logs <app-name> [lines]                View app logs (with scheduled jobs)
+      --since TIME                       Everything since TIME ("1h ago", "today", "2026-01-31 08:00")
+      --grep REGEX                       Only matching lines (lines then counts matches)
+      --follow                           Keep printing new lines
+  top [app-name...]                      Memory, CPU time, restarts and disk use per app
+  rollback <app-name> [backup-id]        Go back to the version before the last update, pin it
+  unpin <app-name>                       Let autopull update a rolled-back app again
+  certs                                  List TLS certificates and when they expire
   env <app-name>                         Edit app's .env file (vim, mouse off)
   env <app-name> get KEY                 Print one .env value
   env <app-name> set KEY [VALUE]         Set one .env value (no VALUE: read from stdin)
@@ -507,6 +577,7 @@ Commands:
   backup <app-name>                      Create a backup of an app
   restore <app-name> [backup-id]         Restore an app from backup
   backups <app-name>                     List available backups for an app
+  backup-verify <app-name> [backup-id]   Check that a backup can be restored (default: newest)
   self-update                            Update appmo CLI, Traefik, and configs
   skill                                  Install the Appmotel Claude Code skill into ~/.claude/skills/
 
@@ -523,6 +594,8 @@ Examples:
   appmo status myapp
   appmo autopull
   appmo logs myapp 50
+  appmo logs myapp --since "1h ago" --grep 'Traceback|ERROR'
+  appmo rollback myapp
   appmo env myapp
   appmo backup myapp
   appmo restore myapp 2024-01-15-120000
@@ -930,6 +1003,11 @@ cmd_isolate() {
   local config_dir="${APPS_CONFIG_DIR}/${app_name}"
   local app_dir="${data_dir}/repo${subdir:+/${subdir}}"
 
+  # The new copy is deployed from origin/<branch>, which would undo a rollback
+  if [[ -f "${config_dir}/pinned" ]]; then
+    die "App '${app_name}' is pinned by appmo rollback; isolating it would deploy the latest commit of ${branch}. Fix the branch, appmo unpin ${app_name}, then isolate"
+  fi
+
   log_msg "INFO" "Creating backup before isolating..."
   local backup_id
   backup_id=$(create_backup "${app_name}") || die "Backup failed, nothing was changed"
@@ -951,11 +1029,13 @@ cmd_isolate() {
     die "Could not prepare user ${APP_USER_PREFIX}${app_name}, nothing was changed"
   fi
 
-  # Stop the old services so the new ones can take over the same port
+  # Stop the old services so the new ones can take over the same port, and
+  # the old job timers so no job runs twice while the new copy starts
   local unit
   for unit in "${units[@]}"; do
     systemctl_stop "${unit}"
   done
+  job_timers_ctl "${app_name}" stop
 
   # Copy repo (with untracked data, without any venv: venvs hold absolute
   # paths) and the app .env into the app user's home, then deploy there.
@@ -976,13 +1056,18 @@ cmd_isolate() {
     for unit in "${units[@]}"; do
       systemctl --user start "${unit}" || true
     done
+    job_timers_ctl "${app_name}" start
     die "appmo isolate failed; '${app_name}' runs as appmotel again"
   fi
 
   # New app is live: remove the old copy
+  remove_scheduled_jobs "${app_name}"
   for unit in "${units[@]}"; do
     systemctl --user disable "${unit}" 2>/dev/null || true
     rm -f "${SYSTEMD_USER_DIR}/${unit}.service"
+    if [[ -d "${SYSTEMD_USER_DIR}/${unit}.service.d" ]]; then
+      safe_rm_rf "${SYSTEMD_USER_DIR}/${unit}.service.d" "cmd_isolate old drop-ins"
+    fi
   done
   systemctl --user daemon-reload
   safe_rm_rf "${data_dir}" "cmd_isolate old app data"
@@ -1045,8 +1130,16 @@ require_app_exists() {
 # -----------------------------------------------------------------------------
 create_backup() {
   local app_name="$1"
-  local backup_id
-  backup_id=$(date +%Y-%m-%d-%H%M%S)
+  local mode="${2:-}"   # "keep-all": do not prune (appmo rollback's safety backup)
+  local backup_id base_id suffix=1
+  base_id=$(date +%Y-%m-%d-%H%M%S)
+  backup_id="${base_id}"
+  # Two backups in one second (appmo rollback backs up the current state
+  # right before it restores) must not share a directory
+  while [[ -e "${BACKUPS_DIR}/${app_name}/${backup_id}" ]]; do
+    backup_id="${base_id}-${suffix}"
+    suffix=$((suffix + 1))
+  done
   local backup_dir="${BACKUPS_DIR}/${app_name}/${backup_id}"
   local backup_warnings=false
 
@@ -1072,6 +1165,10 @@ create_backup() {
       log_msg "WARN" "Failed to backup repo (tar failed - disk full?)"
       backup_warnings=true
     fi
+    # The deployed commit: appmo rollback picks the newest backup of another
+    # version, appmo backups and backup-verify show and check it
+    git -C "${APPS_DATA_DIR}/${app_name}/repo" rev-parse HEAD > "${backup_dir}/COMMIT" 2>/dev/null \
+      || rm -f "${backup_dir}/COMMIT"
   fi
 
   # Backup all systemd service files for this app (including multi-component)
@@ -1102,14 +1199,12 @@ create_backup() {
     log_msg "INFO" "Backup created: ${backup_id}"
   fi
 
-  # Prune old backups — keep only the newest BACKUP_RETENTION (default 5)
-  local retention=5
-  local app_env="${APPS_CONFIG_DIR}/${app_name}/.env"
-  if [[ -f "${app_env}" ]]; then
-    local env_retention
-    env_retention=$(grep -E '^BACKUP_RETENTION=[0-9]+$' "${app_env}" | cut -d= -f2 | head -1)
-    [[ -n "${env_retention}" ]] && retention="${env_retention}"
-  fi
+  # Prune old backups — keep only the newest BACKUP_RETENTION (default 5).
+  # Not for rollback's safety backup: it could prune the backup about to be
+  # restored; the next backup prunes again.
+  [[ "${mode}" != "keep-all" ]] || return 0
+  local retention
+  retention=$(backup_retention "${app_name}")
   local app_backup_dir="${BACKUPS_DIR}/${app_name}"
   local old_backups
   mapfile -t old_backups < <(ls -1t "${app_backup_dir}" 2>/dev/null | tail -n +$((retention + 1)))
@@ -1162,6 +1257,10 @@ restore_backup() {
     systemctl_stop "appmotel-${app_name}"
   fi
 
+  # Remove the current scheduled jobs while jobs.list still names them: the
+  # config restore below replaces it with the backup's list
+  remove_scheduled_jobs "${app_name}"
+
   # Restore config
   if [[ -d "${backup_dir}/config" ]]; then
     safe_rm_rf "${APPS_CONFIG_DIR}/${app_name}" "restore_backup config"
@@ -1204,35 +1303,31 @@ restore_backup() {
     fi
   fi
 
-  # Only reinstall dependencies if repo restore succeeded
+  # The app folder per the restored metadata (subfolder deployments)
+  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+  local restored_subdir=""
+  restored_subdir=$(grep -m1 '^SUBDIR=' "${APPS_CONFIG_DIR}/${app_name}/metadata.conf" 2>/dev/null \
+    | cut -d= -f2- | tr -d '"') || restored_subdir=""
+  local app_dir="${repo_dir}${restored_subdir:+/${restored_subdir}}"
+
+  # Backups leave out .venv and node_modules: rebuild them (only if the
+  # repo restore succeeded)
   if [[ "${restore_failed}" == "false" ]]; then
-    local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
-    local site_root="${repo_dir}"
-    [[ -n "${SUBDIR:-}" ]] && site_root="${repo_dir}/${SUBDIR}"
-    if is_zensical_site "${site_root}"; then
-      if ! setup_zensical_env "${site_root}"; then
-        log_msg "ERROR" "Failed to rebuild Zensical site"
-        restore_failed=true
-      fi
-    elif [[ -f "${repo_dir}/go.mod" ]]; then
-      if ! setup_go_env "${repo_dir}"; then
-        log_msg "ERROR" "Failed to reinstall Go dependencies"
-        restore_failed=true
-      fi
-    elif [[ -f "${repo_dir}/requirements.txt" ]] || [[ -f "${repo_dir}/pyproject.toml" ]]; then
-      if ! setup_python_env "${repo_dir}"; then
-        log_msg "ERROR" "Failed to reinstall Python dependencies"
-        restore_failed=true
-      fi
-    elif [[ -f "${repo_dir}/package.json" ]]; then
-      if ! setup_nodejs_env "${repo_dir}"; then
-        log_msg "ERROR" "Failed to reinstall Node.js dependencies"
-        restore_failed=true
-      fi
+    if ! restore_app_deps "${app_name}" "${repo_dir}" "${app_dir}"; then
+      log_msg "ERROR" "Failed to reinstall dependencies"
+      restore_failed=true
     fi
   fi
 
-  # Start service(s)
+  # Scheduled jobs and the restart limit from what is restored now, also
+  # after an error: the jobs of before were removed above
+  if [[ -d "${app_dir}" ]]; then
+    sync_scheduled_jobs "${app_name}" "${app_dir}"
+  fi
+  apply_restart_limit "${app_name}"
+
+  # Start service(s). reset-failed first: a unit that hit its start limit
+  # (RESTART_LIMIT) refuses every start until then, also this one.
   if [[ "${restore_failed}" == "false" ]]; then
     if get_all_services "${app_name}" services 2>/dev/null; then
       for service in "${services[@]}"; do
@@ -1242,12 +1337,14 @@ restore_backup() {
         else
           service_name="appmotel-${app_name}-${service}"
         fi
+        systemctl --user reset-failed "${service_name}" 2>/dev/null || true
         if ! systemctl --user start "${service_name}"; then
           log_msg "ERROR" "Failed to start service: ${service_name}"
           restore_failed=true
         fi
       done
     else
+      systemctl --user reset-failed "appmotel-${app_name}" 2>/dev/null || true
       if ! systemctl --user start "appmotel-${app_name}"; then
         log_msg "ERROR" "Failed to start service: appmotel-${app_name}"
         restore_failed=true
@@ -1265,6 +1362,52 @@ restore_backup() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: restore_app_deps
+# Description: Rebuild what backups leave out (.venv and node_modules, at
+#   any depth) after a restore, with the rules of cmd_update: per component
+#   for multi-component apps; else in the folder with the dependency file,
+#   searched up from a subfolder app; a Zensical site is built again.
+# Returns: 1 if a setup failed
+# -----------------------------------------------------------------------------
+restore_app_deps() {
+  local app_name="$1" repo_dir="$2" app_dir="$3"
+  local failed=false
+  local -a services=()
+  get_all_services "${app_name}" services 2>/dev/null || services=("${app_name}")
+
+  if [[ ${#services[@]} -gt 1 ]] && [[ "${services[0]}" != "${app_name}" ]]; then
+    local component component_dir
+    for component in "${services[@]}"; do
+      component_dir="${app_dir}/${component}"
+      [[ -d "${component_dir}" ]] || component_dir="${app_dir}/src/${component}"
+      if [[ -f "${component_dir}/go.mod" ]]; then
+        setup_go_env "${component_dir}" || failed=true
+      elif [[ -f "${component_dir}/requirements.txt" ]] || [[ -f "${component_dir}/pyproject.toml" ]]; then
+        setup_python_env "${component_dir}" || failed=true
+      elif [[ -f "${component_dir}/package.json" ]]; then
+        setup_nodejs_env "${component_dir}" || failed=true
+      fi
+    done
+  elif is_zensical_site "${app_dir}"; then
+    setup_zensical_env "${app_dir}" || failed=true
+  else
+    local deps_dir="${app_dir}" found_dir marker
+    if [[ "${app_dir}" != "${repo_dir}" ]]; then
+      for marker in requirements.txt pyproject.toml package.json go.mod; do
+        if found_dir=$(find_file_up "${marker}" "${app_dir}" "${repo_dir}"); then
+          deps_dir="${found_dir}"
+          break
+        fi
+      done
+    fi
+    setup_python_env "${deps_dir}" || failed=true
+    setup_nodejs_env "${deps_dir}" || failed=true
+    setup_go_env "${deps_dir}" || failed=true
+  fi
+  [[ "${failed}" == "false" ]]
+}
+
+# -----------------------------------------------------------------------------
 # Function: list_backups
 # Description: Lists available backups for an app
 # -----------------------------------------------------------------------------
@@ -1277,18 +1420,77 @@ list_backups() {
     return
   fi
 
-  printf "%-25s %s\n" "BACKUP ID" "SIZE"
-  printf "%-25s %s\n" "---------" "----"
+  printf "%-25s %-8s %s\n" "BACKUP ID" "SIZE" "COMMIT"
+  printf "%-25s %-8s %s\n" "---------" "----" "------"
 
   for backup_dir in "${backup_base}"/*; do
     if [[ -d "${backup_dir}" ]]; then
       local backup_id
       backup_id=$(basename "${backup_dir}")
-      local size
+      local size commit
       size=$(du -sh "${backup_dir}" 2>/dev/null | cut -f1)
-      printf "%-25s %s\n" "${backup_id}" "${size}"
+      commit=$(head -c 8 "${backup_dir}/COMMIT" 2>/dev/null) || commit=""
+      [[ ! -f "${backup_dir}/ROLLBACK_SAFETY" ]] || commit+=" (state before a rollback)"
+      printf "%-25s %-8s %s\n" "${backup_id}" "${size}" "${commit:--}"
     fi
   done
+}
+
+# -----------------------------------------------------------------------------
+# Function: backup_retention
+# Description: Print how many backups to keep for an app: BACKUP_RETENTION
+#   from its .env (a positive number), else 5.
+# -----------------------------------------------------------------------------
+backup_retention() {
+  local app_name="$1" value=""
+  value=$(env_get_value "${APPS_CONFIG_DIR}/${app_name}/.env" BACKUP_RETENTION 2>/dev/null) || value=""
+  if [[ "${value}" =~ ^[0-9]+$ ]] && (( 10#${value} > 0 )); then
+    echo "$(( 10#${value} ))"
+  else
+    echo 5
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: validate_backup_id
+# Description: A backup id is one directory name (no slash, no leading dot),
+#   so it cannot point outside the app's backup directory.
+# -----------------------------------------------------------------------------
+validate_backup_id() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "Invalid backup id '$1' (see: appmo backups <app-name>)"
+}
+
+# -----------------------------------------------------------------------------
+# Function: rollback_target
+# Description: Print the newest backup of an app whose COMMIT differs from
+#   $2 (the deployed HEAD): the version before the last update. Skips the
+#   backups appmo rollback makes of the state it replaces (ROLLBACK_SAFETY),
+#   so a second rollback goes further back instead of forward again. If no
+#   backup records a commit (made before COMMIT existed), the newest backup.
+#   Returns 1 if there is none.
+# -----------------------------------------------------------------------------
+rollback_target() {
+  local app_name="$1" head="$2"
+  local base="${BACKUPS_DIR}/${app_name}"
+  local id commit newest="" any_commit=false
+  [[ -d "${base}" ]] || return 1
+  while IFS= read -r id; do
+    [[ -d "${base}/${id}" ]] || continue
+    [[ ! -f "${base}/${id}/ROLLBACK_SAFETY" ]] || continue
+    [[ -n "${newest}" ]] || newest="${id}"
+    commit=$(cat "${base}/${id}/COMMIT" 2>/dev/null) || commit=""
+    [[ -n "${commit}" ]] || continue
+    any_commit=true
+    if [[ "${commit}" != "${head}" ]]; then
+      echo "${id}"
+      return 0
+    fi
+  done < <(ls -1 "${base}" 2>/dev/null | sort -rV)
+  if [[ "${any_commit}" == "false" ]] && [[ -n "${newest}" ]]; then
+    echo "${newest}"
+    return 0
+  fi
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -1834,6 +2036,314 @@ get_app_unit_files() {
       units_ref+=("appmotel-${app_name}-${service}.service")
     fi
   done
+}
+
+# -----------------------------------------------------------------------------
+# Function: unit_props
+# Description: Read properties of a user unit into an associative array.
+#   systemctl show prints KEY=VALUE lines in its own order, not in the order
+#   asked for, so --value with several properties cannot be used. A missing
+#   unit gives LoadState=not-found.
+# Parameters: $1 = unit, $2 = nameref to an associative array, $3... = properties
+# -----------------------------------------------------------------------------
+unit_props() {
+  local unit="$1"
+  local -n unit_props_ref=$2
+  shift 2
+  local line list
+  unit_props_ref=()
+  list=$(IFS=','; printf '%s' "$*")
+  while IFS= read -r line; do
+    if [[ "${line}" == *=* ]]; then
+      unit_props_ref["${line%%=*}"]="${line#*=}"
+    fi
+  done < <(systemctl --user show -p "${list}" "${unit}" 2>/dev/null || true)
+}
+
+# A systemd counter that is set: digits, not UINT64_MAX ("not tracked"), and
+# small enough for Bash arithmetic
+is_counter() {
+  [[ "$1" =~ ^[0-9]+$ ]] && [[ ${#1} -le 18 ]]
+}
+
+# -----------------------------------------------------------------------------
+# Function: restart_limit_directives
+# Description: [Unit] lines that make systemd stop restarting a crashing app.
+#   Off unless the app .env sets RESTART_LIMIT=N (1-100): after N starts
+#   within RESTART_WINDOW seconds (default 300) the unit fails and stays down
+#   until appmo start/restart. Without it a crashing app is restarted every
+#   10 s forever (autopull reports the crash loop either way).
+# Parameters: $1 = app .env file
+# -----------------------------------------------------------------------------
+restart_limit_directives() {
+  local env_file="$1" limit="" window=""
+  [[ -f "${env_file}" ]] || return 0
+  limit=$(env_get_value "${env_file}" RESTART_LIMIT 2>/dev/null) || limit=""
+  [[ -n "${limit}" ]] || return 0
+  if [[ ! "${limit}" =~ ^[0-9]{1,3}$ ]] || (( 10#${limit} < 1 || 10#${limit} > 100 )); then
+    log_msg "WARN" "RESTART_LIMIT=${limit} is not a number from 1 to 100, ignored"
+    return 0
+  fi
+  window=$(env_get_value "${env_file}" RESTART_WINDOW 2>/dev/null) || window=""
+  if [[ ! "${window}" =~ ^[0-9]{1,5}$ ]] || (( 10#${window} < 10 || 10#${window} > 86400 )); then
+    [[ -z "${window}" ]] || log_msg "WARN" "RESTART_WINDOW=${window} is not 10-86400 seconds, using 300"
+    window=300
+  fi
+  printf 'StartLimitIntervalSec=%s\nStartLimitBurst=%s\n' "$(( 10#${window} ))" "$(( 10#${limit} ))"
+}
+
+# -----------------------------------------------------------------------------
+# Function: apply_restart_limit
+# Description: Write or remove the drop-in <unit>.d/restart-limit.conf of
+#   each unit of the app, from RESTART_LIMIT/RESTART_WINDOW in its .env. A
+#   drop-in, not the unit file: appmo writes unit files only on add, but runs
+#   this on add, update, start, restart and restore, so a changed limit needs
+#   only appmo restart (like every other .env change).
+# -----------------------------------------------------------------------------
+apply_restart_limit() {
+  local app_name="$1"
+  local env_file="${APPS_CONFIG_DIR}/${app_name}/.env"
+  local directives content unit dropin_dir dropin changed=false
+  local -a units=()
+  get_app_unit_files "${app_name}" units
+  directives=$(restart_limit_directives "${env_file}")
+  content=$(printf '# Written by appmo from RESTART_LIMIT in the app .env\n[Unit]\n%s' "${directives}")
+  for unit in "${units[@]}"; do
+    dropin_dir="${SYSTEMD_USER_DIR}/${unit}.d"
+    dropin="${dropin_dir}/restart-limit.conf"
+    if [[ -n "${directives}" ]]; then
+      if [[ ! -f "${dropin}" ]] || [[ "$(cat "${dropin}")" != "${content}" ]]; then
+        mkdir -p "${dropin_dir}"
+        printf '%s\n' "${content}" > "${dropin}"
+        changed=true
+      fi
+    elif [[ -f "${dropin}" ]]; then
+      rm -f "${dropin}"
+      rmdir "${dropin_dir}" 2>/dev/null || true
+      changed=true
+    fi
+  done
+  if [[ "${changed}" == "true" ]]; then
+    systemctl --user daemon-reload 2>/dev/null || true
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: schedule_parse_line
+# Description: Split a line of appmo-schedule, "<calendar> | <command>", into
+#   the namerefs $2 (a systemd OnCalendar expression) and $3 (the command).
+#   The calendar may only use the characters of OnCalendar expressions, so
+#   it cannot change the timer unit it is written into.
+# Returns: 0 job line, 1 blank or comment line, 2 malformed line
+# -----------------------------------------------------------------------------
+schedule_parse_line() {
+  local line="${1%$'\r'}"
+  local -n schedule_calendar_ref=$2
+  local -n schedule_command_ref=$3
+  local parsed_calendar parsed_command
+  local calendar_re='^[A-Za-z0-9 _,:./*~+-]+$'
+  schedule_calendar_ref=""
+  schedule_command_ref=""
+
+  if [[ "${line}" =~ ^[[:space:]]*(#.*)?$ ]]; then
+    return 1
+  fi
+  [[ "${line}" == *" | "* ]] || return 2
+  parsed_calendar="${line%% | *}"
+  parsed_command="${line#* | }"
+  parsed_calendar="${parsed_calendar#"${parsed_calendar%%[![:space:]]*}"}"
+  parsed_calendar="${parsed_calendar%"${parsed_calendar##*[![:space:]]}"}"
+  parsed_command="${parsed_command#"${parsed_command%%[![:space:]]*}"}"
+  parsed_command="${parsed_command%"${parsed_command##*[![:space:]]}"}"
+  [[ -n "${parsed_calendar}" ]] && [[ -n "${parsed_command}" ]] || return 2
+  [[ "${parsed_calendar}" =~ ${calendar_re} ]] || return 2
+  # No calendar starts with "-"; such a value would be read as an option
+  [[ "${parsed_calendar}" != -* ]] || return 2
+
+  schedule_calendar_ref="${parsed_calendar}"
+  schedule_command_ref="${parsed_command}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: remove_scheduled_jobs
+# Description: Disable and delete the job timers and services named in the
+#   app's jobs.list. A job that is running is left to finish, unless $2 is
+#   "stop" (appmo remove).
+# -----------------------------------------------------------------------------
+remove_scheduled_jobs() {
+  local app_name="$1" mode="${2:-}"
+  local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+  local list_file="${config_dir}/jobs.list" unit
+  [[ -f "${list_file}" ]] || return 0
+  while IFS= read -r unit; do
+    [[ "${unit}" =~ ^appmotel-"${app_name}"[.]job-[0-9]+$ ]] || continue
+    systemctl --user disable --now "${unit}.timer" >/dev/null 2>&1 || true
+    if [[ "${mode}" == "stop" ]]; then
+      systemctl --user stop "${unit}.service" >/dev/null 2>&1 || true
+    fi
+    rm -f "${SYSTEMD_USER_DIR}/${unit}.timer" "${SYSTEMD_USER_DIR}/${unit}.service"
+  done < "${list_file}"
+  rm -f "${list_file}"
+  if [[ -d "${config_dir}/jobs" ]]; then
+    safe_rm_rf "${config_dir}/jobs" "remove_scheduled_jobs"
+  fi
+  systemctl --user daemon-reload 2>/dev/null || true
+}
+
+# -----------------------------------------------------------------------------
+# Function: sync_scheduled_jobs
+# Description: (Re)create the app's scheduled jobs from appmo-schedule in the
+#   app folder: per line a timer and a oneshot service appmotel-<app>.job-<n>,
+#   run in the app folder with the app's .env, its venv on PATH, and its
+#   MEMORY_LIMIT/CPU_QUOTA. The command goes into a script in the config dir,
+#   so it needs no quoting for systemd. Bad lines are skipped with a warning:
+#   a deploy never fails here.
+# Parameters: $1 = app name, $2 = app folder (repo or its subfolder)
+# -----------------------------------------------------------------------------
+sync_scheduled_jobs() {
+  local app_name="$1" app_dir="$2"
+  local config_dir="${APPS_CONFIG_DIR}/${app_name}"
+  local schedule="${app_dir}/${SCHEDULE_FILE_NAME}"
+
+  remove_scheduled_jobs "${app_name}"
+  [[ -f "${schedule}" ]] || return 0
+  if ! command -v systemd-analyze >/dev/null 2>&1; then
+    log_msg "WARN" "systemd-analyze not found: ${SCHEDULE_FILE_NAME} ignored"
+    return 0
+  fi
+
+  local env_file="${config_dir}/.env"
+  local env_directive="" path_directive="" memory_limit="" cpu_quota="" timeout=""
+  if [[ -f "${env_file}" ]]; then
+    env_directive="EnvironmentFile=${env_file}"
+    memory_limit=$(env_get_value "${env_file}" MEMORY_LIMIT 2>/dev/null) || memory_limit=""
+    cpu_quota=$(env_get_value "${env_file}" CPU_QUOTA 2>/dev/null) || cpu_quota=""
+    timeout=$(env_get_value "${env_file}" JOB_TIMEOUT 2>/dev/null) || timeout=""
+  fi
+  [[ -n "${memory_limit}" ]] || memory_limit="${DEFAULT_MEMORY_LIMIT}"
+  [[ -n "${cpu_quota}" ]] || cpu_quota="${DEFAULT_CPU_QUOTA}"
+  if [[ ! "${timeout}" =~ ^[0-9]+(s|min|h|d)?$ ]]; then
+    [[ -z "${timeout}" ]] || log_msg "WARN" "JOB_TIMEOUT=${timeout} is not like 30min, 2h or 1d; using 1h"
+    timeout="1h"
+  fi
+
+  # The venv may be in a parent folder for subfolder deployments
+  local search_dir="${app_dir}" data_dir="${APPS_DATA_DIR}/${app_name}"
+  while [[ "${search_dir}" == "${data_dir}"/* ]]; do
+    if [[ -x "${search_dir}/.venv/bin/python3" ]]; then
+      path_directive="Environment=\"PATH=${search_dir}/.venv/bin:/usr/local/bin:/usr/bin:/bin\""
+      break
+    fi
+    search_dir=$(dirname "${search_dir}")
+  done
+
+  mkdir -p "${config_dir}/jobs" "${SYSTEMD_USER_DIR}"
+  local line calendar command unit script line_no=0 n=0 rc
+  local -a units=()
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line_no=$((line_no + 1))
+    rc=0
+    schedule_parse_line "${line}" calendar command || rc=$?
+    if [[ ${rc} -eq 1 ]]; then
+      continue
+    elif [[ ${rc} -ne 0 ]]; then
+      log_msg "WARN" "${SCHEDULE_FILE_NAME} line ${line_no}: expected '<calendar> | <command>', skipped"
+      continue
+    fi
+    if ! systemd-analyze calendar -- "${calendar}" >/dev/null 2>&1; then
+      log_msg "WARN" "${SCHEDULE_FILE_NAME} line ${line_no}: '${calendar}' is not a systemd calendar expression (man systemd.time), skipped"
+      continue
+    fi
+    if [[ ${#units[@]} -ge ${MAX_SCHEDULED_JOBS} ]]; then
+      log_msg "WARN" "${SCHEDULE_FILE_NAME}: more than ${MAX_SCHEDULED_JOBS} jobs, the rest is skipped"
+      break
+    fi
+    n=$((n + 1))
+    # The dot keeps job units apart from app units: app, component and
+    # Procfile names cannot contain one (an app "x-job-1" would otherwise own
+    # appmotel-x-job-1.service). A file of that name left over is not ours.
+    unit="appmotel-${app_name}.job-${n}"
+    if [[ -e "${SYSTEMD_USER_DIR}/${unit}.service" ]] || [[ -e "${SYSTEMD_USER_DIR}/${unit}.timer" ]]; then
+      log_msg "WARN" "${SCHEDULE_FILE_NAME} line ${line_no}: ${unit} exists and is not in jobs.list, skipped"
+      continue
+    fi
+
+    script="${config_dir}/jobs/job-${n}.sh"
+    printf '# %s line %s of app %s, runs at: %s\n%s\n' \
+      "${SCHEDULE_FILE_NAME}" "${line_no}" "${app_name}" "${calendar}" "${command}" > "${script}"
+
+    cat > "${SYSTEMD_USER_DIR}/${unit}.service" <<EOF
+[Unit]
+Description=Appmotel scheduled job: ${app_name} (${SCHEDULE_FILE_NAME} line ${line_no})
+
+[Service]
+Type=oneshot
+WorkingDirectory=${app_dir}
+${env_directive}
+${path_directive}
+Environment="HOME=${APPMO_HOME}"
+Environment="USER=$(id -un)"
+ExecStart=/bin/bash ${script}
+TimeoutStartSec=${timeout}
+
+# Resource limits
+MemoryMax=${memory_limit}
+CPUQuota=${cpu_quota}
+
+StandardOutput=journal
+StandardError=journal
+EOF
+
+    cat > "${SYSTEMD_USER_DIR}/${unit}.timer" <<EOF
+[Unit]
+Description=Appmotel schedule: ${app_name} (${calendar})
+
+[Timer]
+OnCalendar=${calendar}
+Persistent=true
+Unit=${unit}.service
+
+[Install]
+WantedBy=timers.target
+EOF
+    units+=("${unit}")
+  done < "${schedule}"
+
+  if [[ ${#units[@]} -eq 0 ]]; then
+    rmdir "${config_dir}/jobs" 2>/dev/null || true
+    return 0
+  fi
+  printf '%s\n' "${units[@]}" > "${config_dir}/jobs.list"
+  systemctl --user daemon-reload
+  for unit in "${units[@]}"; do
+    systemctl --user enable --now "${unit}.timer" >/dev/null 2>&1 \
+      || log_msg "WARN" "Could not start ${unit}.timer"
+  done
+  log_msg "INFO" "Scheduled ${#units[@]} job(s) from ${SCHEDULE_FILE_NAME} (appmo status ${app_name} shows the next runs)"
+}
+
+# Start or stop the timers of an app's scheduled jobs (appmo start / stop)
+job_timers_ctl() {
+  local app_name="$1" action="$2" unit
+  local list_file="${APPS_CONFIG_DIR}/${app_name}/jobs.list"
+  [[ -f "${list_file}" ]] || return 0
+  while IFS= read -r unit; do
+    [[ "${unit}" =~ ^appmotel-"${app_name}"[.]job-[0-9]+$ ]] || continue
+    systemctl --user "${action}" "${unit}.timer" >/dev/null 2>&1 \
+      || log_msg "WARN" "Could not ${action} ${unit}.timer"
+  done < "${list_file}"
+}
+
+# Print the job units of an app (one per line, from jobs.list)
+job_units() {
+  local app_name="$1" unit
+  local list_file="${APPS_CONFIG_DIR}/${app_name}/jobs.list"
+  [[ -f "${list_file}" ]] || return 0
+  while IFS= read -r unit; do
+    if [[ "${unit}" =~ ^appmotel-"${app_name}"[.]job-[0-9]+$ ]]; then
+      echo "${unit}"
+    fi
+  done < "${list_file}"
 }
 
 # =============================================================================
@@ -3205,6 +3715,10 @@ cmd_add() {
     save_app_metadata "${app_name}" "${github_url}" "${branch}" "${port}" "" "${subdir}"
   fi
 
+  # Scheduled jobs from appmo-schedule in the app folder, and RESTART_LIMIT
+  sync_scheduled_jobs "${app_name}" "${app_dir}"
+  apply_restart_limit "${app_name}"
+
   local app_url="https://${app_name}.${base_domain}"
 
   log_msg "INFO" "App '${app_name}' added successfully"
@@ -3247,6 +3761,9 @@ cmd_remove() {
     log_msg "INFO" "Backed up .env to ${env_backup}"
   fi
 
+  # Scheduled jobs first, so none starts while the app is taken down
+  remove_scheduled_jobs "${app_name}" stop
+
   # Get all services for this app (handles multi-component and Procfile)
   local -a services
   get_all_services "${app_name}" services
@@ -3265,8 +3782,11 @@ cmd_remove() {
     systemctl_stop "${service_name}"
     systemctl --user disable "${service_name}" 2>/dev/null || true
 
-    # Remove service file
+    # Remove service file and its drop-ins (restart-limit.conf)
     rm -f "${SYSTEMD_USER_DIR}/${service_name}.service"
+    if [[ -d "${SYSTEMD_USER_DIR}/${service_name}.service.d" ]]; then
+      safe_rm_rf "${SYSTEMD_USER_DIR}/${service_name}.service.d" "cmd_remove drop-ins"
+    fi
   done
   systemctl --user daemon-reload
 
@@ -3426,6 +3946,14 @@ cmd_status() {
   fi
   echo "Port: ${PORT}"
   echo "Last Deployment: $(format_timestamp "${LAST_DEPLOYMENT}")"
+  local pin_file="${APPS_CONFIG_DIR}/${app_name}/pinned"
+  if [[ -f "${pin_file}" ]]; then
+    local pin_commit pin_backup
+    pin_commit=$(env_get_value "${pin_file}" COMMIT 2>/dev/null) || pin_commit=""
+    pin_backup=$(env_get_value "${pin_file}" BACKUP 2>/dev/null) || pin_backup=""
+    echo "Pinned: rolled back to ${pin_commit:0:8} (backup ${pin_backup}); autopull does not update it"
+    echo "        Follow ${BRANCH} again: appmo unpin ${app_name} (or deploy now: appmo update ${app_name})"
+  fi
   echo ""
 
   # Check status for each service/component
@@ -3443,11 +3971,7 @@ cmd_status() {
     fi
 
     echo "  ${display_name}:"
-    if systemctl --user is-active --quiet "${service_name}" 2>/dev/null; then
-      echo "    Systemd: running"
-    else
-      echo "    Systemd: stopped"
-    fi
+    echo "    Systemd: $(unit_state_text "${service_name}.service" "${app_name}")"
 
     # Check port response for frontend only
     if [[ "${service}" == "frontend" ]] || [[ "${service}" == "${app_name}" ]]; then
@@ -3458,6 +3982,48 @@ cmd_status() {
       fi
     fi
   done
+
+  local -a timers=()
+  mapfile -t timers < <(job_units "${app_name}" | sed 's/$/.timer/')
+  if [[ ${#timers[@]} -gt 0 ]]; then
+    echo ""
+    echo "Scheduled jobs (${SCHEDULE_FILE_NAME}):"
+    systemctl --user list-timers --all --no-pager "${timers[@]}" 2>/dev/null || true
+    echo "Job output: appmo logs ${app_name}"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: unit_state_text
+# Description: The state of one unit for appmo status: running, stopped,
+#   crashed and waiting to restart, or failed (with the crash-loop case,
+#   where systemd hit RESTART_LIMIT and stopped restarting it).
+# -----------------------------------------------------------------------------
+unit_state_text() {
+  local unit="$1" app_name="$2" text restarts
+  local -A props=()
+  unit_props "${unit}" props ActiveState SubState Result NRestarts
+  restarts="${props[NRestarts]:-0}"
+  is_counter "${restarts}" || restarts=0
+  case "${props[ActiveState]:-}/${props[SubState]:-}" in
+    active/*) text="running" ;;
+    activating/auto-restart*) text="CRASHED, systemd restarts it in a few seconds" ;;
+    activating/*|reloading/*) text="starting" ;;
+    failed/*)
+      # Restart=always leaves a unit failed only once the start limit
+      # stopped the restarts; Result then still shows the last run (exit-code)
+      if [[ "${props[Result]:-}" == "start-limit-hit" ]] || (( restarts > 0 )); then
+        text="FAILED: crash loop, systemd stopped restarting it (start limit); fix the app, then: appmo restart ${app_name}"
+      else
+        text="FAILED (${props[Result]:-unknown}), see: appmo logs ${app_name}"
+      fi
+      ;;
+    *) text="stopped" ;;
+  esac
+  if (( restarts > 0 )); then
+    text+=" [${restarts} automatic restart(s) since it was started]"
+  fi
+  echo "${text}"
 }
 
 # -----------------------------------------------------------------------------
@@ -3477,6 +4043,7 @@ cmd_start() {
   get_all_services "${app_name}" services
 
   log_msg "INFO" "Starting app: ${app_name}"
+  apply_restart_limit "${app_name}"
   for service in "${services[@]}"; do
     local service_name
     # Frontend gets no suffix, others get suffix
@@ -3485,8 +4052,11 @@ cmd_start() {
     else
       service_name="appmotel-${app_name}-${service}"
     fi
+    # A unit that hit RESTART_LIMIT refuses to start until it is reset
+    systemctl --user reset-failed "${service_name}" 2>/dev/null || true
     systemctl --user start "${service_name}"
   done
+  job_timers_ctl "${app_name}" start
   log_msg "INFO" "App started"
 }
 
@@ -3517,6 +4087,8 @@ cmd_stop() {
     fi
     systemctl --user stop "${service_name}"
   done
+  # Scheduled jobs pause with the app (appmo start resumes them)
+  job_timers_ctl "${app_name}" stop
   log_msg "INFO" "App stopped"
 }
 
@@ -3537,6 +4109,7 @@ cmd_restart() {
   get_all_services "${app_name}" services
 
   log_msg "INFO" "Restarting app: ${app_name}"
+  apply_restart_limit "${app_name}"
   for service in "${services[@]}"; do
     local service_name
     # Frontend gets no suffix, others get suffix
@@ -3545,8 +4118,11 @@ cmd_restart() {
     else
       service_name="appmotel-${app_name}-${service}"
     fi
+    systemctl --user reset-failed "${service_name}" 2>/dev/null || true
     systemctl --user restart "${service_name}"
   done
+  # Resume jobs that appmo stop paused: the app runs again
+  job_timers_ctl "${app_name}" start
   log_msg "INFO" "App restarted"
 }
 
@@ -3575,6 +4151,8 @@ cmd_update() {
   fi
 
   log_msg "INFO" "Updating app: ${app_name}"
+  local old_head
+  old_head=$(git -C "${repo_dir}" rev-parse --short HEAD 2>/dev/null) || old_head="unknown"
 
   # Create backup before update. Guarded explicitly: when invoked from
   # autopull (errexit suppressed), an unchecked failure here would leave
@@ -3693,9 +4271,11 @@ cmd_update() {
     log_msg "WARN" "Update failed, rolling back to backup ${backup_id}..."
     if restore_backup "${app_name}" "${backup_id}"; then
       log_msg "INFO" "Rollback completed. App restored to previous version."
+      notify "${app_name}" "update of ${BRANCH} failed; rolled back, still running ${old_head} (appmo logs ${app_name})"
     else
       log_msg "ERROR" "Rollback failed! App may be in inconsistent state."
       log_msg "ERROR" "Manual intervention required. Backup available at: ${BACKUPS_DIR}/${app_name}/${backup_id}"
+      notify "${app_name}" "update of ${BRANCH} failed AND the automatic rollback failed; needs manual repair (backup ${backup_id})"
     fi
     return 1
   fi
@@ -3709,6 +4289,17 @@ cmd_update() {
   # Update metadata timestamp (preserve SUBDIR if set)
   save_app_metadata "${app_name}" "${GITHUB_URL}" "${BRANCH}" "${PORT}" "${services_str}" "${SUBDIR:-}"
 
+  # The branch is deployed again, so a rollback pin no longer applies.
+  # (autopull never updates a pinned app; only a manual update gets here.)
+  if [[ -f "${APPS_CONFIG_DIR}/${app_name}/pinned" ]]; then
+    rm -f "${APPS_CONFIG_DIR}/${app_name}/pinned"
+    log_msg "INFO" "Rollback pin removed: autopull follows ${BRANCH} again"
+  fi
+
+  # Scheduled jobs from the new appmo-schedule, and RESTART_LIMIT
+  sync_scheduled_jobs "${app_name}" "${app_dir}"
+  apply_restart_limit "${app_name}"
+
   # Restart all services
   log_msg "INFO" "Restarting services..."
   for service in "${services[@]}"; do
@@ -3718,8 +4309,11 @@ cmd_update() {
     else
       service_name="appmotel-${app_name}-${service}"
     fi
+    systemctl --user reset-failed "${service_name}" 2>/dev/null || true
     systemctl --user restart "${service_name}"
   done
+  local new_head
+  new_head=$(git -C "${repo_dir}" rev-parse --short HEAD 2>/dev/null) || new_head="unknown"
 
   # Wait until the app answers on its port, so "updated" means usable
   local attempt
@@ -3728,11 +4322,13 @@ cmd_update() {
   for attempt in $(seq 1 30); do
     if ss -ltnH "sport = :${PORT}" 2>/dev/null | grep -q .; then
       log_msg "INFO" "App updated successfully (backup: ${backup_id})"
+      notify "${app_name}" "deployed ${BRANCH} ${old_head} -> ${new_head}"
       return 0
     fi
     sleep 1
   done
   log_msg "WARN" "App updated (backup: ${backup_id}), but port ${PORT} does not answer after 30 s; check: appmo logs ${app_name}"
+  notify "${app_name}" "deployed ${BRANCH} ${old_head} -> ${new_head}, but port ${PORT} does not answer after 30 s (appmo logs ${app_name}; undo: appmo rollback ${app_name})"
 }
 
 # -----------------------------------------------------------------------------
@@ -3740,12 +4336,30 @@ cmd_update() {
 # Description: Shows app logs
 # -----------------------------------------------------------------------------
 cmd_logs() {
+  local usage_text="Usage: appmo logs <app-name> [lines] [--since TIME] [--grep REGEX] [--follow]"
   if [[ $# -lt 1 ]]; then
-    die "Usage: appmo logs <app-name> [lines]"
+    die "${usage_text}"
   fi
 
   local app_name="$1"
-  local lines="${2:-50}"
+  shift
+  local lines="" since="" pattern="" follow=false
+  if [[ $# -gt 0 ]] && [[ "$1" =~ ^[0-9]+$ ]]; then
+    lines="$1"
+    shift
+  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n|--lines) [[ $# -ge 2 ]] || die "${usage_text}"; lines="$2"; shift 2 ;;
+      --since) [[ $# -ge 2 ]] || die "${usage_text}"; since="$2"; shift 2 ;;
+      --since=*) since="${1#--since=}"; shift ;;
+      --grep|-g) [[ $# -ge 2 ]] || die "${usage_text}"; pattern="$2"; shift 2 ;;
+      --grep=*) pattern="${1#--grep=}"; shift ;;
+      -f|--follow) follow=true; shift ;;
+      *) die "${usage_text}" ;;
+    esac
+  done
+  [[ -z "${lines}" || "${lines}" =~ ^[0-9]+$ ]] || die "lines must be a number: ${lines}"
 
   require_app_exists "${app_name}"
 
@@ -3764,9 +4378,26 @@ cmd_logs() {
     fi
     unit_args+=("-u" "${service_name}")
   done
+  # Output of scheduled jobs
+  local job_unit
+  while IFS= read -r job_unit; do
+    unit_args+=("-u" "${job_unit}")
+  done < <(job_units "${app_name}")
 
-  # Show logs from all services
-  journalctl --user "${unit_args[@]}" -n "${lines}" --no-pager
+  # Last 50 lines by default; with --since everything since then. --grep is
+  # journalctl's own: -n then counts matching lines. Values are passed as
+  # --opt=VALUE so they cannot be read as other options.
+  local -a journal_args=(--user --no-pager "${unit_args[@]}")
+  if [[ -n "${lines}" ]]; then
+    journal_args+=(-n "${lines}")
+  elif [[ -z "${since}" ]]; then
+    journal_args+=(-n 50)
+  fi
+  [[ -z "${since}" ]] || journal_args+=("--since=${since}")
+  [[ -z "${pattern}" ]] || journal_args+=("--grep=${pattern}")
+  [[ "${follow}" == "false" ]] || journal_args+=(--follow)
+
+  journalctl "${journal_args[@]}"
 }
 
 # -----------------------------------------------------------------------------
@@ -4124,6 +4755,373 @@ cmd_backups() {
 }
 
 # -----------------------------------------------------------------------------
+# Function: cmd_rollback
+# Description: Go back to the version before the last update (the newest
+#   backup of another commit), or to a given backup, and pin the app there:
+#   autopull would otherwise deploy the bad commit again two minutes later.
+#   Code and settings (.env) come from the backup. The state before the
+#   rollback is backed up first, so appmo restore can undo it.
+# -----------------------------------------------------------------------------
+cmd_rollback() {
+  if [[ $# -lt 1 ]] || [[ $# -gt 2 ]]; then
+    die "Usage: appmo rollback <app-name> [backup-id]"
+  fi
+  local app_name="$1" backup_id="${2:-}"
+  require_app_exists "${app_name}"
+  load_app_metadata "${app_name}"
+
+  local repo_dir="${APPS_DATA_DIR}/${app_name}/repo"
+  local head=""
+  head=$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null) || head=""
+
+  if [[ -z "${backup_id}" ]]; then
+    backup_id=$(rollback_target "${app_name}" "${head}") \
+      || die "No backup of an older version of '${app_name}' (see: appmo backups ${app_name})"
+  fi
+  validate_backup_id "${backup_id}"
+  local target_dir="${BACKUPS_DIR}/${app_name}/${backup_id}"
+  [[ -d "${target_dir}" ]] || die "Backup '${backup_id}' not found for app '${app_name}' (see: appmo backups ${app_name})"
+
+  # Hold autopull's lock: a run during the restore (which can take minutes)
+  # would see the app unpinned at an older commit and deploy the branch again
+  mkdir -p "${APPS_DATA_DIR}"
+  exec 8>>"${APPS_DATA_DIR}/.autopull.lock"
+  if ! flock --wait 900 8; then
+    die "autopull has held its lock for 15 minutes; try again later"
+  fi
+
+  # Back up the current state, so appmo restore can undo the rollback. Not
+  # pruned (pruning could delete the target), and marked, so that a second
+  # rollback skips it and goes further back instead of forward again.
+  log_msg "INFO" "Backing up the current state first..."
+  local safety_id=""
+  if ! safety_id=$(create_backup "${app_name}" keep-all) || [[ -z "${safety_id}" ]]; then
+    die "Backup of the current state failed, nothing was changed"
+  fi
+  touch "${BACKUPS_DIR}/${app_name}/${safety_id}/ROLLBACK_SAFETY"
+
+  log_msg "INFO" "Rolling back '${app_name}' to backup ${backup_id}..."
+  local restored=true
+  restore_backup "${app_name}" "${backup_id}" || restored=false
+
+  # Pin also after a failed restore: autopull must not deploy over it. The
+  # restore replaced the config dir, so the pin is written only now.
+  local now_head=""
+  now_head=$(git -C "${repo_dir}" rev-parse HEAD 2>/dev/null) || now_head=""
+  mkdir -p "${APPS_CONFIG_DIR}/${app_name}"
+  printf 'COMMIT="%s"\nBACKUP="%s"\nSINCE="%s"\n' "${now_head}" "${backup_id}" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${APPS_CONFIG_DIR}/${app_name}/pinned"
+  if [[ "${restored}" == "false" ]]; then
+    notify "${app_name}" "rollback to backup ${backup_id} failed; autopull paused (appmo status ${app_name})"
+    die "Rollback failed - check: appmo status ${app_name}. Autopull leaves it alone until appmo unpin ${app_name}; the state before the rollback is backup ${safety_id}"
+  fi
+
+  log_msg "INFO" "Rolled back '${app_name}' from ${head:0:8} to ${now_head:0:8} (backup ${backup_id})"
+  log_msg "INFO" "Pinned: autopull does not update '${app_name}' until: appmo unpin ${app_name} (or appmo update ${app_name})"
+  log_msg "INFO" "Undo the rollback: appmo restore ${app_name} ${safety_id}"
+  notify "${app_name}" "rolled back from ${head:0:8} to ${now_head:0:8} (backup ${backup_id}); autopull paused until appmo unpin ${app_name}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_unpin
+# Description: Remove a rollback pin; the next autopull deploys the branch
+# -----------------------------------------------------------------------------
+cmd_unpin() {
+  [[ $# -eq 1 ]] || die "Usage: appmo unpin <app-name>"
+  local app_name="$1"
+  require_app_exists "${app_name}"
+  local pin_file="${APPS_CONFIG_DIR}/${app_name}/pinned"
+  if [[ ! -f "${pin_file}" ]]; then
+    log_msg "INFO" "App '${app_name}' is not pinned"
+    return 0
+  fi
+  rm -f "${pin_file}"
+  log_msg "INFO" "Unpinned '${app_name}': the next autopull deploys the latest commit of its branch (now: appmo update ${app_name})"
+}
+
+# -----------------------------------------------------------------------------
+# Function: verify_result
+# Description: One result line of appmo backup-verify; a FAIL is counted in
+#   the caller's verify_failures
+# -----------------------------------------------------------------------------
+verify_result() {
+  local status="$1" message="$2"
+  printf '  %-5s %s\n' "${status}" "${message}"
+  if [[ "${status}" == "FAIL" ]]; then
+    verify_failures=$((verify_failures + 1))
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: verify_backup
+# Description: Check that a backup can be restored, without touching the
+#   app: the code archive reads to the end and extracts to an intact git
+#   repository (git fsck) of the recorded commit, the settings parse, the
+#   unit files have an ExecStart, and the Traefik route is there.
+# Returns: 0 if all checks pass, 1 otherwise
+# -----------------------------------------------------------------------------
+verify_backup() {
+  local app_name="$1" backup_id="$2"
+  local dir="${BACKUPS_DIR}/${app_name}/${backup_id}"
+  local verify_failures=0
+  [[ -d "${dir}" ]] || die "Backup '${backup_id}' not found for app '${app_name}' (see: appmo backups ${app_name})"
+
+  echo "Backup ${backup_id} of ${app_name}:"
+
+  # Code
+  local recorded=""
+  recorded=$(cat "${dir}/COMMIT" 2>/dev/null) || recorded=""
+  if [[ ! -f "${dir}/repo.tar.gz" ]]; then
+    verify_result FAIL "repo.tar.gz is missing: the backup has no code"
+  else
+    local entries=""
+    if ! entries=$(tar -tzf "${dir}/repo.tar.gz" 2>/dev/null | wc -l) || [[ "${entries}" -eq 0 ]]; then
+      verify_result FAIL "repo.tar.gz is damaged or truncated"
+    else
+      verify_result ok "repo.tar.gz reads to the end (${entries} entries)"
+      check_disk_space "${BACKUPS_DIR}" 200
+      local work
+      work=$(mktemp -d "${BACKUPS_DIR}/.verify.XXXXXX")
+      # Expanded now on purpose: work is local to this function
+      # shellcheck disable=SC2064
+      trap "rm -rf -- '${work}'; cleanup_temp_files" EXIT
+      if ! tar -xzf "${dir}/repo.tar.gz" -C "${work}" 2>/dev/null; then
+        verify_result FAIL "repo.tar.gz does not extract"
+      else
+        local head=""
+        head=$(git -C "${work}/repo" rev-parse --verify -q HEAD 2>/dev/null) || head=""
+        if [[ -z "${head}" ]]; then
+          verify_result FAIL "the code in repo.tar.gz is not a git repository with a commit"
+        elif ! git -C "${work}/repo" fsck --no-progress --no-dangling >/dev/null 2>&1; then
+          verify_result FAIL "git fsck finds damaged objects (commit ${head:0:8})"
+        elif [[ -n "${recorded}" ]] && [[ "${recorded}" != "${head}" ]]; then
+          verify_result FAIL "COMMIT says ${recorded:0:8}, but the archive has ${head:0:8}"
+        else
+          verify_result ok "git repository intact, commit ${head:0:8}"
+        fi
+      fi
+      rm -rf -- "${work}"
+      trap cleanup_temp_files EXIT
+    fi
+  fi
+
+  # Settings
+  if [[ ! -f "${dir}/config/metadata.conf" ]]; then
+    verify_result FAIL "config/metadata.conf is missing"
+  elif ! (safe_source_metadata "${dir}/config/metadata.conf") >/dev/null 2>&1; then
+    verify_result FAIL "config/metadata.conf does not parse"
+  else
+    local port=""
+    port=$(env_get_value "${dir}/config/.env" PORT 2>/dev/null) || port=""
+    if [[ -z "${port}" ]]; then
+      verify_result FAIL "config/.env is missing or has no PORT"
+    else
+      verify_result ok "settings: metadata.conf and .env (PORT=${port})"
+    fi
+  fi
+
+  # Services
+  local f names="" bad=""
+  for f in "${dir}"/appmotel-*.service; do
+    [[ -f "${f}" ]] || continue
+    names+="${names:+, }${f##*/}"
+    grep -q '^ExecStart=' "${f}" || bad+="${bad:+, }${f##*/}"
+  done
+  if [[ -z "${names}" ]]; then
+    verify_result FAIL "no systemd unit file in the backup"
+  elif [[ -n "${bad}" ]]; then
+    verify_result FAIL "no ExecStart in ${bad}"
+  else
+    verify_result ok "systemd units: ${names}"
+  fi
+
+  # Route
+  if [[ "${APPMO_ROLE}" == "app" ]]; then
+    verify_result skip "Traefik route (appmotel keeps it for isolated apps)"
+  elif grep -q 'routers:' "${dir}/${app_name}.yaml" 2>/dev/null; then
+    verify_result ok "Traefik route ${app_name}.yaml"
+  else
+    verify_result FAIL "Traefik route ${app_name}.yaml is missing or empty"
+  fi
+
+  if [[ ${verify_failures} -gt 0 ]]; then
+    log_msg "ERROR" "Backup ${backup_id} has ${verify_failures} problem(s): appmo restore may not bring '${app_name}' back"
+    return 1
+  fi
+  log_msg "INFO" "Backup ${backup_id} looks restorable"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_backup_verify
+# Description: appmo backup-verify <app> [backup-id] (default: the newest)
+# -----------------------------------------------------------------------------
+cmd_backup_verify() {
+  if [[ $# -lt 1 ]] || [[ $# -gt 2 ]]; then
+    die "Usage: appmo backup-verify <app-name> [backup-id]"
+  fi
+  local app_name="$1" backup_id="${2:-}"
+  require_app_exists "${app_name}"
+  if [[ -z "${backup_id}" ]]; then
+    backup_id=$(ls -1 "${BACKUPS_DIR}/${app_name}" 2>/dev/null | sort -rV | head -n 1) || backup_id=""
+    [[ -n "${backup_id}" ]] || die "No backups found for app '${app_name}'"
+  fi
+  validate_backup_id "${backup_id}"
+  verify_backup "${app_name}" "${backup_id}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: human_bytes
+# Description: 1536 -> 1.5K; "-" for a value systemd does not track
+# -----------------------------------------------------------------------------
+human_bytes() {
+  local bytes="$1"
+  if ! is_counter "${bytes}"; then
+    echo "-"
+    return 0
+  fi
+  awk -v b="${bytes}" 'BEGIN { split("B K M G T", u, " "); i = 1
+    while (b >= 1024 && i < 5) { b /= 1024; i++ }
+    if (i == 1) printf "%dB\n", b; else printf "%.1f%s\n", b, u[i] }'
+}
+
+# -----------------------------------------------------------------------------
+# Function: format_cpu_time
+# Description: CPUUsageNSec -> 4.2s, 3m07s or 5h02m; "-" if not tracked
+# -----------------------------------------------------------------------------
+format_cpu_time() {
+  local nsec="$1"
+  if ! is_counter "${nsec}"; then
+    echo "-"
+    return 0
+  fi
+  local secs=$(( nsec / 1000000000 ))
+  if (( secs < 60 )); then
+    awk -v n="${nsec}" 'BEGIN { printf "%.1fs\n", n / 1e9 }'
+  elif (( secs < 3600 )); then
+    printf '%dm%02ds\n' $(( secs / 60 )) $(( secs % 60 ))
+  else
+    printf '%dh%02dm\n' $(( secs / 3600 )) $(( secs % 3600 / 60 ))
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: top_row
+# Description: One line of appmo top: summed over the app's units, the
+#   state, memory now and the memory limit, CPU time and automatic restarts
+#   since they were started; then the disk use of its code and data.
+# -----------------------------------------------------------------------------
+top_row() {
+  local app_name="$1"
+  local -a units=()
+  get_app_unit_files "${app_name}" units
+  local -A props=()
+  local unit value total=0 active=0 failed=0 crashing=0
+  local mem=0 mem_known=false cpu=0 cpu_known=false restarts=0 limit="-"
+  for unit in "${units[@]}"; do
+    unit_props "${unit}" props LoadState ActiveState SubState MemoryCurrent MemoryMax CPUUsageNSec NRestarts
+    if [[ "${props[LoadState]:-not-found}" == "not-found" ]]; then
+      continue
+    fi
+    total=$((total + 1))
+    case "${props[ActiveState]:-}" in
+      active) active=$((active + 1)) ;;
+      failed) failed=$((failed + 1)) ;;
+    esac
+    if [[ "${props[SubState]:-}" == auto-restart* ]]; then
+      crashing=$((crashing + 1))
+    fi
+    value="${props[MemoryCurrent]:-}"
+    if is_counter "${value}"; then
+      mem=$((mem + value))
+      mem_known=true
+    fi
+    value="${props[CPUUsageNSec]:-}"
+    if is_counter "${value}"; then
+      cpu=$((cpu + value))
+      cpu_known=true
+    fi
+    value="${props[NRestarts]:-}"
+    if is_counter "${value}"; then
+      restarts=$((restarts + value))
+    fi
+    if [[ "${limit}" == "-" ]]; then
+      limit=$(human_bytes "${props[MemoryMax]:-}")
+    fi
+  done
+
+  local state
+  if [[ ${total} -eq 0 ]]; then
+    state="no-units"
+  elif [[ ${failed} -gt 0 ]]; then
+    state="FAILED"
+  elif [[ ${crashing} -gt 0 ]]; then
+    state="CRASHING"
+  elif [[ ${active} -eq ${total} ]]; then
+    state="running"
+  elif [[ ${active} -eq 0 ]]; then
+    state="stopped"
+  else
+    state="partial"
+  fi
+
+  local mem_text="-" cpu_text="-" disk="-" du_bytes=""
+  [[ "${mem_known}" == "false" ]] || mem_text=$(human_bytes "${mem}")
+  [[ "${cpu_known}" == "false" ]] || cpu_text=$(format_cpu_time "${cpu}")
+  if du_bytes=$(du -s -B1 "${APPS_DATA_DIR}/${app_name}" 2>/dev/null | cut -f1); then
+    disk=$(human_bytes "${du_bytes}")
+  fi
+  printf '%-24s %-9s %8s %8s %9s %8s %8s\n' \
+    "${app_name}" "${state}" "${mem_text}" "${limit}" "${cpu_text}" "${restarts}" "${disk}"
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_top
+# Description: appmo top [app-name...]: resource use per app (all apps if no
+#   name is given). Rows of isolated apps come from their own users.
+# -----------------------------------------------------------------------------
+cmd_top() {
+  local header=true
+  local -a apps=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-header) header=false ;;
+      -*) die "Usage: appmo top [app-name...]" ;;
+      *) apps+=("$1") ;;
+    esac
+    shift
+  done
+
+  if [[ ${#apps[@]} -eq 0 ]]; then
+    local dir name
+    for dir in "${APPS_CONFIG_DIR}"/*/; do
+      name="${dir%/}"
+      name="${name##*/}"
+      if app_exists "${name}"; then
+        apps+=("${name}")
+      fi
+    done
+  fi
+  if [[ ${#apps[@]} -eq 0 ]]; then
+    log_msg "INFO" "No apps configured yet"
+    return 0
+  fi
+
+  if [[ "${header}" == "true" ]]; then
+    printf '%-24s %-9s %8s %8s %9s %8s %8s\n' APP STATE MEMORY LIMIT CPU-TIME RESTARTS DISK
+  fi
+  local app
+  for app in "${apps[@]}"; do
+    require_app_exists "${app}"
+    if is_isolated "${app}"; then
+      run_appmo_as_app "${app}" top --no-header "${app}" \
+        || printf '%-24s %s\n' "${app}" "(could not read it as ${APP_USER_PREFIX}${app})"
+      continue
+    fi
+    top_row "${app}"
+  done
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_check
 # Description: Check for available updates without deploying
 # -----------------------------------------------------------------------------
@@ -4398,6 +5396,63 @@ ${recent_logs}
 }
 
 # -----------------------------------------------------------------------------
+# Function: check_crash_loop
+# Description: Report (log ERROR + notify, at most once an hour) a unit of
+#   the app that systemd gave up on (RESTART_LIMIT hit) or that restarted
+#   CRASH_LOOP_RESTARTS times or more since the previous autopull. The
+#   restart counts of the last run are kept in the app's data dir (not in
+#   backups). Run by autopull. Never fails.
+# -----------------------------------------------------------------------------
+check_crash_loop() {
+  local app_name="$1"
+  local data_dir="${APPS_DATA_DIR}/${app_name}"
+  local counts_file="${data_dir}/.restart-counts"
+  local stamp="${data_dir}/.crash-loop-reported"
+  [[ -d "${data_dir}" ]] || return 0
+
+  local -A previous=() props=()
+  local unit count prev looping="" counts=""
+  if [[ -f "${counts_file}" ]]; then
+    while IFS=' ' read -r unit count; do
+      if [[ -n "${unit}" ]] && is_counter "${count}"; then
+        previous["${unit}"]="${count}"
+      fi
+    done < "${counts_file}"
+  fi
+
+  local -a units=()
+  get_app_unit_files "${app_name}" units
+  for unit in "${units[@]}"; do
+    unit_props "${unit}" props ActiveState Result NRestarts
+    count="${props[NRestarts]:-0}"
+    is_counter "${count}" || count=0
+    counts+="${unit} ${count}"$'\n'
+    prev="${previous[${unit}]:-}"
+    # Failed after automatic restarts: the start limit (RESTART_LIMIT) ended
+    # them. Result shows the last run then (exit-code), not start-limit-hit.
+    if [[ "${props[ActiveState]:-}" == "failed" ]] \
+        && { [[ "${props[Result]:-}" == "start-limit-hit" ]] || (( count > 0 )); }; then
+      looping+="${looping:+, }${unit%.service} (systemd stopped restarting it)"
+    elif [[ -n "${prev}" ]] && (( count - prev >= CRASH_LOOP_RESTARTS )); then
+      looping+="${looping:+, }${unit%.service} ($((count - prev)) restarts since the last check)"
+    fi
+  done
+  printf '%s' "${counts}" > "${counts_file}" 2>/dev/null || true
+
+  # The stamp only expires, a quiet run does not clear it: an app that
+  # crashes about every 40 s shows 2 and 3 restarts in turn and would be
+  # reported every 4 minutes
+  [[ -n "${looping}" ]] || return 0
+  if [[ -f "${stamp}" ]] && [[ -n "$(find "${stamp}" -mmin -60 2>/dev/null)" ]]; then
+    return 0
+  fi
+  touch "${stamp}" 2>/dev/null || true
+  log_msg "ERROR" "${app_name}: crash loop: ${looping}. See: appmo logs ${app_name}"
+  notify "${app_name}" "crash loop: ${looping} (appmo logs ${app_name})"
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Function: cmd_autopull
 # Description: Automatically checks all apps for updates and deploys them
 # This is designed to run periodically via systemd timer
@@ -4441,6 +5496,7 @@ cmd_autopull() {
   # Get list of all apps
   local app_count=0
   local updated_count=0
+  local pinned_count=0
 
   for app_dir in "${APPS_CONFIG_DIR}"/*; do
     if [[ ! -d "${app_dir}" ]]; then
@@ -4461,6 +5517,15 @@ cmd_autopull() {
     if is_isolated "${app_name}"; then
       run_appmo_as_app "${app_name}" autopull || log_msg "WARN" "${app_name}: autopull as ${APP_USER_PREFIX}${app_name} failed"
       sync_isolated_traefik "${app_name}" || true
+      continue
+    fi
+
+    check_crash_loop "${app_name}" || true
+
+    # A rollback pins the app at its commit: no update until appmo unpin
+    if [[ -f "${APPS_CONFIG_DIR}/${app_name}/pinned" ]]; then
+      pinned_count=$((pinned_count + 1))
+      check_app_errors "${app_name}" || log_msg "WARN" "${app_name}: error scan failed (non-fatal)"
       continue
     fi
 
@@ -4526,12 +5591,14 @@ cmd_autopull() {
     check_app_errors "${app_name}" || log_msg "WARN" "${app_name}: error scan failed (non-fatal)"
   done
 
+  local pinned_note=""
+  [[ ${pinned_count} -eq 0 ]] || pinned_note=" (${pinned_count} pinned by rollback, not updated)"
   if [[ ${app_count} -eq 0 ]]; then
     log_msg "INFO" "No apps found"
   elif [[ ${updated_count} -eq 0 ]]; then
-    log_msg "INFO" "Checked ${app_count} app(s), no updates available"
+    log_msg "INFO" "Checked ${app_count} app(s), no updates available${pinned_note}"
   else
-    log_msg "INFO" "Checked ${app_count} app(s), updated ${updated_count}"
+    log_msg "INFO" "Checked ${app_count} app(s), updated ${updated_count}${pinned_note}"
   fi
 }
 
@@ -4594,17 +5661,119 @@ check_tls_expiry() {
     return 0
   fi
 
-  local secs
-  secs=$(tls_cert_seconds_left) || return 0
   touch "${stamp}" 2>/dev/null || true
 
-  if (( secs <= 0 )); then
-    log_msg "ERROR" "TLS certificate $(format_cert_expiry "${secs}") - browsers will reject every app"
-    log_msg "ERROR" "Check renewal: sudo certbot renew  (journalctl -u certbot)"
-  elif (( secs < warn_days * 86400 )); then
-    log_msg "WARN" "TLS certificate $(format_cert_expiry "${secs}") - check certbot renewal"
+  local secs
+  if secs=$(tls_cert_seconds_left); then
+    if (( secs <= 0 )); then
+      log_msg "ERROR" "TLS certificate $(format_cert_expiry "${secs}") - browsers will reject every app"
+      log_msg "ERROR" "Check renewal: sudo certbot renew  (journalctl -u certbot)"
+      notify "" "TLS certificate $(format_cert_expiry "${secs}"): browsers reject every app (sudo certbot renew)"
+    elif (( secs < warn_days * 86400 )); then
+      log_msg "WARN" "TLS certificate $(format_cert_expiry "${secs}") - check certbot renewal"
+      notify "" "TLS certificate $(format_cert_expiry "${secs}"), check certbot renewal"
+    fi
   fi
+
+  # Traefik renews Let's Encrypt certificates 30 days before they expire, so
+  # one inside the warning window means renewal keeps failing
+  local source names end now
+  now=$(date +%s)
+  while IFS=$'\t' read -r source names end; do
+    [[ "${source}" == "letsencrypt" ]] || continue
+    secs=$(( end - now ))
+    if (( secs < warn_days * 86400 )); then
+      log_msg "WARN" "Let's Encrypt certificate for ${names} $(format_cert_expiry "${secs}") - Traefik cannot renew it (journalctl -u traefik-appmotel)"
+      notify "" "Let's Encrypt certificate for ${names} $(format_cert_expiry "${secs}"), Traefik cannot renew it"
+    fi
+  done < <(list_tls_certs)
   return 0
+}
+
+# -----------------------------------------------------------------------------
+# Function: cert_end_epoch
+# Description: Expiry (epoch seconds) of the first PEM certificate on stdin
+# -----------------------------------------------------------------------------
+cert_end_epoch() {
+  local end_date
+  end_date=$(openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2) || return 1
+  [[ -n "${end_date}" ]] || return 1
+  date -d "${end_date}" +%s 2>/dev/null
+}
+
+# -----------------------------------------------------------------------------
+# Function: list_tls_certs
+# Description: One line "<source>\t<names>\t<expiry epoch>" per certificate
+#   Traefik can serve: source "file" for each certFile in tls-config.yaml,
+#   "letsencrypt" for each certificate in acme.json (Traefik keeps them there,
+#   base64-encoded PEM; read with python3, which install.sh requires).
+# Parameters: $1 = acme.json (default ACME_FILE)
+# -----------------------------------------------------------------------------
+list_tls_certs() {
+  local acme_file="${1:-${ACME_FILE}}"
+  local tls_config="${TRAEFIK_DYNAMIC_DIR}/tls-config.yaml"
+  command -v openssl >/dev/null 2>&1 || return 0
+  local cert_file names end b64
+
+  if [[ -f "${tls_config}" ]]; then
+    while IFS= read -r cert_file; do
+      [[ -n "${cert_file}" ]] && [[ -r "${cert_file}" ]] || continue
+      end=$(cert_end_epoch < "${cert_file}") || continue
+      names=$(openssl x509 -in "${cert_file}" -noout -ext subjectAltName 2>/dev/null \
+        | grep -o 'DNS:[^,[:space:]]*' | sed 's/^DNS://' | paste -sd, -) || names=""
+      printf 'file\t%s\t%s\n' "${names:-${cert_file}}" "${end}"
+    done < <(sed -n 's/.*certFile:[[:space:]]*//p' "${tls_config}" 2>/dev/null | tr -d "\"'")
+  fi
+
+  if [[ -r "${acme_file}" ]] && command -v python3 >/dev/null 2>&1; then
+    while IFS=$'\t' read -r names b64; do
+      [[ -n "${b64}" ]] || continue
+      end=$(base64 -d <<< "${b64}" 2>/dev/null | cert_end_epoch) || continue
+      printf 'letsencrypt\t%s\t%s\n' "${names:--}" "${end}"
+    done < <(python3 -I -c '
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+for resolver in data.values():
+    if not isinstance(resolver, dict):
+        continue
+    for cert in resolver.get("Certificates") or []:
+        domain = cert.get("domain") or {}
+        names = [domain.get("main") or ""] + list(domain.get("sans") or [])
+        names = ",".join(n for n in names if n) or "-"
+        print(names + "\t" + (cert.get("certificate") or ""))
+' "${acme_file}" 2>/dev/null || true)
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Function: cmd_certs
+# Description: appmo certs: every certificate Traefik can serve, soonest
+#   expiry first, flagged inside TLS_EXPIRY_WARN_DAYS (default 14)
+# -----------------------------------------------------------------------------
+cmd_certs() {
+  [[ $# -eq 0 ]] || die "Usage: appmo certs"
+  local warn_days="${TLS_EXPIRY_WARN_DAYS:-14}"
+  [[ "${warn_days}" =~ ^[0-9]+$ ]] || warn_days=14
+  local -a rows=()
+  mapfile -t rows < <(list_tls_certs | sort -t $'\t' -k3,3n)
+  if [[ ${#rows[@]} -eq 0 ]]; then
+    log_msg "INFO" "No certificates found: tls-config.yaml names none and acme.json has no Let's Encrypt certificate yet"
+    return 0
+  fi
+
+  local row source names end secs status now
+  now=$(date +%s)
+  printf '%-12s %-11s %-28s %s\n' SOURCE EXPIRES STATUS NAMES
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r source names end <<< "${row}"
+    secs=$(( end - now ))
+    status=$(format_cert_expiry "${secs}")
+    if (( secs > 0 )) && (( secs < warn_days * 86400 )); then
+      status="WARN ${status}"
+    fi
+    printf '%-12s %-11s %-28s %s\n' "${source}" "$(date -d "@${end}" +%Y-%m-%d)" "${status}" "${names}"
+  done
 }
 
 # -----------------------------------------------------------------------------
@@ -4971,11 +6140,11 @@ main() {
         refresh_app_list
         return
         ;;
-      status|start|stop|restart|update|check|logs|env|exec|backup|restore|backups)
+      status|start|stop|restart|update|check|logs|env|exec|backup|restore|backups|rollback|unpin|backup-verify)
         local rc=0
         run_appmo_as_app "$1" "${command}" "$@" || rc=$?
         case "${command}" in
-          start|restart|update|env|restore) sync_isolated_traefik "$1" || true ;;
+          start|restart|update|env|restore|rollback) sync_isolated_traefik "$1" || true ;;
         esac
         return "${rc}"
         ;;
@@ -4984,7 +6153,7 @@ main() {
 
   if [[ "${APPMO_ROLE}" == "app" ]]; then
     case "${command}" in
-      self-update|isolate) die "'appmo ${command}' must be run by appmotel or an operator" ;;
+      self-update|isolate|certs) die "'appmo ${command}' must be run by appmotel or an operator" ;;
     esac
   fi
 
@@ -5006,6 +6175,11 @@ main() {
     backup) cmd_backup "$@" ;;
     restore) cmd_restore "$@" ;;
     backups) cmd_backups "$@" ;;
+    backup-verify) cmd_backup_verify "$@" ;;
+    rollback) cmd_rollback "$@" ;;
+    unpin) cmd_unpin "$@" ;;
+    top) cmd_top "$@" ;;
+    certs) cmd_certs "$@" ;;
     self-update) cmd_self_update "$@" ;;
     skill) cmd_skill "$@" ;;
     -h|--help|help) usage ;;
